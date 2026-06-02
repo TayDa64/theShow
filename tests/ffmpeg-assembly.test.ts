@@ -18,6 +18,17 @@ describe('ffmpeg composer', () => {
     expect(graph.filterComplex).toContain('acrossfade=d=0.5');
   });
 
+  it('uses valid pass-through filters when assembling a single clip', () => {
+    const graph = buildAssemblyFilterGraph([
+      { durationSeconds: 8 },
+    ]);
+
+    expect(graph.filterComplex).toContain('[v0]null[vout]');
+    expect(graph.filterComplex).toContain('[a0]anull[aout]');
+    expect(graph.filterComplex).not.toContain('copy');
+    expect(graph.filterComplex).not.toContain('acopy');
+  });
+
   it('invokes ffmpeg with -sseof -0.1 when extracting the final frame', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffmpeg-frame-'));
     const inputPath = path.join(tempDir, 'clip.mp4');
