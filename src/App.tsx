@@ -100,7 +100,7 @@ const defaultCameraConfig: CameraConfig = {
 const defaultExportSettings: ExportSettings = {
   targetEngine: 'unreal-engine',
   exportFormat: 'fbx',
-  includeLiveLink: true,
+  includeLiveLink: false,
   meshLevel: 'high'
 };
 

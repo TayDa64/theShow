@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import os from 'os';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
@@ -65,6 +66,13 @@ const generationRateLimiter = rateLimit({
   message: {
     error: 'Too many generation requests. Please wait a minute and try again.',
   },
+});
+const fileOperationRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${req.path}`,
 });
 
 // 1. POST /api/generate-character
@@ -1119,29 +1127,71 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
   }
 });
 
-function toAbsoluteServerUrl(source: string) {
-  if (/^https?:\/\//i.test(source)) {
-    return source;
+function isSafeReadablePath(filePath: string) {
+  if (!path.isAbsolute(filePath)) {
+    return false;
   }
 
-  const normalized = source.startsWith('/') ? source : `/${source}`;
-  return `http://127.0.0.1:${PORT}${normalized}`;
+  const resolved = path.resolve(filePath);
+  const allowedRoots = [
+    path.resolve(UPLOADS_DIR),
+    path.resolve(getTempClipsDirectory()),
+    path.resolve(process.cwd()),
+    path.resolve(os.tmpdir()),
+  ];
+
+  return allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`));
 }
 
-async function downloadToTempFile(source: string) {
-  if (fs.existsSync(source)) {
-    return source;
+function isSafeFilmId(value: string) {
+  return /^[a-f0-9-]{36}$/i.test(value);
+}
+
+async function downloadOperationToTempFile(operationName: string) {
+  if (operationName.startsWith('mock-operation-')) {
+    const tempFilePath = path.join(getTempClipsDirectory(), `${uuidv4()}.mp4`);
+    await fs.promises.writeFile(tempFilePath, Buffer.from('mock-video'));
+    return tempFilePath;
   }
 
-  const response = await fetch(toAbsoluteServerUrl(source));
+  const internalUrl = `http://127.0.0.1:${PORT}/api/video-download?operationName=${encodeURIComponent(operationName)}`;
+  const response = await fetch(internalUrl);
   if (!response.ok) {
-    throw new Error(`Could not download clip source: ${source}`);
+    throw new Error(`Could not download clip source: ${operationName}`);
   }
 
   const tempFilePath = path.join(getTempClipsDirectory(), `${uuidv4()}.mp4`);
   const arrayBuffer = await response.arrayBuffer();
   await fs.promises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
   return tempFilePath;
+}
+
+async function safeRemoveTempFile(filePath: string | null | undefined) {
+  if (!filePath) {
+    return;
+  }
+
+  const resolved = path.resolve(filePath);
+  const tempRoot = path.resolve(getTempClipsDirectory());
+  if (resolved === tempRoot || !resolved.startsWith(`${tempRoot}${path.sep}`)) {
+    return;
+  }
+
+  if (fs.existsSync(resolved)) {
+    await fs.promises.rm(resolved, { force: true });
+  }
+}
+
+function resolveFilmOutputPath(filmId: string, outputPath?: string) {
+  const fallbackPath = path.resolve(path.join(FILMS_DIR, `${filmId}.mp4`));
+  const resolved = path.resolve(outputPath || fallbackPath);
+  const filmsRoot = path.resolve(FILMS_DIR);
+
+  if (!(resolved === fallbackPath || resolved.startsWith(`${filmsRoot}${path.sep}`))) {
+    throw new Error('Invalid film export path.');
+  }
+
+  return resolved;
 }
 
 app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
@@ -1193,20 +1243,22 @@ app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/extract-frame', async (req, res) => {
+app.post('/api/extract-frame', fileOperationRateLimiter, async (req, res) => {
   let localClipPath: string | null = null;
   let extractedFramePath: string | null = null;
 
   try {
-    const { clipUrl, filePath, operationName, label } = req.body || {};
-    const source = filePath || clipUrl || (operationName ? `/api/video-download?operationName=${encodeURIComponent(operationName)}` : null);
+    const { operationName, label } = req.body || {};
+    const sourcePath = operationName
+      ? await downloadOperationToTempFile(operationName)
+      : null;
 
-    if (!source) {
-      return res.status(400).json({ error: 'clipUrl, filePath, or operationName is required.' });
+    if (!sourcePath) {
+      return res.status(400).json({ error: 'operationName is required.' });
     }
 
-    localClipPath = await downloadToTempFile(source);
-    extractedFramePath = await extractLastFrame(localClipPath);
+    localClipPath = sourcePath;
+    extractedFramePath = await extractLastFrame(localClipPath, path.join(getTempClipsDirectory(), `${uuidv4()}.png`));
     const buffer = await fs.promises.readFile(extractedFramePath);
     const uploaded = await saveBufferAsUpload(buffer, 'image/png', { label });
 
@@ -1224,16 +1276,12 @@ app.post('/api/extract-frame', async (req, res) => {
   } catch (error: any) {
     return res.status(500).json({ error: error?.message || 'Could not extract a bridge frame.' });
   } finally {
-    if (extractedFramePath && fs.existsSync(extractedFramePath)) {
-      await fs.promises.rm(extractedFramePath, { force: true });
-    }
-    if (localClipPath && fs.existsSync(localClipPath) && localClipPath.includes(`${path.sep}temp-clips${path.sep}`)) {
-      await fs.promises.rm(localClipPath, { force: true });
-    }
+    await safeRemoveTempFile(extractedFramePath);
+    await safeRemoveTempFile(localClipPath);
   }
 });
 
-app.post('/api/assemble-film', async (req, res) => {
+app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
   const filmId = uuidv4();
   const body = (req.body || {}) as AssembleFilmRequest;
   const clips = Array.isArray(body.clips) ? body.clips : [];
@@ -1254,7 +1302,9 @@ app.post('/api/assemble-film', async (req, res) => {
     const normalizedClips: Array<ChainedClip & { filePath: string }> = [];
 
     for (const clip of clips) {
-      const filePath = clip.filePath || (clip.clipUrl ? await downloadToTempFile(clip.clipUrl) : null);
+      const filePath = clip.operationName
+        ? await downloadOperationToTempFile(clip.operationName)
+        : null;
       if (!filePath) {
         throw new Error(`Clip ${clip.title || clip.shotId} is missing a file source.`);
       }
@@ -1284,20 +1334,31 @@ app.post('/api/assemble-film', async (req, res) => {
     });
     return res.status(500).json({ error: error?.message || 'Film assembly failed.' });
   } finally {
-    await Promise.all(tempFiles.map((file) => fs.promises.rm(file, { force: true })));
+    await Promise.all(tempFiles.map((file) => safeRemoveTempFile(file)));
   }
 });
 
-app.get('/api/download-film/:filmId', async (req, res) => {
+app.get('/api/download-film/:filmId', fileOperationRateLimiter, async (req, res) => {
   const filmId = req.params.filmId;
+  if (!isSafeFilmId(filmId)) {
+    return res.status(400).json({ error: 'Invalid film id.' });
+  }
   const job = filmAssemblyJobs.get(filmId);
-  const outputPath = job?.outputPath || path.join(FILMS_DIR, `${filmId}.mp4`);
-
+  if (!job?.outputPath) {
+    return res.status(404).json({ error: 'Film export not found.' });
+  }
+  const fileName = `${job.filmId}.mp4`;
+  const outputPath = path.join(FILMS_DIR, fileName);
   if (!fs.existsSync(outputPath)) {
     return res.status(404).json({ error: 'Film export not found.' });
   }
 
-  return res.download(outputPath, `${filmId}.mp4`);
+  return res.sendFile(fileName, {
+    root: FILMS_DIR,
+    headers: {
+      'Content-Type': 'video/mp4',
+    },
+  });
 });
 
 const VEO_AESTHETIC_MAP: Record<string, string> = {
