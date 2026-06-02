@@ -7,18 +7,13 @@ import { app } from '../server';
 
 describe('film pipeline routes', () => {
   it('assembles 3 clips and returns a downloadable MP4 URL', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'film-route-'));
-    const clips = [1, 2, 3].map((index) => {
-      const filePath = path.join(tempDir, `clip-${index}.mp4`);
-      fs.writeFileSync(filePath, Buffer.from(`clip-${index}`));
-      return {
-        shotId: `shot-${index}`,
-        title: `Shot ${index}`,
-        order: index,
-        filePath,
-        durationSeconds: 8,
-      };
-    });
+    const clips = [1, 2, 3].map((index) => ({
+      shotId: `shot-${index}`,
+      title: `Shot ${index}`,
+      order: index,
+      operationName: `mock-operation-${index}`,
+      durationSeconds: 8,
+    }));
 
     const response = await request(app)
       .post('/api/assemble-film')

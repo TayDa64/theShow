@@ -722,7 +722,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          clipUrl: buildOperationDownloadUrl(operationName),
+          operationName,
           label: `${title || shot.title} anchor frame`,
         }),
       });
@@ -838,8 +838,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   };
 
   const buildOperationDownloadUrl = (operation: string) => {
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${baseUrl}/api/video-download?operationName=${encodeURIComponent(operation)}`;
+    return `/api/video-download?operationName=${encodeURIComponent(operation)}`;
   };
 
   const waitForOperationCompletion = async (
@@ -1406,7 +1405,6 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
             title: job.title,
             order: index + 1,
             operationName: job.operationName || null,
-            clipUrl: buildOperationDownloadUrl(job.operationName || ''),
             durationSeconds: job.durationSeconds || storyboardShots.find((shot) => shot.id === job.shotId)?.durationSeconds || 8,
           })),
         }),
