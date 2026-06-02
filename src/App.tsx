@@ -106,6 +106,14 @@ const defaultExportSettings: ExportSettings = {
 
 export default function App() {
   const [activeView, setActiveView] = useState<ViewState>('characters');
+  const [syncState, setSyncState] = useState<'SYNCING' | 'SYNCED'>('SYNCED');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(() => {
+    try {
+      return localStorage.getItem('sf_updatedAt') || new Date().toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  });
   
   // Initialize state synchronously with localStorage fallbacks to avoid layout shifts or blinking
   const [characters, setCharacters] = useState<Character[]>(() => {
@@ -146,6 +154,7 @@ export default function App() {
   });
 
   const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [hasLoadedCloud, setHasLoadedCloud] = useState(false);
 
   // Load cloud state on mounting
   React.useEffect(() => {
@@ -156,17 +165,28 @@ export default function App() {
         if (response.ok) {
           const data = await response.json();
           if (data && !data.error) {
-            const normalized = normalizeProjectState(data);
-            if (normalized.characters) setCharacters(normalized.characters);
-            if (normalized.scenes) setScenes(normalized.scenes);
-            if (data.camera) setCamera(data.camera);
-            if (data.exportSettings) setExportSettings(data.exportSettings);
+            const cloudUpdatedAt = typeof data.updatedAt === 'string' ? data.updatedAt : '';
+            const localUpdatedAt = localStorage.getItem('sf_updatedAt') || lastUpdatedAt;
+            const localTime = Date.parse(localUpdatedAt || '');
+            const cloudTime = Date.parse(cloudUpdatedAt || '');
+
+            if (cloudTime > localTime) {
+              const normalized = normalizeProjectState(data);
+              if (normalized.characters) setCharacters(normalized.characters);
+              if (normalized.scenes) setScenes(normalized.scenes);
+              if (data.camera) setCamera(data.camera);
+              if (data.exportSettings) setExportSettings(data.exportSettings);
+              setLastUpdatedAt(cloudUpdatedAt);
+              localStorage.setItem('sf_updatedAt', cloudUpdatedAt);
+            }
           }
         }
       } catch (err) {
         console.warn("[Storage Bridge] Offline mode active or network interrupted:", err);
       } finally {
         setIsCloudLoading(false);
+        setHasLoadedCloud(true);
+        setSyncState('SYNCED');
       }
     };
     fetchCloudState();
@@ -174,6 +194,14 @@ export default function App() {
 
   // Sync any updates immediately to localStorage and debounced to the server API file backup
   React.useEffect(() => {
+    if (!hasLoadedCloud) {
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    setLastUpdatedAt(updatedAt);
+    setSyncState('SYNCING');
+
     if (characters) {
       localStorage.setItem('sf_characters', JSON.stringify(characters));
     }
@@ -182,21 +210,23 @@ export default function App() {
     }
     localStorage.setItem('sf_camera', JSON.stringify(camera));
     localStorage.setItem('sf_exportSettings', JSON.stringify(exportSettings));
+    localStorage.setItem('sf_updatedAt', updatedAt);
 
     const saveTimeout = setTimeout(async () => {
       try {
         await fetch('/api/save-sandbox-state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ characters, scenes, camera, exportSettings })
+          body: JSON.stringify({ characters, scenes, camera, exportSettings, updatedAt })
         });
+        setSyncState('SYNCED');
       } catch (err) {
         console.warn("[Storage Bridge] Deferred cloud save:", err);
       }
     }, 1000); // Debounce to allow seamless sliding or typing parameters without overloading request streams
 
     return () => clearTimeout(saveTimeout);
-  }, [characters, scenes, camera, exportSettings]);
+  }, [characters, scenes, camera, exportSettings, hasLoadedCloud]);
 
   const handleCreateNew = () => {
     const newChar: Character = normalizeCharacter({
@@ -248,9 +278,13 @@ export default function App() {
             </div>
             <h1 className="font-semibold tracking-tight text-zinc-100 text-sm md:text-base">StoryForge Studio</h1>
           </div>
-          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400/90 bg-emerald-400/10 px-3 py-1 rounded-full border border-emerald-400/20 shadow-sm shadow-emerald-400/5">
+          <div className={`flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full border shadow-sm ${
+            syncState === 'SYNCING'
+              ? 'text-amber-300 bg-amber-400/10 border-amber-400/20 shadow-amber-400/5'
+              : 'text-emerald-400/90 bg-emerald-400/10 border-emerald-400/20 shadow-emerald-400/5'
+          }`}>
             <Cloud className="w-3.5 h-3.5" />
-            <span className="font-mono text-[10px]">LIVELINK</span>
+            <span className="font-mono text-[10px]">{isCloudLoading || syncState === 'SYNCING' ? 'SYNCING' : 'SYNCED'}</span>
           </div>
         </header>
 
