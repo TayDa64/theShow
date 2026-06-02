@@ -2,18 +2,33 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type, GenerateVideosOperation, VideoGenerationReferenceType } from '@google/genai';
+import rateLimit from 'express-rate-limit';
+import { v4 as uuidv4 } from 'uuid';
+import { assembleFilm, extractLastFrame } from './src/lib/ffmpegComposer';
+import { generateCinematicPrompt } from './src/lib/geminiDirector';
+import {
+  cleanupTempClips,
+  createUploadMiddleware,
+  createUploadedAsset as createStoredAsset,
+  getTempClipsDirectory,
+  getUploadsRoot,
+  saveBufferAsUpload,
+} from './src/lib/storageManager';
+import type { AssembleFilmRequest, ChainedClip, FilmAssemblyJob } from './src/types/pipeline';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 const STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
-const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+const UPLOADS_DIR = getUploadsRoot();
+const FILMS_DIR = path.join(UPLOADS_DIR, 'films');
+const filmAssemblyJobs = new Map<string, FilmAssemblyJob>();
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(FILMS_DIR, { recursive: true });
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -40,31 +55,14 @@ function getAiClient(): GoogleGenAI {
   return aiClient;
 }
 
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, callback) => {
-      callback(null, UPLOADS_DIR);
-    },
-    filename: (_req, file, callback) => {
-      const extension = path.extname(file.originalname || '').toLowerCase();
-      const baseName = path.basename(file.originalname || 'reference', extension)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || 'reference';
-      callback(null, `${Date.now()}-${baseName}${extension || '.png'}`);
-    },
-  }),
-  limits: {
-    fileSize: 10 * 1024 * 1024,
-  },
-  fileFilter: (_req, file, callback) => {
-    if (file.mimetype?.startsWith('image/')) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error('Only image uploads are supported for continuity references.'));
+const upload = createUploadMiddleware();
+const generationRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many generation requests. Please wait a minute and try again.',
   },
 });
 
@@ -570,16 +568,6 @@ const isQuotaExhaustedError = (error: any) => !!(
   error?.message?.toLowerCase?.().includes('quota')
 );
 
-const createUploadedAsset = (file: Express.Multer.File, kind: string, label?: string) => ({
-  id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  kind,
-  origin: 'upload',
-  label: label || path.basename(file.originalname, path.extname(file.originalname)),
-  url: `/uploads/${file.filename}`,
-  mimeType: file.mimetype,
-  createdAt: new Date().toISOString(),
-});
-
 const STORYBOARD_NEGATIVE_PROMPT = 'Avoid subtitles, text overlays, logos, watermarks, costume drift, face drift, duplicated limbs, abrupt environment changes, or extra unnamed characters.';
 
 const startMockVideoOperation = (prompt: string) => {
@@ -947,7 +935,7 @@ app.post('/api/upload-reference', (req, res) => {
     const label = typeof req.body?.label === 'string' ? req.body.label : undefined;
 
     return res.json({
-      asset: createUploadedAsset(file, kind, label),
+      asset: createStoredAsset(file, kind, label),
     });
   });
 });
@@ -1040,7 +1028,23 @@ Break the scene into professional storyboard shots that preserve continuity and 
   }
 });
 
-app.post('/api/generate-shot-video', async (req, res) => {
+app.post('/api/generate-shot-prompt', generationRateLimiter, async (req, res) => {
+  const { characters = [], scene, shot, camera } = req.body || {};
+  if (!scene || !shot) {
+    return res.status(400).json({ error: 'Scene and shot data are required to generate a film prompt.' });
+  }
+
+  const prompt = await generateCinematicPrompt(apiKey ? getAiClient() : null, {
+    characters,
+    scene,
+    shot,
+    camera,
+  });
+
+  return res.json({ prompt });
+});
+
+app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => {
   try {
     const ai = getAiClient();
     const { characters = [], scene, shot, camera, resolvedSeed } = req.body || {};
@@ -1112,6 +1116,187 @@ app.post('/api/generate-shot-video', async (req, res) => {
       continuitySource: continuityReference?.sourceLabel || null,
     });
   }
+});
+
+function toAbsoluteServerUrl(source: string) {
+  if (/^https?:\/\//i.test(source)) {
+    return source;
+  }
+
+  const normalized = source.startsWith('/') ? source : `/${source}`;
+  return `http://127.0.0.1:${PORT}${normalized}`;
+}
+
+async function downloadToTempFile(source: string) {
+  if (fs.existsSync(source)) {
+    return source;
+  }
+
+  const response = await fetch(toAbsoluteServerUrl(source));
+  if (!response.ok) {
+    throw new Error(`Could not download clip source: ${source}`);
+  }
+
+  const tempFilePath = path.join(getTempClipsDirectory(), `${uuidv4()}.mp4`);
+  const arrayBuffer = await response.arrayBuffer();
+  await fs.promises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+  return tempFilePath;
+}
+
+app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
+  try {
+    const { prompt, videoToExtend, firstFrame, aspectRatio = '16:9', durationSeconds = 8, seed, referenceImages = [] } = req.body || {};
+
+    if (!prompt || !videoToExtend) {
+      return res.status(400).json({ error: 'prompt and videoToExtend are required.' });
+    }
+
+    if (!apiKey) {
+      const mockId = startMockVideoOperation(prompt);
+      return res.json({
+        operationName: mockId,
+        isFallback: true,
+        usingContinuityFrame: !!firstFrame,
+      });
+    }
+
+    const ai = getAiClient();
+    const operation = await (ai.models as any).generateVideos({
+      model: 'veo-3.1-generate-preview',
+      prompt,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio,
+        durationSeconds,
+        ...(seed ? { seed } : {}),
+        video_to_extend: videoToExtend,
+        ...(firstFrame ? { first_frame: firstFrame } : {}),
+        ...(referenceImages.length ? { reference_images: referenceImages } : {}),
+      },
+    });
+
+    return res.json({
+      operationName: operation.name,
+      usingContinuityFrame: !!firstFrame,
+      isFallback: false,
+    });
+  } catch (error: any) {
+    const mockId = startMockVideoOperation(req.body?.prompt || 'Extended Clip');
+    return res.json({
+      operationName: mockId,
+      isFallback: true,
+      usingContinuityFrame: !!req.body?.firstFrame,
+      error: error?.message || 'Extension fallback enabled.',
+    });
+  }
+});
+
+app.post('/api/extract-frame', async (req, res) => {
+  let localClipPath: string | null = null;
+  let extractedFramePath: string | null = null;
+
+  try {
+    const { clipUrl, filePath, operationName, label } = req.body || {};
+    const source = filePath || clipUrl || (operationName ? `/api/video-download?operationName=${encodeURIComponent(operationName)}` : null);
+
+    if (!source) {
+      return res.status(400).json({ error: 'clipUrl, filePath, or operationName is required.' });
+    }
+
+    localClipPath = await downloadToTempFile(source);
+    extractedFramePath = await extractLastFrame(localClipPath);
+    const buffer = await fs.promises.readFile(extractedFramePath);
+    const uploaded = await saveBufferAsUpload(buffer, 'image/png', { label });
+
+    return res.json({
+      asset: {
+        id: `asset-${uuidv4()}`,
+        kind: 'storyboard-frame',
+        origin: 'generated',
+        label: label || 'Extracted bridge frame',
+        url: uploaded.url,
+        mimeType: 'image/png',
+        createdAt: new Date().toISOString(),
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Could not extract a bridge frame.' });
+  } finally {
+    if (extractedFramePath && fs.existsSync(extractedFramePath)) {
+      await fs.promises.rm(extractedFramePath, { force: true });
+    }
+    if (localClipPath && fs.existsSync(localClipPath) && localClipPath.includes(`${path.sep}temp-clips${path.sep}`)) {
+      await fs.promises.rm(localClipPath, { force: true });
+    }
+  }
+});
+
+app.post('/api/assemble-film', async (req, res) => {
+  const filmId = uuidv4();
+  const body = (req.body || {}) as AssembleFilmRequest;
+  const clips = Array.isArray(body.clips) ? body.clips : [];
+
+  if (clips.length < 1) {
+    return res.status(400).json({ error: 'At least one clip is required to assemble a film.' });
+  }
+
+  filmAssemblyJobs.set(filmId, {
+    filmId,
+    clipCount: clips.length,
+    status: 'processing',
+  });
+
+  const tempFiles: string[] = [];
+
+  try {
+    const normalizedClips: Array<ChainedClip & { filePath: string }> = [];
+
+    for (const clip of clips) {
+      const filePath = clip.filePath || (clip.clipUrl ? await downloadToTempFile(clip.clipUrl) : null);
+      if (!filePath) {
+        throw new Error(`Clip ${clip.title || clip.shotId} is missing a file source.`);
+      }
+      if (filePath.includes(`${path.sep}temp-clips${path.sep}`)) {
+        tempFiles.push(filePath);
+      }
+      normalizedClips.push({ ...clip, filePath });
+    }
+
+    const assembled = await assembleFilm(normalizedClips, FILMS_DIR, filmId);
+    const job: FilmAssemblyJob = {
+      filmId,
+      clipCount: clips.length,
+      status: 'completed',
+      outputPath: assembled.outputPath,
+      downloadUrl: `/api/download-film/${filmId}`,
+    };
+    filmAssemblyJobs.set(filmId, job);
+    await cleanupTempClips();
+    return res.json(job);
+  } catch (error: any) {
+    filmAssemblyJobs.set(filmId, {
+      filmId,
+      clipCount: clips.length,
+      status: 'failed',
+      error: error?.message || 'Film assembly failed.',
+    });
+    return res.status(500).json({ error: error?.message || 'Film assembly failed.' });
+  } finally {
+    await Promise.all(tempFiles.map((file) => fs.promises.rm(file, { force: true })));
+  }
+});
+
+app.get('/api/download-film/:filmId', async (req, res) => {
+  const filmId = req.params.filmId;
+  const job = filmAssemblyJobs.get(filmId);
+  const outputPath = job?.outputPath || path.join(FILMS_DIR, `${filmId}.mp4`);
+
+  if (!fs.existsSync(outputPath)) {
+    return res.status(404).json({ error: 'Film export not found.' });
+  }
+
+  return res.download(outputPath, `${filmId}.mp4`);
 });
 
 const VEO_AESTHETIC_MAP: Record<string, string> = {
@@ -1328,4 +1513,8 @@ async function setupServer() {
   });
 }
 
-setupServer();
+if (process.env.NODE_ENV !== 'test') {
+  setupServer();
+}
+
+export { app };
