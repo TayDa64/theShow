@@ -10,6 +10,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { assembleFilm, extractLastFrame } from './src/lib/ffmpegComposer';
 import { generateCinematicPrompt } from './src/lib/geminiDirector';
 import {
+  ensureMockVideoAsset,
+  normalizeMockVideoAspectRatio,
+  normalizeMockVideoDuration,
+} from './src/lib/mockVideoAsset';
+import {
   cleanupTempClips,
   createUploadMiddleware,
   createUploadedAsset as createStoredAsset,
@@ -26,10 +31,12 @@ const PORT = 3000;
 const STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
 const UPLOADS_DIR = getUploadsRoot();
 const FILMS_DIR = path.join(UPLOADS_DIR, 'films');
+const MOCK_VIDEOS_DIR = path.join(UPLOADS_DIR, 'mock-videos');
 const filmAssemblyJobs = new Map<string, FilmAssemblyJob>();
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(FILMS_DIR, { recursive: true });
+fs.mkdirSync(MOCK_VIDEOS_DIR, { recursive: true });
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -579,11 +586,19 @@ const isQuotaExhaustedError = (error: any) => !!(
 
 const STORYBOARD_NEGATIVE_PROMPT = 'Avoid subtitles, text overlays, logos, watermarks, costume drift, face drift, duplicated limbs, abrupt environment changes, or extra unnamed characters.';
 
-const startMockVideoOperation = (prompt: string) => {
+const startMockVideoOperation = (
+  prompt: string,
+  options: {
+    aspectRatio?: '16:9' | '9:16';
+    durationSeconds?: number;
+  } = {},
+) => {
   const mockId = `mock-operation-veo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   mockOperations.set(mockId, {
     createdAt: Date.now(),
     prompt,
+    aspectRatio: normalizeMockVideoAspectRatio(options.aspectRatio),
+    durationSeconds: normalizeMockVideoDuration(options.durationSeconds, 8),
   });
   return mockId;
 };
@@ -927,7 +942,12 @@ const buildShotPrompt = (characters: any[], scene: any, shot: any, camera: any, 
 };
 
 // In-memory registry to simulate Veo video rendering pipeline status for local dev fallback
-const mockOperations = new Map<string, { createdAt: number; prompt: string }>();
+const mockOperations = new Map<string, {
+  createdAt: number;
+  prompt: string;
+  aspectRatio: '16:9' | '9:16';
+  durationSeconds: number;
+}>();
 
 app.post('/api/upload-reference', (req, res) => {
   upload.single('file')(req, res, (error: any) => {
@@ -1112,13 +1132,22 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
     }
 
     const seedResolution = resolveStoryboardSeedForShot(req.body?.scene, req.body?.shot, req.body?.resolvedSeed);
-    const mockId = startMockVideoOperation(req.body?.shot?.action || req.body?.scene?.description || 'Storyboard Shot');
+    const requestedDurationSeconds = normalizeMockVideoDuration(req.body?.shot?.durationSeconds, 6);
+    const requestedAspectRatio = normalizeMockVideoAspectRatio(req.body?.camera?.aspectRatio);
+    const mockId = startMockVideoOperation(
+      req.body?.shot?.action || req.body?.scene?.description || 'Storyboard Shot',
+      {
+        aspectRatio: requestedAspectRatio,
+        durationSeconds: requestedDurationSeconds,
+      },
+    );
     const continuityReference = resolveContinuityReferenceForShot(req.body?.scene, req.body?.shot);
     return res.json({
       operationName: mockId,
       isFallback: true,
       isQuotaExhausted,
       usingReferenceImages: false,
+      durationSeconds: requestedDurationSeconds,
       resolvedSeed: seedResolution.resolvedSeed,
       seedSource: seedResolution.seedSource,
       usingContinuityFrame: !!continuityReference?.url,
@@ -1149,9 +1178,13 @@ function isSafeFilmId(value: string) {
 
 async function downloadOperationToTempFile(operationName: string) {
   if (operationName.startsWith('mock-operation-')) {
-    const tempFilePath = path.join(getTempClipsDirectory(), `${uuidv4()}.mp4`);
-    await fs.promises.writeFile(tempFilePath, Buffer.from('mock-video'));
-    return tempFilePath;
+    const mockOp = mockOperations.get(operationName);
+    return ensureMockVideoAsset({
+      cacheDir: MOCK_VIDEOS_DIR,
+      operationName,
+      aspectRatio: mockOp?.aspectRatio,
+      durationSeconds: mockOp?.durationSeconds,
+    });
   }
 
   const internalUrl = `http://127.0.0.1:${PORT}/api/video-download?operationName=${encodeURIComponent(operationName)}`;
@@ -1197,17 +1230,23 @@ function resolveFilmOutputPath(filmId: string, outputPath?: string) {
 app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
   try {
     const { prompt, videoToExtend, firstFrame, aspectRatio = '16:9', durationSeconds = 8, seed, referenceImages = [] } = req.body || {};
+    const normalizedDurationSeconds = normalizeMockVideoDuration(durationSeconds, 8);
+    const normalizedAspectRatio = normalizeMockVideoAspectRatio(aspectRatio);
 
     if (!prompt || !videoToExtend) {
       return res.status(400).json({ error: 'prompt and videoToExtend are required.' });
     }
 
     if (!apiKey) {
-      const mockId = startMockVideoOperation(prompt);
+      const mockId = startMockVideoOperation(prompt, {
+        aspectRatio: normalizedAspectRatio,
+        durationSeconds: normalizedDurationSeconds,
+      });
       return res.json({
         operationName: mockId,
         isFallback: true,
         usingContinuityFrame: !!firstFrame,
+        durationSeconds: normalizedDurationSeconds,
       });
     }
 
@@ -1218,8 +1257,8 @@ app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
       config: {
         numberOfVideos: 1,
         resolution: '720p',
-        aspectRatio,
-        durationSeconds,
+        aspectRatio: normalizedAspectRatio,
+        durationSeconds: normalizedDurationSeconds,
         ...(seed ? { seed } : {}),
         video_to_extend: videoToExtend,
         ...(firstFrame ? { first_frame: firstFrame } : {}),
@@ -1231,13 +1270,19 @@ app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
       operationName: operation.name,
       usingContinuityFrame: !!firstFrame,
       isFallback: false,
+      durationSeconds: normalizedDurationSeconds,
     });
   } catch (error: any) {
-    const mockId = startMockVideoOperation(req.body?.prompt || 'Extended Clip');
+    const normalizedDurationSeconds = normalizeMockVideoDuration(req.body?.durationSeconds, 8);
+    const mockId = startMockVideoOperation(req.body?.prompt || 'Extended Clip', {
+      aspectRatio: normalizeMockVideoAspectRatio(req.body?.aspectRatio),
+      durationSeconds: normalizedDurationSeconds,
+    });
     return res.json({
       operationName: mockId,
       isFallback: true,
       usingContinuityFrame: !!req.body?.firstFrame,
+      durationSeconds: normalizedDurationSeconds,
       error: error?.message || 'Extension fallback enabled.',
     });
   }
@@ -1274,6 +1319,7 @@ app.post('/api/extract-frame', fileOperationRateLimiter, async (req, res) => {
       },
     });
   } catch (error: any) {
+    console.error('Frame extraction failed:', error);
     return res.status(500).json({ error: error?.message || 'Could not extract a bridge frame.' });
   } finally {
     await safeRemoveTempFile(extractedFramePath);
@@ -1311,7 +1357,11 @@ app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
       if (filePath.includes(`${path.sep}temp-clips${path.sep}`)) {
         tempFiles.push(filePath);
       }
-      normalizedClips.push({ ...clip, filePath });
+      normalizedClips.push({
+        ...clip,
+        durationSeconds: normalizeMockVideoDuration(clip.durationSeconds, 8),
+        filePath,
+      });
     }
 
     const assembled = await assembleFilm(normalizedClips, FILMS_DIR, filmId);
@@ -1326,6 +1376,7 @@ app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
     await cleanupTempClips();
     return res.json(job);
   } catch (error: any) {
+    console.error('Film assembly failed:', error);
     filmAssemblyJobs.set(filmId, {
       filmId,
       clipCount: clips.length,
@@ -1417,7 +1468,10 @@ app.post('/api/generate-video', async (req, res) => {
       console.log(`[Veo Video Emulator] Generating high-quality storyboard pre-visualization fallback: ${error?.message || 'Standard sandbox build.'}`);
     }
 
-    const mockId = startMockVideoOperation(req.body?.scenes?.[0]?.description || 'Storyboard Concept');
+    const mockId = startMockVideoOperation(req.body?.scenes?.[0]?.description || 'Storyboard Concept', {
+      aspectRatio: normalizeMockVideoAspectRatio(req.body?.camera?.aspectRatio),
+      durationSeconds: 8,
+    });
     return res.json({ operationName: mockId, isFallback: true, isQuotaExhausted });
   }
 });
@@ -1467,30 +1521,15 @@ app.all('/api/video-download', async (req, res) => {
     }
 
     if (operationName.startsWith('mock-operation-')) {
-      // Stream a beautiful, high-quality public sci-fi cinematic concept video loop
-      const videoUrls = [
-        'https://player.vimeo.com/external/371433846.sd.mp4?s=236da2f3c0543e32b473bf18c97be296e8b4e7e6&profile_id=165&oauth2_token_id=57447761',
-        'https://player.vimeo.com/external/403212631.sd.mp4?s=d03e9eb8de65e9fc58bf2a0953fd3993a4b9ee55&profile_id=165&oauth2_token_id=57447761'
-      ];
-      // Curiously assign based on the prompt signature or length
       const mockOp = mockOperations.get(operationName);
-      const chosenUrl = videoUrls[(mockOp?.prompt.length || 0) % videoUrls.length];
-      
-      console.log("[Veo Video Emulator] Streaming proxy fallback clip from CDN:", chosenUrl);
-      const videoRes = await fetch(chosenUrl);
-      res.setHeader('Content-Type', 'video/mp4');
-      
-      if (videoRes.body) {
-        const reader = videoRes.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
-        }
-        return res.end();
-      } else {
-        throw new Error("Unable to read mock video CDN stream body elements.");
-      }
+      const mockVideoPath = await ensureMockVideoAsset({
+        cacheDir: MOCK_VIDEOS_DIR,
+        operationName,
+        aspectRatio: mockOp?.aspectRatio,
+        durationSeconds: mockOp?.durationSeconds,
+      });
+
+      return res.sendFile(mockVideoPath);
     }
 
     const ai = getAiClient();
@@ -1507,6 +1546,10 @@ app.all('/api/video-download', async (req, res) => {
     const videoRes = await fetch(uri, {
       headers: { 'x-goog-api-key': apiKey || '' },
     });
+
+    if (!videoRes.ok) {
+      return res.status(502).json({ error: 'Generated video storage download failed.' });
+    }
 
     res.setHeader('Content-Type', 'video/mp4');
     if (videoRes.body) {

@@ -37,8 +37,8 @@ export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSecon
   }
 
   if (clips.length === 1) {
-    filters.push('[v0]copy[vout]');
-    filters.push('[a0]acopy[aout]');
+    filters.push('[v0]null[vout]');
+    filters.push('[a0]anull[aout]');
   }
 
   return {
@@ -48,15 +48,42 @@ export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSecon
   };
 }
 
-export async function assembleFilm(clips: Array<ChainedClip & { filePath: string }>, outputDir: string, filmId = uuidv4()) {
-  if (clips.length < 1) {
+function buildConcatAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds'>[]) {
+  if (!clips.length) {
     throw new Error('At least one clip is required to assemble a film.');
   }
 
-  await fs.promises.mkdir(outputDir, { recursive: true });
-  const outputPath = path.join(outputDir, `${filmId}.mp4`);
-  const graph = buildAssemblyFilterGraph(clips);
+  const filters: string[] = [];
 
+  for (let index = 0; index < clips.length; index += 1) {
+    filters.push(`[${index}:v]format=yuv420p,setsar=1[v${index}]`);
+    filters.push(`[${index}:a]aresample=async=1:first_pts=0[a${index}]`);
+  }
+
+  const concatInputs = clips.map((_, index) => `[v${index}][a${index}]`).join('');
+  filters.push(`${concatInputs}concat=n=${clips.length}:v=1:a=1[vout][aout]`);
+
+  return {
+    filterComplex: filters.join(';'),
+    videoLabel: 'vout',
+    audioLabel: 'aout',
+  };
+}
+
+function isUnsupportedTransitionFilterError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const normalizedMessage = message.toLowerCase();
+
+  return normalizedMessage.includes("no such filter: 'xfade'")
+    || normalizedMessage.includes("no such filter: 'acrossfade'")
+    || normalizedMessage.includes('error initializing complex filters');
+}
+
+async function runAssemblyCommand(
+  clips: Array<ChainedClip & { filePath: string }>,
+  outputPath: string,
+  graph: ReturnType<typeof buildAssemblyFilterGraph>,
+) {
   await new Promise<void>((resolve, reject) => {
     const command = ffmpeg();
     clips.forEach((clip) => command.input(clip.filePath));
@@ -74,6 +101,25 @@ export async function assembleFilm(clips: Array<ChainedClip & { filePath: string
       .on('error', (error) => reject(error))
       .save(outputPath);
   });
+}
+
+export async function assembleFilm(clips: Array<ChainedClip & { filePath: string }>, outputDir: string, filmId = uuidv4()) {
+  if (clips.length < 1) {
+    throw new Error('At least one clip is required to assemble a film.');
+  }
+
+  await fs.promises.mkdir(outputDir, { recursive: true });
+  const outputPath = path.join(outputDir, `${filmId}.mp4`);
+
+  try {
+    await runAssemblyCommand(clips, outputPath, buildAssemblyFilterGraph(clips));
+  } catch (error) {
+    if (!isUnsupportedTransitionFilterError(error)) {
+      throw error;
+    }
+
+    await runAssemblyCommand(clips, outputPath, buildConcatAssemblyFilterGraph(clips));
+  }
 
   return {
     filmId,
