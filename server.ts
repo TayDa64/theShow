@@ -61,6 +61,7 @@ const generationRateLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${req.path}`,
   message: {
     error: 'Too many generation requests. Please wait a minute and try again.',
   },

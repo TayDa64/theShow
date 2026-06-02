@@ -750,6 +750,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         upsertScene(primedScene);
       }
 
+      const usedSandboxFallback = operationName.startsWith('mock-operation-');
       const message = `${mode === 'automatic' ? 'Auto-saved' : 'Saved'} ${usedSandboxFallback
         ? `a sandbox continuity still for Shot ${shot.shotNumber}.`
         : `an anchor frame for Shot ${shot.shotNumber}.`}${primedBridge || primedSeed
@@ -1095,7 +1096,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         };
       }
 
-      let finalScene = updatedScene;
+      let finalScene: Scene = updatedScene;
       let anchorSaved = false;
       let anchorError: string | null = null;
 
