@@ -18,5 +18,14 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    test: {
+      environment: 'node',
+      globals: true,
+      setupFiles: './tests/setup.ts',
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'lcov'],
+      },
+    },
   };
 });
