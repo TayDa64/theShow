@@ -12,6 +12,7 @@ import { CharacterEditor } from './components/CharacterEditor';
 import { ScenesView } from './components/ScenesView';
 import { CamerasView } from './components/CamerasView';
 import { ExportView } from './components/ExportView';
+import { normalizeCharacter, normalizeProjectState, normalizeScene } from './utils/storyforge';
 
 // Upgraded Mock Characters to fully fit robust attributes!
 const initialCharacters: Character[] = [
@@ -110,9 +111,10 @@ export default function App() {
   const [characters, setCharacters] = useState<Character[]>(() => {
     try {
       const saved = localStorage.getItem('sf_characters');
-      return saved ? JSON.parse(saved) : initialCharacters;
+      const parsed = saved ? JSON.parse(saved) : initialCharacters;
+      return normalizeProjectState({ characters: parsed }).characters || initialCharacters.map(normalizeCharacter);
     } catch {
-      return initialCharacters;
+      return initialCharacters.map(normalizeCharacter);
     }
   });
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
@@ -120,9 +122,10 @@ export default function App() {
   const [scenes, setScenes] = useState<Scene[]>(() => {
     try {
       const saved = localStorage.getItem('sf_scenes');
-      return saved ? JSON.parse(saved) : initialScenes;
+      const parsed = saved ? JSON.parse(saved) : initialScenes;
+      return normalizeProjectState({ scenes: parsed }).scenes || initialScenes.map(normalizeScene);
     } catch {
-      return initialScenes;
+      return initialScenes.map(normalizeScene);
     }
   });
   const [camera, setCamera] = useState<CameraConfig>(() => {
@@ -153,8 +156,9 @@ export default function App() {
         if (response.ok) {
           const data = await response.json();
           if (data && !data.error) {
-            if (data.characters) setCharacters(data.characters);
-            if (data.scenes) setScenes(data.scenes);
+            const normalized = normalizeProjectState(data);
+            if (normalized.characters) setCharacters(normalized.characters);
+            if (normalized.scenes) setScenes(normalized.scenes);
             if (data.camera) setCamera(data.camera);
             if (data.exportSettings) setExportSettings(data.exportSettings);
           }
@@ -170,10 +174,10 @@ export default function App() {
 
   // Sync any updates immediately to localStorage and debounced to the server API file backup
   React.useEffect(() => {
-    if (characters && characters.length > 0) {
+    if (characters) {
       localStorage.setItem('sf_characters', JSON.stringify(characters));
     }
-    if (scenes && scenes.length > 0) {
+    if (scenes) {
       localStorage.setItem('sf_scenes', JSON.stringify(scenes));
     }
     localStorage.setItem('sf_camera', JSON.stringify(camera));
@@ -195,7 +199,7 @@ export default function App() {
   }, [characters, scenes, camera, exportSettings]);
 
   const handleCreateNew = () => {
-    const newChar: Character = {
+    const newChar: Character = normalizeCharacter({
       id: Date.now().toString(),
       name: 'New Subject',
       role: 'Archetype',
@@ -213,35 +217,36 @@ export default function App() {
         stylePreset: 'cinematic-actor'
       },
       updatedAt: new Date().toISOString()
-    };
+    });
     setEditingCharacter(newChar);
   };
 
   const handleSaveCharacter = (char: Character) => {
     setCharacters(prev => {
-      const idx = prev.findIndex(c => c.id === char.id);
+      const normalized = normalizeCharacter(char);
+      const idx = prev.findIndex(c => c.id === normalized.id);
       if (idx >= 0) {
         const next = [...prev];
-        next[idx] = { ...char, updatedAt: new Date().toISOString() };
+        next[idx] = { ...normalized, updatedAt: new Date().toISOString() };
         return next;
       }
-      return [...prev, char];
+      return [...prev, normalized];
     });
     setEditingCharacter(null);
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50 flex justify-center font-sans select-none">
-      {/* Mobile Constraint Container for Pro-App Look & Feel */}
-      <div className="w-full max-w-md bg-zinc-950 min-h-screen flex flex-col relative overflow-hidden border-x border-zinc-900 shadow-2xl">
+      {/* Tablet-first shell that still collapses cleanly to mobile */}
+      <div className="w-full max-w-md md:max-w-5xl xl:max-w-6xl bg-zinc-950 min-h-screen flex flex-col relative overflow-hidden border-x md:border-x lg:border border-zinc-900 shadow-2xl">
         
         {/* App Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20">
+        <header className="flex items-center justify-between px-6 py-4 md:px-8 lg:px-10 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded bg-indigo-500/20 flex items-center justify-center border border-indigo-500/50">
               <span className="text-indigo-400 font-bold text-xs uppercase">SF</span>
             </div>
-            <h1 className="font-semibold tracking-tight text-zinc-100 text-sm">StoryForge Mobile</h1>
+            <h1 className="font-semibold tracking-tight text-zinc-100 text-sm md:text-base">StoryForge Studio</h1>
           </div>
           <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400/90 bg-emerald-400/10 px-3 py-1 rounded-full border border-emerald-400/20 shadow-sm shadow-emerald-400/5">
             <Cloud className="w-3.5 h-3.5" />
@@ -250,7 +255,7 @@ export default function App() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-6 pb-24 relative">
+        <main className="flex-1 overflow-y-auto px-6 py-6 pb-24 md:px-8 md:py-8 md:pb-28 lg:px-10 relative">
           
           {/* Character Module */}
           {activeView === 'characters' && (
@@ -274,6 +279,7 @@ export default function App() {
             <ScenesView 
               scenes={scenes}
               characters={characters}
+              camera={camera}
               onSaveScenes={setScenes}
             />
           )}
@@ -291,6 +297,7 @@ export default function App() {
             <ExportView 
               settings={exportSettings}
               onUpdateSettings={setExportSettings}
+              onUpdateScenes={setScenes}
               characters={characters}
               scenes={scenes}
               camera={camera}
@@ -299,7 +306,7 @@ export default function App() {
         </main>
 
         {/* Bottom Navigation Menu */}
-        <nav className="absolute text-xs bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-6 py-4 pb-6 flex items-center justify-between z-20">
+        <nav className="absolute text-xs bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-6 py-4 pb-6 md:px-8 lg:px-10 flex items-center justify-between md:justify-center md:gap-14 z-20">
           <NavItem icon={<Users />} label="Roster" active={activeView === 'characters'} onClick={() => { setActiveView('characters'); setEditingCharacter(null); }} />
           <NavItem icon={<Clapperboard />} label="Scenes" active={activeView === 'scenes'} onClick={() => { setActiveView('scenes'); setEditingCharacter(null); }} />
           <NavItem icon={<Video />} label="Cameras" active={activeView === 'cameras'} onClick={() => { setActiveView('cameras'); setEditingCharacter(null); }} />
@@ -324,7 +331,7 @@ function NavItem({
   return (
     <button 
       onClick={onClick}
-      className={`flex flex-col items-center gap-1.5 transition-colors cursor-pointer ${
+      className={`flex flex-col items-center gap-1.5 transition-colors cursor-pointer min-w-[60px] ${
         active ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'
       }`}
     >
