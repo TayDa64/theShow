@@ -100,7 +100,7 @@ export function CamerasView({ config, onUpdateConfig }: CamerasViewProps) {
         {/* Aspect Ratio choice */}
         <div className="space-y-2">
           <label className="text-xs font-medium text-zinc-400">Cinematic Aspect Frame Override</label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {[
               { id: '16:9', title: 'Widescreen (16:9)', desc: 'Landscape / Cinematic TV' },
               { id: '9:16', title: 'Vertical (9:16)', desc: 'Mobile Shorts / Social Story' }
@@ -128,7 +128,7 @@ export function CamerasView({ config, onUpdateConfig }: CamerasViewProps) {
             <span className="text-indigo-400 font-mono font-semibold">{config.focalLength}mm</span>
           </div>
 
-          <div className="grid grid-cols-5 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
             {[24, 35, 50, 85, 200].map(mm => (
               <button
                 key={mm}
@@ -151,6 +151,8 @@ export function CamerasView({ config, onUpdateConfig }: CamerasViewProps) {
           <label className="text-xs font-medium text-zinc-400">Stage Framing Composition</label>
           <div className="relative">
             <select
+              title="Stage framing composition"
+              aria-label="Stage framing composition"
               value={config.shotType}
               onChange={e => handleUpdate({ shotType: e.target.value as any })}
               className="w-full bg-zinc-950 border border-zinc-900 text-zinc-100 rounded-xl py-2.5 px-3 text-xs focus:outline-none focus:border-indigo-500 appearance-none h-[42px]"
@@ -169,7 +171,7 @@ export function CamerasView({ config, onUpdateConfig }: CamerasViewProps) {
         {/* Camera Tilt Angle */}
         <div className="space-y-2">
           <label className="text-xs font-medium text-zinc-400">Atmospheric Perspective Angle</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
               { id: 'low', label: 'Low Angle', hint: 'Empowers character' },
               { id: 'eye-level', label: 'Eye-Level', hint: 'Realistic gaze' },
@@ -198,6 +200,9 @@ export function CamerasView({ config, onUpdateConfig }: CamerasViewProps) {
             <span className="text-xs font-medium text-zinc-300">Grid Overlay Guides (Safezones)</span>
           </div>
           <button
+            type="button"
+            title={config.showRuleOfThirds ? 'Disable grid overlay guides' : 'Enable grid overlay guides'}
+            aria-label={config.showRuleOfThirds ? 'Disable grid overlay guides' : 'Enable grid overlay guides'}
             onClick={() => handleUpdate({ showRuleOfThirds: !config.showRuleOfThirds })}
             className={`w-10 h-6 pl-1 rounded-full flex items-center transition-colors cursor-pointer ${
               config.showRuleOfThirds ? 'bg-indigo-600 justify-end pr-1' : 'bg-zinc-850 justify-start'

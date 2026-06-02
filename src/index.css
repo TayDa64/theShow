@@ -5,3 +5,130 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
+
+.storyforge-progress {
+  appearance: none;
+  border: 0;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: rgb(24 24 27);
+}
+
+.storyforge-progress::-webkit-progress-bar {
+  background: rgb(24 24 27);
+  border-radius: 9999px;
+}
+
+.storyforge-progress::-webkit-progress-value {
+  background: linear-gradient(90deg, rgb(99 102 241), rgb(168 85 247), rgb(16 185 129));
+  border-radius: 9999px;
+  transition: width 300ms ease;
+}
+
+.storyforge-progress::-moz-progress-bar {
+  background: linear-gradient(90deg, rgb(99 102 241), rgb(168 85 247), rgb(16 185 129));
+  border-radius: 9999px;
+}
+
+.storyforge-progress--indigo::-webkit-progress-value {
+  background: linear-gradient(90deg, rgb(99 102 241), rgb(129 140 248));
+}
+
+.storyforge-progress--indigo::-moz-progress-bar {
+  background: linear-gradient(90deg, rgb(99 102 241), rgb(129 140 248));
+}
+
+.storyforge-progress--teal::-webkit-progress-value {
+  background: linear-gradient(90deg, rgb(20 184 166), rgb(45 212 191));
+}
+
+.storyforge-progress--teal::-moz-progress-bar {
+  background: linear-gradient(90deg, rgb(20 184 166), rgb(45 212 191));
+}
+
+.storyforge-progress--emerald::-webkit-progress-value {
+  background: linear-gradient(90deg, rgb(16 185 129), rgb(52 211 153));
+}
+
+.storyforge-progress--emerald::-moz-progress-bar {
+  background: linear-gradient(90deg, rgb(16 185 129), rgb(52 211 153));
+}
+
+.storyforge-biometric-chip {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.storyforge-biometric-chip--rose {
+  background-color: rgb(244 63 94);
+  box-shadow: 0 0 6px rgb(244 63 94 / 0.95);
+}
+
+.storyforge-biometric-chip--cyan {
+  background-color: rgb(6 182 212);
+  box-shadow: 0 0 6px rgb(6 182 212 / 0.95);
+}
+
+.storyforge-biometric-chip--amber {
+  background-color: rgb(245 158 11);
+  box-shadow: 0 0 6px rgb(245 158 11 / 0.95);
+}
+
+.storyforge-biometric-chip--emerald {
+  background-color: rgb(16 185 129);
+  box-shadow: 0 0 6px rgb(16 185 129 / 0.95);
+}
+
+.storyforge-biometric-chip--violet {
+  background-color: rgb(168 85 247);
+  box-shadow: 0 0 6px rgb(168 85 247 / 0.95);
+}
+
+.storyforge-biometric-chip--white {
+  background-color: rgb(244 244 245);
+  box-shadow: 0 0 6px rgb(244 244 245 / 0.95);
+}
+
+.storyforge-biometric-chip--gold {
+  background-color: rgb(202 138 4);
+  box-shadow: 0 0 6px rgb(202 138 4 / 0.95);
+}
+
+.storyforge-biometric-chip--zinc {
+  background-color: rgb(113 113 122);
+  box-shadow: 0 0 6px rgb(113 113 122 / 0.95);
+}
+
+.storyforge-biometric-aura--rose {
+  background-color: rgb(244 63 94);
+}
+
+.storyforge-biometric-aura--cyan {
+  background-color: rgb(6 182 212);
+}
+
+.storyforge-biometric-aura--amber {
+  background-color: rgb(245 158 11);
+}
+
+.storyforge-biometric-aura--emerald {
+  background-color: rgb(16 185 129);
+}
+
+.storyforge-biometric-aura--violet {
+  background-color: rgb(168 85 247);
+}
+
+.storyforge-biometric-aura--white {
+  background-color: rgb(244 244 245);
+}
+
+.storyforge-biometric-aura--gold {
+  background-color: rgb(202 138 4);
+}
+
+.storyforge-biometric-aura--zinc {
+  background-color: rgb(113 113 122);
+}

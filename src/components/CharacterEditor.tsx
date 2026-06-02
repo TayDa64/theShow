@@ -1,19 +1,42 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Sparkles, Image as ImageIcon, Check, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, Sparkles, Image as ImageIcon, Check, RefreshCw, Upload } from 'lucide-react';
 import type { Character } from '../types';
+import {
+  createReferenceAsset,
+  getCharacterDisplayImage,
+  getCharacterReferenceAssets,
+  syncCharacterImageState,
+  upsertCharacterAsset,
+} from '../utils/storyforge';
 
-// Map textual color entries to exact glowing CSS hexadecimal hues for cyberpunk biometrics
-const resolveBiometricColor = (colorStr: string) => {
+type BiometricTone = 'rose' | 'cyan' | 'amber' | 'emerald' | 'violet' | 'white' | 'gold' | 'zinc';
+
+// Map textual color entries to named visual tones so the HUD can stay CSS-driven.
+const resolveBiometricTone = (colorStr: string): BiometricTone => {
   const norm = (colorStr || '').toLowerCase();
-  if (norm.includes('pink') || norm.includes('fuchsia') || norm.includes('magenta')) return '#f43f5e';
-  if (norm.includes('blue') || norm.includes('cyan') || norm.includes('teal') || norm.includes('electric') || norm.includes('azure')) return '#06b6d4';
-  if (norm.includes('crimson') || norm.includes('red') || norm.includes('scarlet') || norm.includes('fire')) return '#f43f5e';
-  if (norm.includes('amber') || norm.includes('gold') || norm.includes('yellow') || norm.includes('orange')) return '#f59e0b';
-  if (norm.includes('green') || norm.includes('emerald') || norm.includes('mint')) return '#10b981';
-  if (norm.includes('purple') || norm.includes('violet') || norm.includes('indigo') || norm.includes('grape')) return '#a855f7';
-  if (norm.includes('white') || norm.includes('ash') || norm.includes('platinum')) return '#f4f4f5';
-  if (norm.includes('brown') || norm.includes('hazel')) return '#ca8a04';
-  return '#71717a'; // neutral zinc
+  if (norm.includes('pink') || norm.includes('fuchsia') || norm.includes('magenta')) return 'rose';
+  if (norm.includes('blue') || norm.includes('cyan') || norm.includes('teal') || norm.includes('electric') || norm.includes('azure')) return 'cyan';
+  if (norm.includes('crimson') || norm.includes('red') || norm.includes('scarlet') || norm.includes('fire')) return 'rose';
+  if (norm.includes('amber') || norm.includes('yellow') || norm.includes('orange')) return 'amber';
+  if (norm.includes('green') || norm.includes('emerald') || norm.includes('mint')) return 'emerald';
+  if (norm.includes('purple') || norm.includes('violet') || norm.includes('indigo') || norm.includes('grape')) return 'violet';
+  if (norm.includes('white') || norm.includes('ash') || norm.includes('platinum')) return 'white';
+  if (norm.includes('brown') || norm.includes('hazel') || norm.includes('gold')) return 'gold';
+  return 'zinc';
+};
+
+const resolveBuildIndex = (build: string) => {
+  const norm = (build || '').toLowerCase();
+  if (norm === 'slim') return 40;
+  if (norm === 'average') return 65;
+  if (norm === 'muscular') return 95;
+  return 80;
+};
+
+const resolveGenderIndex = (gender: string) => {
+  const norm = (gender || '').toLowerCase();
+  if (norm === 'male' || norm === 'female') return 100;
+  return 70;
 };
 
 export const STYLE_PRESETS = [
@@ -53,11 +76,68 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
   const [activeTab, setActiveTab] = useState<'appearance' | 'identity'>('appearance');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingPortrait, setIsGeneratingPortrait] = useState(false);
+  const [isUploadingReference, setIsUploadingReference] = useState(false);
   const [genMessage, setGenMessage] = useState('');
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  const activeDisplayImage = getCharacterDisplayImage(editedChar);
+  const referenceAssets = getCharacterReferenceAssets(editedChar);
+  const hairTone = resolveBiometricTone(editedChar.properties.hairColor);
+  const eyeTone = resolveBiometricTone(editedChar.properties.eyeColor);
 
   useEffect(() => {
-    setEditedChar(character);
+    setEditedChar(syncCharacterImageState(character));
   }, [character]);
+
+  const activateReferenceAsset = (assetId: string) => {
+    setEditedChar(prev => syncCharacterImageState({ ...prev, activeImageId: assetId }));
+  };
+
+  const addGeneratedPortraitAsset = (url: string) => {
+    const asset = createReferenceAsset({
+      kind: 'character-generated',
+      origin: 'generated',
+      label: `${editedChar.name || 'Character'} AI portrait`,
+      url,
+    });
+
+    setEditedChar(prev => upsertCharacterAsset(prev, asset, true));
+  };
+
+  const handleUploadReference = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingReference(true);
+    setGenMessage('Uploading continuity reference...');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('kind', 'character-upload');
+      formData.append('label', file.name);
+
+      const response = await fetch('/api/upload-reference', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Character reference upload failed.');
+      }
+
+      const data = await response.json();
+      if (data?.asset?.url) {
+        setEditedChar(prev => upsertCharacterAsset(prev, data.asset, true));
+      }
+    } catch (error) {
+      console.warn('Character reference upload failed:', error);
+    } finally {
+      setIsUploadingReference(false);
+      setGenMessage('');
+      event.target.value = '';
+    }
+  };
 
   const triggerAIPortrait = async () => {
     if (isGeneratingPortrait) return;
@@ -83,18 +163,12 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
 
       const data = await response.json();
       if (data && data.url) {
-        setEditedChar(prev => ({
-          ...prev,
-          thumbnail: data.url
-        }));
+        addGeneratedPortraitAsset(data.url);
       }
     } catch (error) {
       console.warn("AI portrait custom generation error, triggering robust fallback styling:", error);
       const seed = encodeURIComponent(editedChar.name || 'avatar-backup');
-      setEditedChar(prev => ({
-        ...prev,
-        thumbnail: `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}&backgroundColor=09090b`
-      }));
+      addGeneratedPortraitAsset(`https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}&backgroundColor=09090b`);
     } finally {
       setIsGeneratingPortrait(false);
       setGenMessage('');
@@ -195,12 +269,12 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
     <div className="absolute inset-0 z-30 bg-zinc-950 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
       {/* Editor Header */}
       <header className="flex items-center justify-between px-5 py-4 border-b border-zinc-900 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-40">
-        <button onClick={onClose} className="p-2 -ml-2 text-zinc-400 hover:text-white transition-colors">
+        <button onClick={onClose} title="Close character editor" className="p-2 -ml-2 text-zinc-400 hover:text-white transition-colors">
           <ChevronLeft className="w-5 h-5" />
         </button>
         <div className="text-sm font-medium tracking-tight font-sans text-zinc-200">Character Builder</div>
         <button 
-          onClick={() => onSave(editedChar)} 
+          onClick={() => onSave(syncCharacterImageState(editedChar))} 
           className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-1.5 rounded-full shadow-lg hover:shadow-indigo-500/20 transition-all flex items-center gap-1"
         >
           <Check className="w-3.5 h-3.5" />
@@ -209,16 +283,25 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
       </header>
 
       <div className="flex-1 overflow-y-auto pb-24">
+        <input
+          ref={uploadInputRef}
+          type="file"
+          title="Upload character reference image"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className="hidden"
+          onChange={handleUploadReference}
+        />
+
         {/* Character Portrait Simulator */}
-        <div className="relative aspect-[4/3] bg-gradient-to-b from-zinc-900 to-zinc-950 flex flex-col items-center justify-center border-b border-zinc-900 p-8">
+        <div className="relative aspect-[4/3] bg-gradient-to-b from-zinc-900 to-zinc-950 flex flex-col items-center justify-center border-b border-zinc-900 p-8 pb-28 sm:pb-24">
           <div 
             onClick={triggerAIPortrait}
             title="Click to generate dynamic character portrait"
             className="w-24 h-24 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-center shadow-inner relative overflow-hidden group cursor-pointer hover:border-indigo-500 transition-all"
           >
-            {editedChar.thumbnail ? (
+            {activeDisplayImage ? (
               <img 
-                src={editedChar.thumbnail} 
+                src={activeDisplayImage} 
                 alt={editedChar.name} 
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
                 referrerPolicy="no-referrer"
@@ -242,6 +325,11 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
                 <RefreshCw className="w-5 h-5 text-emerald-400 animate-spin" />
               </div>
             )}
+            {isUploadingReference && (
+              <div className="absolute inset-0 bg-zinc-950/80 flex items-center justify-center">
+                <RefreshCw className="w-5 h-5 text-sky-400 animate-spin" />
+              </div>
+            )}
             {isGenerating && (
               <div className="absolute inset-0 bg-zinc-950/80 flex items-center justify-center">
                 <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
@@ -252,29 +340,44 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
           <div className="mt-4 text-center">
             <h3 className="text-sm font-semibold tracking-tight text-zinc-200">{editedChar.name || 'Unnamed Character'}</h3>
             <p className="text-xs text-zinc-500 font-mono mt-0.5">{editedChar.role || 'No Class Specified'}</p>
+            <p className="text-[10px] text-zinc-500 font-mono mt-2">
+              {referenceAssets.length} continuity image{referenceAssets.length === 1 ? '' : 's'} available
+            </p>
           </div>
 
-          <button 
-            type="button"
-            onClick={triggerAIPortrait}
-            disabled={isGeneratingPortrait || isGenerating}
-            className="absolute bottom-4 left-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white text-xs font-medium px-4 py-2 rounded-full transition-all flex items-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-50"
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{isGeneratingPortrait ? 'Sketching...' : 'Gen Portrait'}</span>
-          </button>
+          <div className="absolute inset-x-4 bottom-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <button 
+              type="button"
+              onClick={triggerAIPortrait}
+              disabled={isGeneratingPortrait || isGenerating}
+              className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white text-xs font-medium px-4 py-2 rounded-full transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-50 sm:w-auto sm:justify-start"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{isGeneratingPortrait ? 'Sketching...' : 'Gen Portrait'}</span>
+            </button>
 
-          <button 
-            type="button"
-            onClick={triggerAIGenerator}
-            disabled={isGenerating || isGeneratingPortrait}
-            className="absolute bottom-4 right-4 bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold px-4 py-2 rounded-full transition-all flex items-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-50"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-            <span>{isGenerating ? 'Synthesizing...' : 'AI Autofill'}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={isGeneratingPortrait || isGenerating || isUploadingReference}
+              className="bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 text-sky-300 px-4 py-2 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 shadow-lg cursor-pointer disabled:opacity-50 sm:w-auto"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>{isUploadingReference ? 'Uploading...' : 'Upload Ref'}</span>
+            </button>
 
-          {(isGenerating || isGeneratingPortrait) && (
+            <button 
+              type="button"
+              onClick={triggerAIGenerator}
+              disabled={isGenerating || isGeneratingPortrait || isUploadingReference}
+              className="bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold px-4 py-2 rounded-full transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-50 sm:w-auto sm:justify-start"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
+              <span>{isGenerating ? 'Synthesizing...' : 'AI Autofill'}</span>
+            </button>
+          </div>
+
+          {(isGenerating || isGeneratingPortrait || isUploadingReference) && (
             <div className="absolute top-4 left-4 right-4 bg-indigo-950/90 border border-indigo-500/25 px-3 py-1.5 rounded-lg text-[10px] font-mono text-indigo-300 flex items-center gap-2 shadow-xl animate-in slide-in-from-top-1">
               <RefreshCw className="w-3 h-3 animate-spin text-indigo-400" />
               <span>{genMessage}</span>
@@ -292,20 +395,15 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
             </span>
           </div>
           
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <span className="text-[9px] text-zinc-500 uppercase leading-none">Mass Index</span>
               <div className="flex items-center gap-1.5 mt-1">
-                <div className="flex-1 h-1.5 bg-zinc-900 rounded overflow-hidden">
-                  <div 
-                    className="h-full bg-indigo-500 transition-all duration-300"
-                    style={{ 
-                      width: editedChar.properties.build === 'slim' ? '40%' : 
-                             editedChar.properties.build === 'average' ? '65%' : 
-                             editedChar.properties.build === 'muscular' ? '95%' : '80%' 
-                    }}
-                  />
-                </div>
+                <progress
+                  className="storyforge-progress storyforge-progress--indigo flex-1 h-1.5"
+                  value={resolveBuildIndex(editedChar.properties.build)}
+                  max={100}
+                />
                 <span className="text-[10px] text-indigo-400 capitalize font-semibold leading-none">
                   {editedChar.properties.build}
                 </span>
@@ -315,15 +413,11 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
             <div className="space-y-1.5">
               <span className="text-[9px] text-zinc-500 uppercase leading-none">Anatomy Mode</span>
               <div className="flex items-center gap-1.5 mt-1">
-                <div className="flex-1 h-1.5 bg-zinc-900 rounded overflow-hidden">
-                  <div 
-                    className="h-full bg-teal-500 transition-all duration-300"
-                    style={{ 
-                      width: editedChar.properties.gender === 'male' ? '100%' : 
-                             editedChar.properties.gender === 'female' ? '100%' : '70%' 
-                    }}
-                  />
-                </div>
+                <progress
+                  className="storyforge-progress storyforge-progress--teal flex-1 h-1.5"
+                  value={resolveGenderIndex(editedChar.properties.gender)}
+                  max={100}
+                />
                 <span className="text-[10px] text-teal-400 capitalize font-semibold leading-none">
                   {editedChar.properties.gender || 'male'}
                 </span>
@@ -333,12 +427,11 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
             <div className="space-y-1.5">
               <span className="text-[9px] text-zinc-500 uppercase leading-none">Age factor</span>
               <div className="flex items-center gap-1.5 mt-1">
-                <div className="flex-1 h-1.5 bg-zinc-900 rounded overflow-hidden">
-                  <div 
-                    className="h-full bg-emerald-500 transition-all duration-300"
-                    style={{ width: `${(editedChar.properties.age / 75) * 100}%` }}
-                  />
-                </div>
+                <progress
+                  className="storyforge-progress storyforge-progress--emerald flex-1 h-1.5"
+                  value={editedChar.properties.age}
+                  max={75}
+                />
                 <span className="text-[10px] text-emerald-400 font-semibold leading-none">
                   {editedChar.properties.age}y
                 </span>
@@ -348,7 +441,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
 
           <div className="flex gap-4 pt-1.5 border-t border-zinc-900/60">
             <div className="flex-1 flex gap-2 items-center">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: resolveBiometricColor(editedChar.properties.hairColor), boxShadow: `0 0 6px ${resolveBiometricColor(editedChar.properties.hairColor)}` }} />
+              <span className={`storyforge-biometric-chip storyforge-biometric-chip--${hairTone}`} />
               <div className="flex flex-col">
                 <span className="text-[8px] text-zinc-500 uppercase leading-none">Hair Segment</span>
                 <span className="text-[10px] text-zinc-300 font-medium leading-normal mt-0.5 max-w-[120px] truncate" title={editedChar.properties.hairColor}>
@@ -358,7 +451,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
             </div>
 
             <div className="flex-1 flex gap-2 items-center">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: resolveBiometricColor(editedChar.properties.eyeColor), boxShadow: `0 0 6px ${resolveBiometricColor(editedChar.properties.eyeColor)}` }} />
+              <span className={`storyforge-biometric-chip storyforge-biometric-chip--${eyeTone}`} />
               <div className="flex flex-col">
                 <span className="text-[8px] text-zinc-500 uppercase leading-none">Eye Focal</span>
                 <span className="text-[10px] text-zinc-300 font-medium leading-normal mt-0.5 max-w-[120px] truncate" title={editedChar.properties.eyeColor}>
@@ -391,6 +484,61 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
         <div className="p-6 space-y-6">
           {activeTab === 'appearance' && (
             <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-zinc-400">Continuity Reference Library</label>
+                  <button
+                    type="button"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={isUploadingReference}
+                    className="text-[10px] font-mono uppercase tracking-wider text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2.5 py-1 rounded-full disabled:opacity-50"
+                  >
+                    Upload Reference
+                  </button>
+                </div>
+                <p className="text-[10px] font-mono text-zinc-500 leading-relaxed">
+                  Uploaded references can become the roster image while AI-generated portraits remain available as alternates.
+                </p>
+
+                {referenceAssets.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-4 py-5 text-center text-[11px] text-zinc-500">
+                    Upload a character reference to lock continuity across shots while keeping the AI portrait path available.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+                    {referenceAssets.map(asset => {
+                      const isActive = editedChar.activeImageId === asset.id || (!editedChar.activeImageId && activeDisplayImage === asset.url);
+                      return (
+                        <button
+                          key={asset.id}
+                          type="button"
+                          onClick={() => activateReferenceAsset(asset.id)}
+                          className={`rounded-2xl overflow-hidden border text-left transition-all ${
+                            isActive ? 'border-indigo-500 shadow-lg shadow-indigo-500/10' : 'border-zinc-800 hover:border-zinc-700'
+                          }`}
+                        >
+                          <div className="aspect-square bg-zinc-950 overflow-hidden relative">
+                            <img src={asset.url} alt={asset.label} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <div className="absolute top-2 left-2 text-[8px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-950/85 text-zinc-300 border border-zinc-800/80">
+                              {asset.kind === 'character-generated' ? 'AI' : 'REF'}
+                            </div>
+                            {isActive && (
+                              <div className="absolute bottom-2 left-2 text-[8px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-500/90 text-white">
+                                Active
+                              </div>
+                            )}
+                          </div>
+                          <div className="px-2.5 py-2 bg-zinc-950/90 space-y-1">
+                            <div className="text-[10px] text-zinc-200 font-medium truncate" title={asset.label}>{asset.label}</div>
+                            <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider">{asset.origin}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Style Selector */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-zinc-400 flex items-center justify-between">
@@ -399,6 +547,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
                 </label>
                 <div className="relative">
                   <select
+                    title="Select character style preset"
                     value={editedChar.properties.stylePreset || 'cinematic-actor'}
                     onChange={e => handlePropChange('stylePreset', e.target.value)}
                     className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs rounded-lg p-2.5 outline-none focus:border-indigo-500 accent-zinc-900 cursor-pointer"
@@ -453,6 +602,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
                 </div>
                 <input 
                   type="range" 
+                  title="Apparent age"
                   min="16" max="75" 
                   value={editedChar.properties.age} 
                   onChange={e => handlePropChange('age', parseInt(e.target.value))}
@@ -463,7 +613,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
               {/* Build Selection */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-zinc-400">Physique Profile</label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {['slim', 'average', 'muscular', 'heavy'].map((b) => (
                     <button
                       key={b}
@@ -484,7 +634,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
               {/* Gender Identity Selection */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-zinc-400">Gender Identity / Anatomy</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {['male', 'female', 'non-binary'].map((g) => (
                     <button
                       key={g}
@@ -503,7 +653,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
               </div>
 
               {/* Custom Styles */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-zinc-400">Hair Style</label>
                   <input 

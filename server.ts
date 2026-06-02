@@ -2,15 +2,21 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type, GenerateVideosOperation } from '@google/genai';
+import { GoogleGenAI, Type, GenerateVideosOperation, VideoGenerationReferenceType } from '@google/genai';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+const STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
-app.use(express.json());
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+app.use(express.json({ limit: '2mb' }));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Initialize Google GenAI client
 const apiKey = process.env.GEMINI_API_KEY;
@@ -33,6 +39,34 @@ function getAiClient(): GoogleGenAI {
   }
   return aiClient;
 }
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      callback(null, UPLOADS_DIR);
+    },
+    filename: (_req, file, callback) => {
+      const extension = path.extname(file.originalname || '').toLowerCase();
+      const baseName = path.basename(file.originalname || 'reference', extension)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'reference';
+      callback(null, `${Date.now()}-${baseName}${extension || '.png'}`);
+    },
+  }),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (file.mimetype?.startsWith('image/')) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Only image uploads are supported for continuity references.'));
+  },
+});
 
 // 1. POST /api/generate-character
 app.post('/api/generate-character', async (req, res) => {
@@ -519,8 +553,566 @@ app.post('/api/generate-portrait', async (req, res) => {
   }
 });
 
+const inferMimeTypeFromPath = (value: string) => {
+  const normalized = value.toLowerCase();
+  if (normalized.endsWith('.png')) return 'image/png';
+  if (normalized.endsWith('.webp')) return 'image/webp';
+  if (normalized.endsWith('.jpeg') || normalized.endsWith('.jpg')) return 'image/jpeg';
+  if (normalized.endsWith('.gif')) return 'image/gif';
+  if (normalized.endsWith('.svg')) return 'image/svg+xml';
+  return 'application/octet-stream';
+};
+
+const isQuotaExhaustedError = (error: any) => !!(
+  error?.status === 'RESOURCE_EXHAUSTED' ||
+  error?.message?.includes('RESOURCE_EXHAUSTED') ||
+  error?.message?.includes('429') ||
+  error?.message?.toLowerCase?.().includes('quota')
+);
+
+const createUploadedAsset = (file: Express.Multer.File, kind: string, label?: string) => ({
+  id: `asset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  kind,
+  origin: 'upload',
+  label: label || path.basename(file.originalname, path.extname(file.originalname)),
+  url: `/uploads/${file.filename}`,
+  mimeType: file.mimetype,
+  createdAt: new Date().toISOString(),
+});
+
+const STORYBOARD_NEGATIVE_PROMPT = 'Avoid subtitles, text overlays, logos, watermarks, costume drift, face drift, duplicated limbs, abrupt environment changes, or extra unnamed characters.';
+
+const startMockVideoOperation = (prompt: string) => {
+  const mockId = `mock-operation-veo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  mockOperations.set(mockId, {
+    createdAt: Date.now(),
+    prompt,
+  });
+  return mockId;
+};
+
+const getCharacterActiveImageUrl = (character: any): string | null => {
+  const assets = Array.isArray(character?.referenceAssets) ? character.referenceAssets : [];
+  const activeAsset = assets.find((asset: any) => asset.id === character?.activeImageId) || assets[0];
+  return activeAsset?.url || character?.thumbnail || null;
+};
+
+const getSceneActiveBackgroundUrl = (scene: any): string | null => {
+  const assets = Array.isArray(scene?.backgroundAssets) ? scene.backgroundAssets : [];
+  const activeAsset = assets.find((asset: any) => asset.id === scene?.activeBackgroundImageId) || assets[0];
+  return activeAsset?.url || null;
+};
+
+const getSceneStoryboardFrameAsset = (scene: any, assetId: string | null | undefined) => {
+  if (!assetId) return null;
+  const assets = Array.isArray(scene?.storyboardFrameAssets) ? scene.storyboardFrameAssets : [];
+  return assets.find((asset: any) => asset.id === assetId) || null;
+};
+
+const getShotAnchorFrameUrl = (scene: any, shot: any): string | null => {
+  const asset = getSceneStoryboardFrameAsset(scene, shot?.boardImageId);
+  return asset?.url || null;
+};
+
+const sanitizeStoryboardSeed = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+
+  const parsed = typeof value === 'string'
+    ? Number(value.trim())
+    : typeof value === 'number'
+      ? value
+      : Number.NaN;
+
+  if (!Number.isFinite(parsed)) return null;
+
+  const rounded = Math.round(parsed);
+  if (rounded <= 0) return null;
+
+  return Math.min(rounded, 2147483647);
+};
+
+const createRenderSeed = () => Math.floor(Math.random() * 2147483646) + 1;
+
+const resolveStoryboardSeedForShot = (scene: any, shot: any, explicitSeed?: unknown) => {
+  const requestSeed = sanitizeStoryboardSeed(explicitSeed);
+  if (requestSeed) {
+    return {
+      resolvedSeed: requestSeed,
+      seedSource: 'request',
+    };
+  }
+
+  const shots = Array.isArray(scene?.storyboardShots) ? scene.storyboardShots : [];
+  const shotIndex = shots.findIndex((candidate: any) => candidate?.id === shot?.id);
+  const previousShot = shotIndex > 0 ? shots[shotIndex - 1] : null;
+  const previousSeed = sanitizeStoryboardSeed(previousShot?.lastRenderSeed);
+  const lockedSeed = sanitizeStoryboardSeed(shot?.lockedSeed);
+
+  if (shot?.seedStrategy === 'lock' && lockedSeed) {
+    return {
+      resolvedSeed: lockedSeed,
+      seedSource: 'lock',
+    };
+  }
+
+  if (shot?.seedStrategy === 'inherit-previous' && previousSeed) {
+    return {
+      resolvedSeed: previousSeed,
+      seedSource: 'inherit-previous',
+    };
+  }
+
+  return {
+    resolvedSeed: createRenderSeed(),
+    seedSource: 'auto',
+  };
+};
+
+const getShotDialogueLines = (scene: any, shot: any) => {
+  const dialogueIds = Array.isArray(shot?.dialogueLineIds) ? shot.dialogueLineIds : [];
+  if (!dialogueIds.length) return [];
+  return (Array.isArray(scene?.dialogues) ? scene.dialogues : []).filter((dialogue: any) => dialogueIds.includes(dialogue.id));
+};
+
+const getShotDialogueExcerpt = (scene: any, characters: any[], shot: any) => {
+  if (typeof shot?.dialogueExcerpt === 'string' && shot.dialogueExcerpt.trim()) {
+    return shot.dialogueExcerpt.trim();
+  }
+
+  const lines = getShotDialogueLines(scene, shot);
+  return lines
+    .map((dialogue: any) => {
+      const speaker = characters.find((character: any) => character.id === dialogue.characterId)?.name || 'Unknown Actor';
+      return `${speaker}: ${dialogue.text}`;
+    })
+    .join(' ')
+    .trim();
+};
+
+const getShotCharacters = (characters: any[], scene: any, shot: any) => {
+  const shotDialogueLines = getShotDialogueLines(scene, shot);
+  const featuredIds = new Set(shotDialogueLines.map((dialogue: any) => dialogue.characterId));
+  const featuredCharacters = characters.filter((character: any) => featuredIds.has(character.id));
+  return featuredCharacters.length ? featuredCharacters : characters.slice(0, 2);
+};
+
+const resolveContinuityReferenceForShot = (scene: any, shot: any) => {
+  const shots = Array.isArray(scene?.storyboardShots) ? scene.storyboardShots : [];
+  const shotIndex = shots.findIndex((candidate: any) => candidate?.id === shot?.id);
+  const previousShot = shotIndex > 0 ? shots[shotIndex - 1] : null;
+
+  if (shot?.transitionInMode === 'custom-frame') {
+    const asset = getSceneStoryboardFrameAsset(scene, shot?.transitionInAssetId);
+    return {
+      url: asset?.url || null,
+      sourceLabel: asset ? `custom bridge frame "${asset.label}"` : 'custom bridge frame',
+      mode: 'custom-frame',
+    };
+  }
+
+  if (shot?.transitionInMode === 'previous-shot') {
+    const anchorUrl = previousShot ? getShotAnchorFrameUrl(scene, previousShot) : null;
+    return {
+      url: anchorUrl,
+      sourceLabel: previousShot ? `Shot ${shotIndex} anchor frame` : 'opening shot',
+      mode: 'previous-shot',
+    };
+  }
+
+  return {
+    url: null,
+    sourceLabel: null,
+    mode: 'none',
+  };
+};
+
+const buildIdentityAnchor = (character: any) => {
+  if (!character) return 'Preserve the same on-screen performer across all storyboard shots.';
+
+  return `${character.name} is a ${character.role}. Preserve age ${character.properties?.age}, ${character.properties?.build} physique, ${character.properties?.hairStyle} hair (${character.properties?.hairColor}), ${character.properties?.eyeColor} eyes, and wardrobe continuity: ${character.properties?.outfit}. Temperament: ${character.properties?.temperament}.`;
+};
+
+const buildQuickPreviewPrompt = (characters: any[], scene: any, camera: any) => {
+  const primaryChar = characters?.find((character: any) =>
+    Array.isArray(scene?.dialogues) && scene.dialogues.some((dialogue: any) => dialogue.characterId === character.id)
+  ) || characters?.[0];
+
+  const stylePreset = primaryChar?.properties?.stylePreset || 'cinematic-actor';
+  const styleDescription = VEO_AESTHETIC_MAP[stylePreset] || VEO_AESTHETIC_MAP['cinematic-actor'];
+  const activeBackground = getSceneActiveBackgroundUrl(scene);
+
+  let videoPrompt = '';
+  videoPrompt += `[AESTHETIC STYLIZATION ANCHOR]: ${styleDescription}\n\n`;
+
+  if (primaryChar) {
+    videoPrompt += `[IDENTITY ANCHOR PARAMETERS]: ${buildIdentityAnchor(primaryChar)}\n\n`;
+  }
+
+  if (scene) {
+    videoPrompt += `[SCENE ACTION & ENVIRONMENT SETTING]: The active scene is "${scene.title}". Incident actions: ${scene.description}. Ambient lighting mood: ${scene.lighting}. Atmospheric notes: ${scene.atmosphereNotes || 'None provided'}. ${activeBackground ? 'Respect the uploaded environment reference as the primary set continuity anchor.' : ''}\n\n`;
+  }
+
+  if (camera) {
+    videoPrompt += `[CAMERA DIRECTION]: Frame shot captured using ${camera.shotType || 'medium-shot'} positioning, tracked with virtual ${camera.focalLength || 50}mm prime lens at ${camera.tiltAngle || 'eye-level'} tilt angle. Aspect ratio: ${camera.aspectRatio || '16:9'}.\n\n`;
+  }
+
+  videoPrompt += '[PROMPT EXECUTION CONTRACT]: Render with physical space understanding, high structural continuity, lifelike human motion kinetics, organic micro-textures, and temporal character consistency across frames.';
+  return videoPrompt;
+};
+
+const buildLocalStoryboard = (scene: any, characters: any[], camera: any) => {
+  const dialogues = Array.isArray(scene?.dialogues) ? scene.dialogues : [];
+  const chunkSize = dialogues.length > 5 ? 2 : 1;
+  const chunks = dialogues.length
+    ? dialogues.reduce((groups: any[][], dialogue: any) => {
+        const currentGroup = groups[groups.length - 1];
+        if (!currentGroup || currentGroup.length >= chunkSize) {
+          groups.push([dialogue]);
+        } else {
+          currentGroup.push(dialogue);
+        }
+        return groups;
+      }, [] as any[][])
+    : [[]];
+
+  return chunks.map((chunk, index) => {
+    const leadDialogue = chunk[0];
+    const leadCharacter = characters.find((character: any) => character.id === leadDialogue?.characterId) || characters[0];
+    const shotType = ['wide-landscape', 'medium-shot', 'close-up', 'over-the-shoulder', 'two-shot', 'tracking'][index % 6];
+    const dialogueExcerpt = chunk
+      .map((dialogue: any) => {
+        const speaker = characters.find((character: any) => character.id === dialogue.characterId)?.name || 'Unknown Actor';
+        return `${speaker}: ${dialogue.text}`;
+      })
+      .join(' ')
+      .trim();
+
+    return {
+      id: `shot-${Date.now()}-${index}`,
+      shotNumber: index + 1,
+      title: `${scene?.title || 'Scene'} — Beat ${index + 1}`,
+      shotType,
+      durationSeconds: 8,
+      focalLength: camera?.focalLength || 50,
+      cameraAngle: camera?.tiltAngle || 'eye-level',
+      composition: shotType === 'wide-landscape'
+        ? 'Establish the geography of the scene and the environmental mood before tightening coverage.'
+        : shotType === 'close-up'
+          ? 'Emphasize emotional detail and continuity in the performer’s face.'
+          : 'Frame the active performer clearly with readable screen direction and continuity.',
+      action: chunk.length
+        ? `${leadCharacter?.name || 'The lead'} advances the scene beat while the environment remains consistent with the scene atmosphere.`
+        : `Establish the atmosphere of ${scene?.title || 'the scene'} before dialogue begins.`,
+      dialogueLineIds: chunk.map((dialogue: any) => dialogue.id),
+      dialogueExcerpt,
+      continuityNotes: `Preserve wardrobe, identity, blocking direction, and the scene atmosphere (${scene?.lighting || 'default lighting'}) from beat to beat.`,
+      boardImageId: null,
+      transitionInMode: index === 0 ? 'none' : 'previous-shot',
+      transitionInAssetId: null,
+    };
+  });
+};
+
+const normalizeReferenceUrl = (rawUrl: string) => {
+  if (!rawUrl) return rawUrl;
+
+  if (rawUrl.startsWith('/uploads/')) {
+    return rawUrl;
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.pathname.startsWith('/uploads/')) {
+      return parsed.pathname;
+    }
+  } catch {
+    return rawUrl;
+  }
+
+  return rawUrl;
+};
+
+const isSupportedReferenceMime = (mimeType: string) => ['image/png', 'image/jpeg', 'image/webp'].includes(mimeType);
+
+const assetUrlToInlineImage = async (assetUrl: string): Promise<{ imageBytes: string; mimeType: string } | null> => {
+  const normalizedUrl = normalizeReferenceUrl(assetUrl);
+
+  if (normalizedUrl.startsWith('/uploads/')) {
+    const assetPath = path.join(UPLOADS_DIR, normalizedUrl.replace('/uploads/', ''));
+    if (!fs.existsSync(assetPath)) {
+      return null;
+    }
+
+    const mimeType = inferMimeTypeFromPath(assetPath);
+    if (!isSupportedReferenceMime(mimeType)) {
+      return null;
+    }
+
+    const imageBytes = fs.readFileSync(assetPath).toString('base64');
+    return { imageBytes, mimeType };
+  }
+
+  if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')) {
+    const response = await fetch(normalizedUrl);
+    if (!response.ok) {
+      return null;
+    }
+
+    const mimeType = (response.headers.get('content-type') || inferMimeTypeFromPath(normalizedUrl)).split(';')[0].trim();
+    if (!isSupportedReferenceMime(mimeType)) {
+      return null;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return { imageBytes: buffer.toString('base64'), mimeType };
+  }
+
+  return null;
+};
+
+const pickReferenceUrlsForShot = (characters: any[], scene: any, shot: any) => {
+  const featuredCharacters = getShotCharacters(characters, scene, shot);
+  const continuityReference = resolveContinuityReferenceForShot(scene, shot);
+  const leadCharacterUrl = featuredCharacters[0] ? getCharacterActiveImageUrl(featuredCharacters[0]) : null;
+  const secondaryCharacterUrls = featuredCharacters.slice(1).map((character: any) => getCharacterActiveImageUrl(character));
+  const candidateUrls = [
+    continuityReference.url,
+    leadCharacterUrl,
+    getSceneActiveBackgroundUrl(scene),
+    ...secondaryCharacterUrls,
+  ].filter(Boolean) as string[];
+
+  return {
+    referenceUrls: [...new Set(candidateUrls)].slice(0, 3),
+    continuityReference,
+  };
+};
+
+const buildReferenceImages = async (referenceUrls: string[]) => {
+  const referenceImages: Array<{ image: { imageBytes: string; mimeType: string }; referenceType: VideoGenerationReferenceType }> = [];
+
+  for (const referenceUrl of referenceUrls) {
+    const inlineImage = await assetUrlToInlineImage(referenceUrl);
+    if (!inlineImage) continue;
+    referenceImages.push({
+      image: inlineImage,
+      referenceType: VideoGenerationReferenceType.ASSET,
+    });
+  }
+
+  return referenceImages;
+};
+
+const buildShotPrompt = (characters: any[], scene: any, shot: any, camera: any, continuityReference?: { url: string | null; sourceLabel: string | null; mode: string }) => {
+  const featuredCharacters = getShotCharacters(characters, scene, shot);
+  const leadCharacter = featuredCharacters[0] || characters?.[0];
+  const stylePreset = leadCharacter?.properties?.stylePreset || 'cinematic-actor';
+  const styleDescription = VEO_AESTHETIC_MAP[stylePreset] || VEO_AESTHETIC_MAP['cinematic-actor'];
+  const dialogueExcerpt = getShotDialogueExcerpt(scene, characters, shot);
+
+  return [
+    `Create a cinematic storyboard shot for a premium sci-fi feature film.`,
+    `Style: ${styleDescription}`,
+    `Subject: ${featuredCharacters.map((character: any) => buildIdentityAnchor(character)).join(' ') || 'Preserve the lead performer with continuity.'}`,
+    `Action: ${shot?.action || scene?.description || 'Advance the scene visually.'}`,
+    `Composition: ${shot?.shotType || camera?.shotType || 'medium-shot'}. ${shot?.composition || 'Compose the frame for clear dramatic readability.'}`,
+    `Camera positioning and motion: ${shot?.cameraAngle || camera?.tiltAngle || 'eye-level'} angle, ${shot?.focalLength || camera?.focalLength || 50}mm lens, ${camera?.aspectRatio || '16:9'} aspect ratio.`,
+    `Ambiance: ${scene?.lighting || 'cinematic neutral'}, ${scene?.description || 'no scene description provided'}. Atmospheric continuity notes: ${scene?.atmosphereNotes || 'Keep the environmental mood cohesive and dynamic.'}`,
+    `Continuity: ${shot?.continuityNotes || 'Preserve wardrobe, facial identity, blocking, and environmental continuity.'}`,
+    continuityReference?.url
+      ? `Continuity bridge frame: Use the supplied ${continuityReference.sourceLabel || 'transition frame'} as the handoff image before introducing new motion in this beat.`
+      : 'Continuity bridge frame: No dedicated bridge frame is supplied for this beat, so maintain continuity through subject identity, blocking, and the remaining references only.',
+    dialogueExcerpt
+      ? `Dialogue and audio: Deliver this spoken beat naturally with synchronized production audio and ambience: "${dialogueExcerpt}"`
+      : 'Dialogue and audio: Use environmental sound design, room tone, and subtle performance audio without on-screen subtitles.',
+    'Do not include subtitles or any visible text in frame.',
+  ].join('\n');
+};
+
 // In-memory registry to simulate Veo video rendering pipeline status for local dev fallback
 const mockOperations = new Map<string, { createdAt: number; prompt: string }>();
+
+app.post('/api/upload-reference', (req, res) => {
+  upload.single('file')(req, res, (error: any) => {
+    if (error) {
+      return res.status(400).json({ error: error.message || 'Reference upload failed.' });
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) {
+      return res.status(400).json({ error: 'No image file was uploaded.' });
+    }
+
+    const kind = typeof req.body?.kind === 'string' ? req.body.kind : 'character-upload';
+    const label = typeof req.body?.label === 'string' ? req.body.label : undefined;
+
+    return res.json({
+      asset: createUploadedAsset(file, kind, label),
+    });
+  });
+});
+
+app.post('/api/generate-storyboard', async (req, res) => {
+  const { scene, characters, camera } = req.body || {};
+  const fallbackShots = buildLocalStoryboard(scene, Array.isArray(characters) ? characters : [], camera);
+
+  try {
+    if (!scene) {
+      return res.status(400).json({ error: 'Scene data is required to plan a storyboard.' });
+    }
+
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is not defined. Falling back to local storyboard planning.');
+    }
+
+    const ai = getAiClient();
+    const desiredShotCount = Math.max(1, Math.min(fallbackShots.length || 1, 8));
+    const dialogueContext = (Array.isArray(scene?.dialogues) ? scene.dialogues : [])
+      .map((dialogue: any, index: number) => {
+        const speaker = characters?.find((character: any) => character.id === dialogue.characterId)?.name || 'Unknown Actor';
+        return `${index + 1}. [${dialogue.id}] ${speaker} (${dialogue.sentiment}): ${dialogue.text}`;
+      })
+      .join('\n') || 'No dialogue yet. Plan a visual storyboard from the scene description and atmosphere only.';
+
+    const prompt = `You are planning a professional film storyboard for an AI movie pipeline with Veo 3.1 limitations.
+
+Scene title: ${scene?.title || 'Untitled Scene'}
+Scene description: ${scene?.description || 'No description provided'}
+Lighting: ${scene?.lighting || 'No lighting specified'}
+Atmosphere notes: ${scene?.atmosphereNotes || 'No atmosphere notes provided'}
+Global camera profile: ${camera?.shotType || 'medium-shot'}, ${camera?.focalLength || 50}mm, ${camera?.tiltAngle || 'eye-level'}, ${camera?.aspectRatio || '16:9'}.
+Desired storyboard shot count: ${desiredShotCount}
+
+Dialogue timeline:
+${dialogueContext}
+
+Break the scene into professional storyboard shots that preserve continuity and prevent dialogue compression. Each shot should represent a playable cinematic beat, not a whole scene summary. Prefer 8-second shots when dialogue or reference-image continuity is important. Keep dialogueLineIds aligned to the provided IDs when possible.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: 'You are a world-class film storyboard artist and previsualization director. Return only valid JSON matching the provided schema. Build practical, shot-level boards for AI video generation with continuity in mind.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            shots: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  shotType: { type: Type.STRING },
+                  durationSeconds: { type: Type.INTEGER },
+                  focalLength: { type: Type.INTEGER },
+                  cameraAngle: { type: Type.STRING },
+                  composition: { type: Type.STRING },
+                  action: { type: Type.STRING },
+                  dialogueLineIds: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                  dialogueExcerpt: { type: Type.STRING },
+                  continuityNotes: { type: Type.STRING },
+                },
+                required: ['title', 'shotType', 'durationSeconds', 'composition', 'action', 'dialogueLineIds', 'continuityNotes'],
+              },
+            },
+          },
+          required: ['shots'],
+        },
+      },
+    });
+
+    const responseText = response.text;
+    if (!responseText) {
+      throw new Error('No storyboard response received from Gemini.');
+    }
+
+    const parsed = JSON.parse(responseText.trim());
+    return res.json({
+      shots: Array.isArray(parsed?.shots) && parsed.shots.length ? parsed.shots : fallbackShots,
+    });
+  } catch (error: any) {
+    console.warn('[Storyboard Planner] Falling back to local shot planning:', error?.message || error);
+    return res.json({ shots: fallbackShots, fallback: true, isQuotaExhausted: isQuotaExhaustedError(error) });
+  }
+});
+
+app.post('/api/generate-shot-video', async (req, res) => {
+  try {
+    const ai = getAiClient();
+    const { characters = [], scene, shot, camera, resolvedSeed } = req.body || {};
+
+    if (!scene || !shot) {
+      return res.status(400).json({ error: 'Scene and shot data are required to render a storyboard clip.' });
+    }
+
+    const { referenceUrls, continuityReference } = pickReferenceUrlsForShot(characters, scene, shot);
+    const referenceImages = await buildReferenceImages(referenceUrls);
+    const usingReferenceImages = referenceImages.length > 0;
+    const durationSeconds = usingReferenceImages ? 8 : ([4, 6, 8].includes(Number(shot?.durationSeconds)) ? Number(shot.durationSeconds) : 6);
+    const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
+    const aspect = camera?.aspectRatio === '9:16' ? '9:16' : '16:9';
+    const seedResolution = resolveStoryboardSeedForShot(scene, shot, resolvedSeed);
+
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is not defined. Emulating storyboard shot rendering pipeline.');
+    }
+
+    const operation = await ai.models.generateVideos({
+      model: 'veo-3.1-generate-preview',
+      prompt: videoPrompt,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: aspect,
+        durationSeconds,
+        seed: seedResolution.resolvedSeed,
+        negativePrompt: STORYBOARD_NEGATIVE_PROMPT,
+        ...(usingReferenceImages
+          ? {
+              personGeneration: 'allow_adult',
+              referenceImages,
+            }
+          : {}),
+      }
+    });
+
+    return res.json({
+      operationName: operation.name,
+      isFallback: false,
+      usingReferenceImages,
+      durationSeconds,
+      resolvedSeed: seedResolution.resolvedSeed,
+      seedSource: seedResolution.seedSource,
+      usingContinuityFrame: !!continuityReference?.url,
+      continuitySource: continuityReference?.sourceLabel || null,
+    });
+  } catch (error: any) {
+    const isQuotaExhausted = isQuotaExhaustedError(error);
+    if (isQuotaExhausted) {
+      console.log('[Veo Storyboard Emulator] Active 429 quota exhaustion fallback for storyboard shot render.');
+    } else {
+      console.log(`[Veo Storyboard Emulator] Falling back to storyboard shot pre-visualization: ${error?.message || 'Standard sandbox build.'}`);
+    }
+
+    const seedResolution = resolveStoryboardSeedForShot(req.body?.scene, req.body?.shot, req.body?.resolvedSeed);
+    const mockId = startMockVideoOperation(req.body?.shot?.action || req.body?.scene?.description || 'Storyboard Shot');
+    const continuityReference = resolveContinuityReferenceForShot(req.body?.scene, req.body?.shot);
+    return res.json({
+      operationName: mockId,
+      isFallback: true,
+      isQuotaExhausted,
+      usingReferenceImages: false,
+      resolvedSeed: seedResolution.resolvedSeed,
+      seedSource: seedResolution.seedSource,
+      usingContinuityFrame: !!continuityReference?.url,
+      continuitySource: continuityReference?.sourceLabel || null,
+    });
+  }
+});
 
 const VEO_AESTHETIC_MAP: Record<string, string> = {
   'cinematic-actor': 'Cinematic actor style rendering. Real lifelike human character styling, rich skin micro-textures, complex lifelike dynamic facial expressions (smiling/focus/thought), highly realistic soft hair physics simulation.',
@@ -544,41 +1136,8 @@ app.post('/api/generate-video', async (req, res) => {
   try {
     const ai = getAiClient();
     const { characters, scenes, camera } = req.body || {};
-
-    const primaryChar = characters?.[0];
     const firstScene = scenes?.[0];
-
-    const stylePreset = primaryChar?.properties?.stylePreset || 'cinematic-actor';
-    const styleDescription = VEO_AESTHETIC_MAP[stylePreset] || VEO_AESTHETIC_MAP['cinematic-actor'];
-
-    // Formulate descriptive visual prompt utilizing Google Veo Identity Anchor Blocks
-    let videoPrompt = "";
-    
-    // Step 1: Establish absolute Style Aesthetic Anchor
-    videoPrompt += `[AESTHETIC STYLIZATION ANCHOR]: ${styleDescription}\n\n`;
-
-    // Step 2: Identity Block (repeated anchor parameters to lock individual personality)
-    if (primaryChar) {
-      videoPrompt += `[IDENTITY ANCHOR PARAMETERS]: Modeled subject is named "${primaryChar.name}", who functions physically as a ${primaryChar.role}. Physical attributes: age index is ${primaryChar.properties?.age} years old with a ${primaryChar.properties?.build} physique. Features include styled hairs configured as ${primaryChar.properties?.hairStyle} (${primaryChar.properties?.hairColor}), and distinct ${primaryChar.properties?.eyeColor} colored eyes. Behavioral trait is ${primaryChar.properties?.temperament}.\n\n`;
-    }
-
-    // Step 3: Scene Action & Setting (varying action/location variables while keeping identity identical)
-    if (firstScene) {
-      videoPrompt += `[SCENE ACTION & ENVIRONMENT SETTING]: The active scene is "${firstScene.title}". Incident actions: ${firstScene.description}. Ambient lighting mood: ${firstScene.lighting}.\n\n`;
-    }
-    
-    // Step 4: Outfitting and Fabric Bounds
-    if (primaryChar?.properties?.outfit) {
-      videoPrompt += `[APPAREL BOUNDS]: Outfit is styled exactly as: ${primaryChar.properties.outfit}.\n\n`;
-    }
-
-    // Step 5: Camera Angle & Shot Coverage Settings
-    if (camera) {
-      videoPrompt += `[CAMERA DIRECTION]: Frame shot captured using ${camera.shotType || 'medium-shot'} positioning, tracked with virtual ${camera.focalLength || 50}mm prime lens at ${camera.tiltAngle || 'eye-level'} tilt angle. Aspect ratio: ${camera.aspectRatio || '16:9'}.\n\n`;
-    }
-
-    // Handshake contract ensuring physics rules remain stable
-    videoPrompt += "[PROMPT EXECUTION CONTRACT]: Render with physical space understanding, high structural continuity, lifelike human motion kinetics, organic micro-textures, and temporal character consistency across frames.";
+    const videoPrompt = buildQuickPreviewPrompt(Array.isArray(characters) ? characters : [], firstScene, camera);
 
     let aspect: '16:9' | '9:16' = '16:9';
     if (camera?.aspectRatio === '9:16') {
@@ -602,12 +1161,7 @@ app.post('/api/generate-video', async (req, res) => {
 
     return res.json({ operationName: operation.name, isFallback: false });
   } catch (error: any) {
-    const isQuotaExhausted = !!(
-      error?.status === 'RESOURCE_EXHAUSTED' || 
-      error?.message?.includes('RESOURCE_EXHAUSTED') || 
-      error?.message?.includes('429') || 
-      error?.message?.includes('quota')
-    );
+    const isQuotaExhausted = isQuotaExhaustedError(error);
                              
     // Graceful fallback to sandbox pre-visualization without printing standard error warnings to console
     if (isQuotaExhausted) {
@@ -616,11 +1170,7 @@ app.post('/api/generate-video', async (req, res) => {
       console.log(`[Veo Video Emulator] Generating high-quality storyboard pre-visualization fallback: ${error?.message || 'Standard sandbox build.'}`);
     }
 
-    const mockId = `mock-operation-veo-${Date.now()}`;
-    mockOperations.set(mockId, {
-      createdAt: Date.now(),
-      prompt: req.body?.scenes?.[0]?.description || "Storyboard Concept"
-    });
+    const mockId = startMockVideoOperation(req.body?.scenes?.[0]?.description || 'Storyboard Concept');
     return res.json({ operationName: mockId, isFallback: true, isQuotaExhausted });
   }
 });
@@ -728,8 +1278,6 @@ app.all('/api/video-download', async (req, res) => {
     return res.status(500).json({ error: "Failed to download and stream videography concept asset.", details: error.message });
   }
 });
-
-const STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
 
 // Get persisted screenplay state from local JSON file
 app.get('/api/load-sandbox-state', (req, res) => {
