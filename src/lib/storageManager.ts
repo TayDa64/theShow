@@ -35,13 +35,29 @@ export function getDatePartition(date = new Date()) {
   return path.join(year, month, day);
 }
 
+function normalizeScopePath(scope: string | undefined | null) {
+  if (!scope) {
+    return '';
+  }
+
+  return scope
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .filter((segment) => !!segment && segment !== '.' && segment !== '..')
+    .join(path.sep);
+}
+
 export function buildUploadTarget(options: {
   baseDir?: string;
   mimeType: string;
   date?: Date;
+  scope?: string;
 }) {
   const extension = MIME_EXTENSION_MAP[options.mimeType] || '.bin';
-  const relativeDir = getDatePartition(options.date);
+  const scope = normalizeScopePath(options.scope);
+  const relativeDir = scope
+    ? path.join(scope, getDatePartition(options.date))
+    : getDatePartition(options.date);
   const root = getUploadsRoot(options.baseDir);
   const absoluteDir = ensureDirectory(path.join(root, relativeDir));
   const filename = `${uuidv4()}${extension}`;
@@ -58,20 +74,28 @@ export function buildUploadTarget(options: {
   };
 }
 
-export function createUploadMiddleware(baseDir = process.cwd()) {
+export function createUploadMiddleware(baseDir = process.cwd(), resolveScope?: (req: Express.Request) => string | undefined) {
   return multer({
     storage: multer.diskStorage({
-      destination: (_req, file, callback) => {
+      destination: (req, file, callback) => {
         if (!isAllowedImageMimeType(file.mimetype)) {
           callback(new Error('Only PNG, JPEG, and WEBP uploads are supported.'), '');
           return;
         }
 
-        const target = buildUploadTarget({ baseDir, mimeType: file.mimetype });
+        const target = buildUploadTarget({
+          baseDir,
+          mimeType: file.mimetype,
+          scope: resolveScope?.(req),
+        });
         callback(null, target.absoluteDir);
       },
-      filename: (_req, file, callback) => {
-        const target = buildUploadTarget({ baseDir, mimeType: file.mimetype });
+      filename: (req, file, callback) => {
+        const target = buildUploadTarget({
+          baseDir,
+          mimeType: file.mimetype,
+          scope: resolveScope?.(req),
+        });
         callback(null, target.filename);
       },
     }),
@@ -102,8 +126,8 @@ export function createUploadedAsset(file: Express.Multer.File, kind: string, lab
   };
 }
 
-export async function saveBufferAsUpload(buffer: Buffer, mimeType: string, options?: { label?: string; baseDir?: string }) {
-  const target = buildUploadTarget({ baseDir: options?.baseDir, mimeType });
+export async function saveBufferAsUpload(buffer: Buffer, mimeType: string, options?: { label?: string; baseDir?: string; scope?: string }) {
+  const target = buildUploadTarget({ baseDir: options?.baseDir, mimeType, scope: options?.scope });
   await fs.promises.writeFile(target.absolutePath, buffer);
   return {
     path: target.absolutePath,

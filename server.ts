@@ -8,6 +8,30 @@ import { GoogleGenAI, Type, GenerateVideosOperation, VideoGenerationReferenceTyp
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { assembleFilm, extractLastFrame } from './src/lib/ffmpegComposer';
+import {
+  attachAuthToRequest,
+  assertVideoGenerationAllowed,
+  authenticateUser,
+  buildAuthStatus,
+  clearSessionFromResponse,
+  disconnectPersonalGeminiProvider,
+  getAuthStatusForRequest,
+  getOperationApiKeyForUser,
+  getRequestUserId,
+  getVideoGenerationAccessForUser,
+  linkPersonalGeminiProvider,
+  loadProjectStateForUser,
+  logoutSession,
+  recordVideoOperation,
+  registerUser,
+  requireAuth,
+  requireCsrf,
+  revokeUserSession,
+  saveProjectStateForUser,
+  userOwnsOperation,
+  writeSessionToResponse,
+  type AuthenticatedRequest,
+} from './src/lib/authStore';
 import { generateCinematicPrompt } from './src/lib/geminiDirector';
 import {
   ensureMockVideoAsset,
@@ -22,48 +46,57 @@ import {
   getUploadsRoot,
   saveBufferAsUpload,
 } from './src/lib/storageManager';
+import type { GenerationProviderMode } from './src/types';
 import type { AssembleFilmRequest, ChainedClip, FilmAssemblyJob } from './src/types/pipeline';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
-const STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
 const UPLOADS_DIR = getUploadsRoot();
 const FILMS_DIR = path.join(UPLOADS_DIR, 'films');
 const MOCK_VIDEOS_DIR = path.join(UPLOADS_DIR, 'mock-videos');
 const filmAssemblyJobs = new Map<string, FilmAssemblyJob>();
+const filmAssemblyOwners = new Map<string, string>();
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(FILMS_DIR, { recursive: true });
 fs.mkdirSync(MOCK_VIDEOS_DIR, { recursive: true });
 
 app.use(express.json({ limit: '2mb' }));
+app.use(attachAuthToRequest);
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Initialize Google GenAI client
-const apiKey = process.env.GEMINI_API_KEY;
-
-// Shared lazy-loaded client as requested by SDK guidelines
-let aiClient: GoogleGenAI | null = null;
-function getAiClient(): GoogleGenAI {
-  if (!aiClient) {
-    if (!apiKey) {
-      console.warn("WARNING: GEMINI_API_KEY environment variable is not set.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey: apiKey || 'MOCK_KEY_FOR_LOCAL_DEV',
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+const aiClients = new Map<string, GoogleGenAI>();
+function getAiClientForApiKey(apiKey: string | null | undefined): GoogleGenAI | null {
+  const resolvedApiKey = apiKey?.trim();
+  if (!resolvedApiKey) {
+    return null;
   }
-  return aiClient;
+
+  const existingClient = aiClients.get(resolvedApiKey);
+  if (existingClient) {
+    return existingClient;
+  }
+
+  const nextClient = new GoogleGenAI({
+    apiKey: resolvedApiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+
+  aiClients.set(resolvedApiKey, nextClient);
+  return nextClient;
 }
 
-const upload = createUploadMiddleware();
+const upload = createUploadMiddleware(process.cwd(), (req) => {
+  const authenticatedReq = req as AuthenticatedRequest;
+  const userId = authenticatedReq.auth?.user.id;
+  return userId ? `users/${userId}` : 'local';
+});
 const generationRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -81,11 +114,127 @@ const fileOperationRateLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => `${req.ip}:${req.path}`,
 });
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${req.path}`,
+  message: {
+    error: 'Too many account requests. Please wait a few minutes and try again.',
+  },
+});
+
+app.get('/api/auth/session', (req, res) => {
+  return res.json(getAuthStatusForRequest(req));
+});
+
+app.post('/api/auth/register', authRateLimiter, (req, res) => {
+  try {
+    const { user, session } = registerUser(req.body || {}, {
+      userAgent: req.get('user-agent') || undefined,
+      ip: req.ip,
+    });
+    writeSessionToResponse(res, session.id);
+    return res.status(201).json(buildAuthStatus(user, session));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not create the account.' });
+  }
+});
+
+app.post('/api/auth/login', authRateLimiter, (req, res) => {
+  try {
+    const { user, session } = authenticateUser(req.body || {}, {
+      userAgent: req.get('user-agent') || undefined,
+      ip: req.ip,
+    });
+    writeSessionToResponse(res, session.id);
+    return res.json(buildAuthStatus(user, session));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Sign-in failed.' });
+  }
+});
+
+app.post('/api/auth/logout', requireAuth, requireCsrf, (req, res) => {
+  const auth = (req as AuthenticatedRequest).auth;
+  logoutSession(auth?.session.id);
+  clearSessionFromResponse(res);
+  return res.json(buildAuthStatus(null, null));
+});
+
+app.post('/api/auth/provider/gemini', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    linkPersonalGeminiProvider(userId, req.body || {});
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not connect Gemini API access.' });
+  }
+});
+
+app.delete('/api/auth/provider/gemini', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    disconnectPersonalGeminiProvider(userId);
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not disconnect Gemini API access.' });
+  }
+});
+
+app.post('/api/auth/sessions/:sessionId/revoke', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    revokeUserSession(userId, req.params.sessionId);
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not revoke that session.' });
+  }
+});
+
+function getAuthenticatedUserId(req: express.Request) {
+  const userId = getRequestUserId(req);
+  if (!userId) {
+    throw new Error('Authentication is required.');
+  }
+  return userId;
+}
+
+function getGenerationContextForRequest(req: express.Request) {
+  const userId = getAuthenticatedUserId(req);
+  const access = getVideoGenerationAccessForUser(userId);
+  return {
+    userId,
+    access,
+    ai: getAiClientForApiKey(access.apiKey),
+  };
+}
+
+function ensureOperationOwnership(userId: string, operationName: string) {
+  if (!userOwnsOperation(userId, operationName)) {
+    throw new Error('That render operation does not belong to the current account.');
+  }
+}
 
 // 1. POST /api/generate-character
-app.post('/api/generate-character', async (req, res) => {
+app.post('/api/generate-character', requireAuth, requireCsrf, async (req, res) => {
   try {
-    const ai = getAiClient();
+    const { ai } = getGenerationContextForRequest(req);
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Falling back to local character generation.');
+    }
     const { name, role, properties } = req.body || {};
 
     const prompt = `Create a highly compelling, multi-dimensional story character profile. 
@@ -220,9 +369,12 @@ Expand these parameters into a professional screenplay character profile with ex
 });
 
 // 2. POST /api/generate-dialogue
-app.post('/api/generate-dialogue', async (req, res) => {
+app.post('/api/generate-dialogue', requireAuth, requireCsrf, async (req, res) => {
   try {
-    const ai = getAiClient();
+    const { ai } = getGenerationContextForRequest(req);
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Falling back to local dialogue generation.');
+    }
     const { scene, characters, currentDialogues, speakerId, sentiment } = req.body || {};
 
     const activeSpeaker = characters.find((c: any) => c.id === speakerId);
@@ -351,9 +503,12 @@ Draft one impactful, authentic line spoken by ${activeSpeaker.name}. It must loc
 });
 
 // 3. POST /api/generate-portrait
-app.post('/api/generate-portrait', async (req, res) => {
+app.post('/api/generate-portrait', requireAuth, requireCsrf, async (req, res) => {
   try {
-    const ai = getAiClient();
+    const { ai } = getGenerationContextForRequest(req);
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Falling back to local portrait generation.');
+    }
     const charName = req.body?.name || '';
     const charRole = req.body?.role || '';
     const charProps = req.body?.properties || {};
@@ -591,6 +746,7 @@ const startMockVideoOperation = (
   options: {
     aspectRatio?: '16:9' | '9:16';
     durationSeconds?: number;
+    userId?: string | null;
   } = {},
 ) => {
   const mockId = `mock-operation-veo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -599,6 +755,7 @@ const startMockVideoOperation = (
     prompt,
     aspectRatio: normalizeMockVideoAspectRatio(options.aspectRatio),
     durationSeconds: normalizeMockVideoDuration(options.durationSeconds, 8),
+    userId: options.userId || null,
   });
   return mockId;
 };
@@ -947,6 +1104,7 @@ const mockOperations = new Map<string, {
   prompt: string;
   aspectRatio: '16:9' | '9:16';
   durationSeconds: number;
+  userId?: string | null;
 }>();
 
 app.post('/api/upload-reference', (req, res) => {
@@ -969,7 +1127,7 @@ app.post('/api/upload-reference', (req, res) => {
   });
 });
 
-app.post('/api/generate-storyboard', async (req, res) => {
+app.post('/api/generate-storyboard', requireAuth, requireCsrf, async (req, res) => {
   const { scene, characters, camera } = req.body || {};
   const fallbackShots = buildLocalStoryboard(scene, Array.isArray(characters) ? characters : [], camera);
 
@@ -978,11 +1136,11 @@ app.post('/api/generate-storyboard', async (req, res) => {
       return res.status(400).json({ error: 'Scene data is required to plan a storyboard.' });
     }
 
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not defined. Falling back to local storyboard planning.');
+    const { ai } = getGenerationContextForRequest(req);
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Falling back to local storyboard planning.');
     }
 
-    const ai = getAiClient();
     const desiredShotCount = Math.max(1, Math.min(fallbackShots.length || 1, 8));
     const dialogueContext = (Array.isArray(scene?.dialogues) ? scene.dialogues : [])
       .map((dialogue: any, index: number) => {
@@ -1057,13 +1215,14 @@ Break the scene into professional storyboard shots that preserve continuity and 
   }
 });
 
-app.post('/api/generate-shot-prompt', generationRateLimiter, async (req, res) => {
+app.post('/api/generate-shot-prompt', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   const { characters = [], scene, shot, camera } = req.body || {};
   if (!scene || !shot) {
     return res.status(400).json({ error: 'Scene and shot data are required to generate a film prompt.' });
   }
 
-  const prompt = await generateCinematicPrompt(apiKey ? getAiClient() : null, {
+  const { ai } = getGenerationContextForRequest(req);
+  const prompt = await generateCinematicPrompt(ai, {
     characters,
     scene,
     shot,
@@ -1073,14 +1232,22 @@ app.post('/api/generate-shot-prompt', generationRateLimiter, async (req, res) =>
   return res.json({ prompt });
 });
 
-app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => {
+app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
+  let userId: string | null = null;
+  let providerMode: GenerationProviderMode = 'sandbox';
+
   try {
-    const ai = getAiClient();
+    const generationContext = getGenerationContextForRequest(req);
+    userId = generationContext.userId;
+    providerMode = generationContext.access.provider.mode;
+    const { ai, access } = generationContext;
     const { characters = [], scene, shot, camera, resolvedSeed } = req.body || {};
 
     if (!scene || !shot) {
       return res.status(400).json({ error: 'Scene and shot data are required to render a storyboard clip.' });
     }
+
+    assertVideoGenerationAllowed(userId);
 
     const { referenceUrls, continuityReference } = pickReferenceUrlsForShot(characters, scene, shot);
     const referenceImages = await buildReferenceImages(referenceUrls);
@@ -1090,8 +1257,8 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
     const aspect = camera?.aspectRatio === '9:16' ? '9:16' : '16:9';
     const seedResolution = resolveStoryboardSeedForShot(scene, shot, resolvedSeed);
 
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not defined. Emulating storyboard shot rendering pipeline.');
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Emulating storyboard shot rendering pipeline.');
     }
 
     const operation = await ai.models.generateVideos({
@@ -1113,6 +1280,13 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
       }
     });
 
+    recordVideoOperation(userId, {
+      operationName: operation.name,
+      model: 'veo-3.1-generate-preview',
+      providerMode,
+      countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
+    });
+
     return res.json({
       operationName: operation.name,
       isFallback: false,
@@ -1122,8 +1296,13 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
       seedSource: seedResolution.seedSource,
       usingContinuityFrame: !!continuityReference?.url,
       continuitySource: continuityReference?.sourceLabel || null,
+      providerMode,
     });
   } catch (error: any) {
+    if (error?.message?.includes('Daily video generation quota reached')) {
+      return res.status(429).json({ error: error.message, isQuotaExceeded: true, providerMode });
+    }
+
     const isQuotaExhausted = isQuotaExhaustedError(error);
     if (isQuotaExhausted) {
       console.log('[Veo Storyboard Emulator] Active 429 quota exhaustion fallback for storyboard shot render.');
@@ -1139,8 +1318,17 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
       {
         aspectRatio: requestedAspectRatio,
         durationSeconds: requestedDurationSeconds,
+        userId,
       },
     );
+    if (userId) {
+      recordVideoOperation(userId, {
+        operationName: mockId,
+        model: 'veo-3.1-generate-preview',
+        providerMode: 'sandbox',
+        countsTowardDailyLimit: false,
+      });
+    }
     const continuityReference = resolveContinuityReferenceForShot(req.body?.scene, req.body?.shot);
     return res.json({
       operationName: mockId,
@@ -1152,33 +1340,23 @@ app.post('/api/generate-shot-video', generationRateLimiter, async (req, res) => 
       seedSource: seedResolution.seedSource,
       usingContinuityFrame: !!continuityReference?.url,
       continuitySource: continuityReference?.sourceLabel || null,
+      providerMode: 'sandbox',
     });
   }
 });
-
-function isSafeReadablePath(filePath: string) {
-  if (!path.isAbsolute(filePath)) {
-    return false;
-  }
-
-  const resolved = path.resolve(filePath);
-  const allowedRoots = [
-    path.resolve(UPLOADS_DIR),
-    path.resolve(getTempClipsDirectory()),
-    path.resolve(process.cwd()),
-    path.resolve(os.tmpdir()),
-  ];
-
-  return allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`));
-}
 
 function isSafeFilmId(value: string) {
   return /^[a-f0-9-]{36}$/i.test(value);
 }
 
-async function downloadOperationToTempFile(operationName: string) {
+async function downloadOperationToTempFile(operationName: string, userId: string) {
+  ensureOperationOwnership(userId, operationName);
+
   if (operationName.startsWith('mock-operation-')) {
     const mockOp = mockOperations.get(operationName);
+    if (!mockOp || (mockOp.userId && mockOp.userId !== userId)) {
+      throw new Error(`Could not access clip source: ${operationName}`);
+    }
     return ensureMockVideoAsset({
       cacheDir: MOCK_VIDEOS_DIR,
       operationName,
@@ -1187,8 +1365,23 @@ async function downloadOperationToTempFile(operationName: string) {
     });
   }
 
-  const internalUrl = `http://127.0.0.1:${PORT}/api/video-download?operationName=${encodeURIComponent(operationName)}`;
-  const response = await fetch(internalUrl);
+  const operationApiKey = getOperationApiKeyForUser(userId, operationName);
+  const ai = getAiClientForApiKey(operationApiKey);
+  if (!ai || !operationApiKey) {
+    throw new Error(`Could not download clip source: ${operationName}`);
+  }
+
+  const op = new GenerateVideosOperation();
+  op.name = operationName;
+  const updated = await ai.operations.getVideosOperation({ operation: op });
+  const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
+  if (!uri) {
+    throw new Error(`Could not download clip source: ${operationName}`);
+  }
+
+  const response = await fetch(uri, {
+    headers: { 'x-goog-api-key': operationApiKey },
+  });
   if (!response.ok) {
     throw new Error(`Could not download clip source: ${operationName}`);
   }
@@ -1215,20 +1408,15 @@ async function safeRemoveTempFile(filePath: string | null | undefined) {
   }
 }
 
-function resolveFilmOutputPath(filmId: string, outputPath?: string) {
-  const fallbackPath = path.resolve(path.join(FILMS_DIR, `${filmId}.mp4`));
-  const resolved = path.resolve(outputPath || fallbackPath);
-  const filmsRoot = path.resolve(FILMS_DIR);
+app.post('/api/extend-clip', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
+  let userId: string | null = null;
+  let providerMode: GenerationProviderMode = 'sandbox';
 
-  if (!(resolved === fallbackPath || resolved.startsWith(`${filmsRoot}${path.sep}`))) {
-    throw new Error('Invalid film export path.');
-  }
-
-  return resolved;
-}
-
-app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
   try {
+    const generationContext = getGenerationContextForRequest(req);
+    userId = generationContext.userId;
+    providerMode = generationContext.access.provider.mode;
+    const { ai, access } = generationContext;
     const { prompt, videoToExtend, firstFrame, aspectRatio = '16:9', durationSeconds = 8, seed, referenceImages = [] } = req.body || {};
     const normalizedDurationSeconds = normalizeMockVideoDuration(durationSeconds, 8);
     const normalizedAspectRatio = normalizeMockVideoAspectRatio(aspectRatio);
@@ -1237,20 +1425,29 @@ app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
       return res.status(400).json({ error: 'prompt and videoToExtend are required.' });
     }
 
-    if (!apiKey) {
+    assertVideoGenerationAllowed(userId);
+
+    if (!ai) {
       const mockId = startMockVideoOperation(prompt, {
         aspectRatio: normalizedAspectRatio,
         durationSeconds: normalizedDurationSeconds,
+        userId,
+      });
+      recordVideoOperation(userId, {
+        operationName: mockId,
+        model: 'veo-3.1-generate-preview',
+        providerMode: 'sandbox',
+        countsTowardDailyLimit: false,
       });
       return res.json({
         operationName: mockId,
         isFallback: true,
         usingContinuityFrame: !!firstFrame,
         durationSeconds: normalizedDurationSeconds,
+        providerMode: 'sandbox',
       });
     }
 
-    const ai = getAiClient();
     const operation = await (ai.models as any).generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt,
@@ -1266,36 +1463,59 @@ app.post('/api/extend-clip', generationRateLimiter, async (req, res) => {
       },
     });
 
+    recordVideoOperation(userId, {
+      operationName: operation.name,
+      model: 'veo-3.1-generate-preview',
+      providerMode,
+      countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
+    });
+
     return res.json({
       operationName: operation.name,
       usingContinuityFrame: !!firstFrame,
       isFallback: false,
       durationSeconds: normalizedDurationSeconds,
+      providerMode,
     });
   } catch (error: any) {
+    if (error?.message?.includes('Daily video generation quota reached')) {
+      return res.status(429).json({ error: error.message, isQuotaExceeded: true, providerMode });
+    }
+
     const normalizedDurationSeconds = normalizeMockVideoDuration(req.body?.durationSeconds, 8);
     const mockId = startMockVideoOperation(req.body?.prompt || 'Extended Clip', {
       aspectRatio: normalizeMockVideoAspectRatio(req.body?.aspectRatio),
       durationSeconds: normalizedDurationSeconds,
+      userId,
     });
+    if (userId) {
+      recordVideoOperation(userId, {
+        operationName: mockId,
+        model: 'veo-3.1-generate-preview',
+        providerMode: 'sandbox',
+        countsTowardDailyLimit: false,
+      });
+    }
     return res.json({
       operationName: mockId,
       isFallback: true,
       usingContinuityFrame: !!req.body?.firstFrame,
       durationSeconds: normalizedDurationSeconds,
       error: error?.message || 'Extension fallback enabled.',
+      providerMode: 'sandbox',
     });
   }
 });
 
-app.post('/api/extract-frame', fileOperationRateLimiter, async (req, res) => {
+app.post('/api/extract-frame', fileOperationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   let localClipPath: string | null = null;
   let extractedFramePath: string | null = null;
 
   try {
+    const userId = getAuthenticatedUserId(req);
     const { operationName, label } = req.body || {};
     const sourcePath = operationName
-      ? await downloadOperationToTempFile(operationName)
+      ? await downloadOperationToTempFile(operationName, userId)
       : null;
 
     if (!sourcePath) {
@@ -1305,7 +1525,7 @@ app.post('/api/extract-frame', fileOperationRateLimiter, async (req, res) => {
     localClipPath = sourcePath;
     extractedFramePath = await extractLastFrame(localClipPath, path.join(getTempClipsDirectory(), `${uuidv4()}.png`));
     const buffer = await fs.promises.readFile(extractedFramePath);
-    const uploaded = await saveBufferAsUpload(buffer, 'image/png', { label });
+    const uploaded = await saveBufferAsUpload(buffer, 'image/png', { label, scope: `users/${userId}` });
 
     return res.json({
       asset: {
@@ -1327,7 +1547,8 @@ app.post('/api/extract-frame', fileOperationRateLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
+app.post('/api/assemble-film', fileOperationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
   const filmId = uuidv4();
   const body = (req.body || {}) as AssembleFilmRequest;
   const clips = Array.isArray(body.clips) ? body.clips : [];
@@ -1341,6 +1562,7 @@ app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
     clipCount: clips.length,
     status: 'processing',
   });
+  filmAssemblyOwners.set(filmId, userId);
 
   const tempFiles: string[] = [];
 
@@ -1349,7 +1571,7 @@ app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
 
     for (const clip of clips) {
       const filePath = clip.operationName
-        ? await downloadOperationToTempFile(clip.operationName)
+        ? await downloadOperationToTempFile(clip.operationName, userId)
         : null;
       if (!filePath) {
         throw new Error(`Clip ${clip.title || clip.shotId} is missing a file source.`);
@@ -1389,10 +1611,14 @@ app.post('/api/assemble-film', fileOperationRateLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/download-film/:filmId', fileOperationRateLimiter, async (req, res) => {
+app.get('/api/download-film/:filmId', fileOperationRateLimiter, requireAuth, async (req, res) => {
+  const userId = getAuthenticatedUserId(req);
   const filmId = req.params.filmId;
   if (!isSafeFilmId(filmId)) {
     return res.status(400).json({ error: 'Invalid film id.' });
+  }
+  if (filmAssemblyOwners.get(filmId) !== userId) {
+    return res.status(403).json({ error: 'This film export does not belong to the current account.' });
   }
   const job = filmAssemblyJobs.get(filmId);
   if (!job?.outputPath) {
@@ -1430,9 +1656,15 @@ const VEO_AESTHETIC_MAP: Record<string, string> = {
 };
 
 // 1. POST /api/generate-video - Start Veo video generation
-app.post('/api/generate-video', async (req, res) => {
+app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
+  let userId: string | null = null;
+  let providerMode: GenerationProviderMode = 'sandbox';
+
   try {
-    const ai = getAiClient();
+    const generationContext = getGenerationContextForRequest(req);
+    userId = generationContext.userId;
+    providerMode = generationContext.access.provider.mode;
+    const { ai, access } = generationContext;
     const { characters, scenes, camera } = req.body || {};
     const firstScene = scenes?.[0];
     const videoPrompt = buildQuickPreviewPrompt(Array.isArray(characters) ? characters : [], firstScene, camera);
@@ -1442,8 +1674,10 @@ app.post('/api/generate-video', async (req, res) => {
       aspect = '9:16';
     }
 
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined. Emulating Veo Sandbox rendering pipeline.");
+    assertVideoGenerationAllowed(userId);
+
+    if (!ai) {
+      throw new Error('No live Gemini provider configured. Emulating Veo Sandbox rendering pipeline.');
     }
 
     console.log(`[Veo Video Engine] Triggering request with prompt: "${videoPrompt.substring(0, 110)}..."`);
@@ -1457,8 +1691,19 @@ app.post('/api/generate-video', async (req, res) => {
       }
     });
 
-    return res.json({ operationName: operation.name, isFallback: false });
+    recordVideoOperation(userId, {
+      operationName: operation.name,
+      model: 'veo-3.1-lite-generate-preview',
+      providerMode,
+      countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
+    });
+
+    return res.json({ operationName: operation.name, isFallback: false, providerMode });
   } catch (error: any) {
+    if (error?.message?.includes('Daily video generation quota reached')) {
+      return res.status(429).json({ error: error.message, isQuotaExceeded: true, providerMode });
+    }
+
     const isQuotaExhausted = isQuotaExhaustedError(error);
                              
     // Graceful fallback to sandbox pre-visualization without printing standard error warnings to console
@@ -1471,22 +1716,34 @@ app.post('/api/generate-video', async (req, res) => {
     const mockId = startMockVideoOperation(req.body?.scenes?.[0]?.description || 'Storyboard Concept', {
       aspectRatio: normalizeMockVideoAspectRatio(req.body?.camera?.aspectRatio),
       durationSeconds: 8,
+      userId,
     });
-    return res.json({ operationName: mockId, isFallback: true, isQuotaExhausted });
+    if (userId) {
+      recordVideoOperation(userId, {
+        operationName: mockId,
+        model: 'veo-3.1-lite-generate-preview',
+        providerMode: 'sandbox',
+        countsTowardDailyLimit: false,
+      });
+    }
+    return res.json({ operationName: mockId, isFallback: true, isQuotaExhausted, providerMode: 'sandbox' });
   }
 });
 
 // 2. POST /api/video-status - Poll video generation
-app.post('/api/video-status', async (req, res) => {
+app.post('/api/video-status', requireAuth, requireCsrf, async (req, res) => {
   try {
+    const userId = getAuthenticatedUserId(req);
     const { operationName } = req.body || {};
     if (!operationName) {
       return res.status(400).json({ error: "Missing operation name identifier." });
     }
 
+    ensureOperationOwnership(userId, operationName);
+
     if (operationName.startsWith('mock-operation-')) {
       const mockOp = mockOperations.get(operationName);
-      if (!mockOp) {
+      if (!mockOp || (mockOp.userId && mockOp.userId !== userId)) {
         return res.json({ done: true, error: "Mock operation expired or key mismatch." });
       }
       // Simulate rendering duration of 6 seconds for rich visual feedback of compilation steps
@@ -1500,7 +1757,11 @@ app.post('/api/video-status', async (req, res) => {
       });
     }
 
-    const ai = getAiClient();
+    const operationApiKey = getOperationApiKeyForUser(userId, operationName);
+    const ai = getAiClientForApiKey(operationApiKey);
+    if (!ai) {
+      throw new Error('The live provider required for this render operation is no longer available.');
+    }
     const op = new GenerateVideosOperation();
     op.name = operationName;
     const updated = await ai.operations.getVideosOperation({ operation: op });
@@ -1513,15 +1774,21 @@ app.post('/api/video-status', async (req, res) => {
 });
 
 // 3. GET/POST /api/video-download - Streaming video download proxy
-app.all('/api/video-download', async (req, res) => {
+app.all('/api/video-download', requireAuth, async (req, res) => {
   try {
+    const userId = getAuthenticatedUserId(req);
     const operationName = (req.body?.operationName || req.query?.operationName) as string;
     if (!operationName) {
       return res.status(400).json({ error: "Operation name parameter is required." });
     }
 
+    ensureOperationOwnership(userId, operationName);
+
     if (operationName.startsWith('mock-operation-')) {
       const mockOp = mockOperations.get(operationName);
+      if (!mockOp || (mockOp.userId && mockOp.userId !== userId)) {
+        return res.status(403).json({ error: 'This render operation does not belong to the current account.' });
+      }
       const mockVideoPath = await ensureMockVideoAsset({
         cacheDir: MOCK_VIDEOS_DIR,
         operationName,
@@ -1532,7 +1799,11 @@ app.all('/api/video-download', async (req, res) => {
       return res.sendFile(mockVideoPath);
     }
 
-    const ai = getAiClient();
+    const operationApiKey = getOperationApiKeyForUser(userId, operationName);
+    const ai = getAiClientForApiKey(operationApiKey);
+    if (!ai || !operationApiKey) {
+      return res.status(404).json({ error: 'The live provider required for this render operation is no longer available.' });
+    }
     const op = new GenerateVideosOperation();
     op.name = operationName;
     const updated = await ai.operations.getVideosOperation({ operation: op });
@@ -1544,7 +1815,7 @@ app.all('/api/video-download', async (req, res) => {
 
     console.log(`[Veo Video engine] Accessing completed storage bucket at ${uri}`);
     const videoRes = await fetch(uri, {
-      headers: { 'x-goog-api-key': apiKey || '' },
+      headers: { 'x-goog-api-key': operationApiKey },
     });
 
     if (!videoRes.ok) {
@@ -1569,27 +1840,23 @@ app.all('/api/video-download', async (req, res) => {
   }
 });
 
-// Get persisted screenplay state from local JSON file
-app.get('/api/load-sandbox-state', (req, res) => {
+// Get persisted screenplay state from the authenticated user store
+app.get('/api/load-sandbox-state', requireAuth, (req, res) => {
   try {
-    if (fs.existsSync(STATE_FILE_PATH)) {
-      const data = fs.readFileSync(STATE_FILE_PATH, 'utf-8');
-      console.log("[State DB] Loaded screenplay sandbox-state.json successfully.");
-      return res.json(JSON.parse(data));
-    }
-    return res.json({ characters: null, scenes: null, camera: null, exportSettings: null });
+    const userId = getAuthenticatedUserId(req);
+    return res.json(loadProjectStateForUser(userId));
   } catch (error: any) {
     console.error("[State DB] Failed to read state file:", error);
     return res.json({ error: error.message });
   }
 });
 
-// Save persisted screenplay state to local JSON file
-app.post('/api/save-sandbox-state', (req, res) => {
+// Save persisted screenplay state to the authenticated user store
+app.post('/api/save-sandbox-state', requireAuth, requireCsrf, (req, res) => {
   try {
-    const { characters, scenes, camera, exportSettings } = req.body || {};
-    const stateData = { characters, scenes, camera, exportSettings };
-    fs.writeFileSync(STATE_FILE_PATH, JSON.stringify(stateData, null, 2), 'utf-8');
+    const userId = getAuthenticatedUserId(req);
+    const { characters, scenes, camera, exportSettings, updatedAt } = req.body || {};
+    saveProjectStateForUser(userId, { characters, scenes, camera, exportSettings, updatedAt });
     return res.json({ success: true, timestamp: Date.now() });
   } catch (error: any) {
     console.error("[State DB] Failed to save state file:", error);

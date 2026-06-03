@@ -16,8 +16,32 @@ View your app in AI Studio: https://ai.studio/apps/43fefd0e-4d16-4be5-b3fc-939d9
 1. Install dependencies:
    `npm install`
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+3. Optional but recommended for secure account/provider storage:
+   - `SESSION_SECRET` — used for hardened local session handling
+   - `STORYFORGE_ENCRYPTION_KEY` — used to encrypt any user-linked Gemini API keys at rest
+4. Run the app:
    `npm run dev`
+
+## Account dashboard and secure login
+
+The app now includes an **Account** dashboard for secure sign-in, session management, and Gemini provider isolation.
+
+- You can keep working in **local draft mode** without signing in.
+- Sign-in is required for **cloud sync** and the authenticated AI/video API routes.
+- StoryForge keeps **app login** separate from **Gemini provider credentials**.
+- If you connect a personal Gemini API key in the Account dashboard, it is stored **server-side only** and encrypted at rest.
+
+### Provider modes
+
+- **Personal** — your account uses its own linked Gemini API key and quota.
+- **Workspace** — the app uses the server's shared `GEMINI_API_KEY`.
+- **Sandbox** — no live Gemini API key is active, so supported routes fall back to local/mock behavior.
+
+### Cloud sync behavior
+
+- Anonymous users save to browser localStorage only.
+- Authenticated users load/save a **user-scoped** project state on the server.
+- Legacy `sandbox-state.json` data is treated as a fallback source for first authenticated load.
 
 ## What changed in this implementation
 

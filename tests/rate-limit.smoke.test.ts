@@ -2,6 +2,24 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { app } from '../server';
 
+async function createAuthenticatedAgent() {
+  const agent = request.agent(app);
+  const registerResponse = await agent
+    .post('/api/auth/register')
+    .send({
+      name: 'Rate Limit Tester',
+      email: `rate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`,
+      password: 'Passw0rd!23',
+    });
+
+  expect(registerResponse.status).toBe(201);
+
+  return {
+    agent,
+    csrfToken: registerResponse.body.csrfToken as string,
+  };
+}
+
 const endpoints = [
   {
     path: '/api/generate-shot-prompt',
@@ -19,18 +37,22 @@ const endpoints = [
 
 describe('generation rate limits', () => {
   it.each(endpoints)('returns HTTP 429 on the 11th request for $path', async ({ path, body }, index) => {
+    const { agent, csrfToken } = await createAuthenticatedAgent();
+
     for (let attempt = 1; attempt <= 10; attempt += 1) {
-      const response = await request(app)
+      const response = await agent
         .post(path)
         .set('X-Forwarded-For', `203.0.113.${index + 1}`)
+        .set('x-csrf-token', csrfToken)
         .send(body);
 
       expect(response.status).not.toBe(429);
     }
 
-    const blocked = await request(app)
+    const blocked = await agent
       .post(path)
       .set('X-Forwarded-For', `203.0.113.${index + 1}`)
+      .set('x-csrf-token', csrfToken)
       .send(body);
 
     expect(blocked.status).toBe(429);

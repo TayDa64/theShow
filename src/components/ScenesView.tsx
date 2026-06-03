@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Plus, Trash2, Volume2, Sparkles, Edit, Check, X, Wand2, Clapperboard, ChevronDown, ChevronUp } from 'lucide-react';
 import type { ReferenceAsset, Scene, Character, DialogueLine, CameraConfig, StoryboardSeedStrategy, StoryboardShotType, StoryboardTransitionMode } from '../types';
+import { useAuth } from '../context/AuthContext';
 import {
   applyStoryboardContinuityAutomation,
   createBlankStoryboardShot,
@@ -135,6 +136,7 @@ function getTransitionSummary(
 }
 
 export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesViewProps) {
+  const { authFetch, isAuthenticated } = useAuth();
   const [selectedScene, setSelectedScene] = useState<Scene>(() => normalizeScene(scenes[0] || {
     id: '1',
     title: 'Act I: The Rendezvous',
@@ -154,6 +156,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
   const [mobileWorkspaceView, setMobileWorkspaceView] = useState<MobileWorkspaceView>(() => ((selectedScene.storyboardShots?.length || 0) > 0 ? 'storyboard' : 'atmosphere'));
   const [expandedMobileShotId, setExpandedMobileShotId] = useState<string | null>(() => selectedScene.storyboardShots?.[0]?.id || null);
   const [pendingSceneTitleFocusId, setPendingSceneTitleFocusId] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
 
   const [editingDialogueId, setEditingDialogueId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
@@ -229,9 +232,14 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
 
   const handleAISuggest = async () => {
     if (isSuggesting) return;
+    if (!isAuthenticated) {
+      setWorkspaceNotice('Sign in from the Account dashboard to unlock authenticated dialogue suggestions.');
+      return;
+    }
+
     setIsSuggesting(true);
     try {
-      const response = await fetch('/api/generate-dialogue', {
+      const response = await authFetch('/api/generate-dialogue', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -410,7 +418,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
       formData.append('kind', 'scene-background');
       formData.append('label', file.name);
 
-      const response = await fetch('/api/upload-reference', {
+      const response = await authFetch('/api/upload-reference', {
         method: 'POST',
         body: formData,
       });
@@ -447,7 +455,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
       formData.append('kind', 'storyboard-frame');
       formData.append('label', file.name);
 
-      const response = await fetch('/api/upload-reference', {
+      const response = await authFetch('/api/upload-reference', {
         method: 'POST',
         body: formData,
       });
@@ -492,9 +500,14 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
 
   const handleGenerateStoryboard = async () => {
     if (isGeneratingStoryboard) return;
+    if (!isAuthenticated) {
+      setWorkspaceNotice('Sign in from the Account dashboard to unlock authenticated storyboard planning.');
+      return;
+    }
+
     setIsGeneratingStoryboard(true);
     try {
-      const response = await fetch('/api/generate-storyboard', {
+      const response = await authFetch('/api/generate-storyboard', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -629,6 +642,12 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
           <span>New Act</span>
         </button>
       </div>
+
+      {workspaceNotice && (
+        <div className="rounded-2xl border border-amber-500/10 bg-amber-500/5 px-4 py-3 text-[12px] text-zinc-300 leading-relaxed">
+          {workspaceNotice}
+        </div>
+      )}
 
       <div className="flex gap-3 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-zinc-800 snap-x snap-mandatory">
         {scenes.map((scene, index) => {
