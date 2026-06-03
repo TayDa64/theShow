@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Play, Plus, Trash2, Volume2, Sparkles, Edit, Check, X, Wand2, Clapperboard, ChevronDown, ChevronUp } from 'lucide-react';
 import type { ReferenceAsset, Scene, Character, DialogueLine, CameraConfig, StoryboardSeedStrategy, StoryboardShotType, StoryboardTransitionMode } from '../types';
+import { useAuth } from '../context/AuthContext';
 import {
   applyStoryboardContinuityAutomation,
   createBlankStoryboardShot,
@@ -135,6 +136,7 @@ function getTransitionSummary(
 }
 
 export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesViewProps) {
+  const { authFetch, isAuthenticated } = useAuth();
   const [selectedScene, setSelectedScene] = useState<Scene>(() => normalizeScene(scenes[0] || {
     id: '1',
     title: 'Act I: The Rendezvous',
@@ -153,12 +155,15 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
   const [storyboardFrameUploadTarget, setStoryboardFrameUploadTarget] = useState<StoryboardFrameUploadTarget>(null);
   const [mobileWorkspaceView, setMobileWorkspaceView] = useState<MobileWorkspaceView>(() => ((selectedScene.storyboardShots?.length || 0) > 0 ? 'storyboard' : 'atmosphere'));
   const [expandedMobileShotId, setExpandedMobileShotId] = useState<string | null>(() => selectedScene.storyboardShots?.[0]?.id || null);
+  const [pendingSceneTitleFocusId, setPendingSceneTitleFocusId] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
 
   const [editingDialogueId, setEditingDialogueId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
 
   const backgroundUploadInputRef = useRef<HTMLInputElement>(null);
   const storyboardFrameUploadInputRef = useRef<HTMLInputElement>(null);
+  const sceneTitleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const refreshedScene = scenes.find(scene => scene.id === selectedScene.id);
@@ -195,6 +200,20 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
     }
   }, [expandedMobileShotId, selectedScene.id, selectedScene.storyboardShots]);
 
+  useEffect(() => {
+    if (!pendingSceneTitleFocusId || pendingSceneTitleFocusId !== selectedScene.id) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      sceneTitleInputRef.current?.focus();
+      sceneTitleInputRef.current?.select();
+      setPendingSceneTitleFocusId(null);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingSceneTitleFocusId, selectedScene.id]);
+
   const activeBackground = getSceneDisplayBackground(selectedScene);
   const backgroundAssets = getSceneBackgroundAssets(selectedScene);
   const storyboardFrameAssets = getSceneStoryboardFrameAssets(selectedScene);
@@ -213,9 +232,14 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
 
   const handleAISuggest = async () => {
     if (isSuggesting) return;
+    if (!isAuthenticated) {
+      setWorkspaceNotice('Sign in from the Account dashboard to unlock authenticated dialogue suggestions.');
+      return;
+    }
+
     setIsSuggesting(true);
     try {
-      const response = await fetch('/api/generate-dialogue', {
+      const response = await authFetch('/api/generate-dialogue', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -341,9 +365,46 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
     const nextList = [...scenes];
     nextList.splice(insertionIndex, 0, newScene);
     setSelectedScene(newScene);
+    setPendingSceneTitleFocusId(newScene.id);
     setExpandedMobileShotId(null);
     setMobileWorkspaceView('atmosphere');
     onSaveScenes(nextList);
+  };
+
+  const handleDeleteScene = (sceneId: string) => {
+    if (scenes.length <= 1) {
+      return;
+    }
+
+    const sceneToDelete = scenes.find(scene => scene.id === sceneId);
+    if (!sceneToDelete) {
+      return;
+    }
+
+    const backgroundCount = getSceneBackgroundAssets(sceneToDelete).length;
+    const storyboardCount = sceneToDelete.storyboardShots?.length || 0;
+    const dialogueCount = sceneToDelete.dialogues.length;
+    const detailSegments = [
+      dialogueCount ? `${dialogueCount} dialogue line${dialogueCount === 1 ? '' : 's'}` : null,
+      storyboardCount ? `${storyboardCount} storyboard shot${storyboardCount === 1 ? '' : 's'}` : null,
+      backgroundCount ? `${backgroundCount} background ref${backgroundCount === 1 ? '' : 's'}` : null,
+    ].filter(Boolean);
+
+    const confirmMessage = detailSegments.length
+      ? `Delete “${sceneToDelete.title}”? This will remove ${detailSegments.join(', ')} from this act only.`
+      : `Delete “${sceneToDelete.title}”?`;
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    const sceneIndex = scenes.findIndex(scene => scene.id === sceneId);
+    const nextScenes = scenes.filter(scene => scene.id !== sceneId);
+    const fallbackSelectedScene = nextScenes[Math.min(sceneIndex, nextScenes.length - 1)] || nextScenes[0];
+
+    setSelectedScene(fallbackSelectedScene);
+    setExpandedMobileShotId(fallbackSelectedScene?.storyboardShots?.[0]?.id || null);
+    onSaveScenes(nextScenes);
   };
 
   const handleUploadBackgroundReference = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -357,7 +418,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
       formData.append('kind', 'scene-background');
       formData.append('label', file.name);
 
-      const response = await fetch('/api/upload-reference', {
+      const response = await authFetch('/api/upload-reference', {
         method: 'POST',
         body: formData,
       });
@@ -394,7 +455,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
       formData.append('kind', 'storyboard-frame');
       formData.append('label', file.name);
 
-      const response = await fetch('/api/upload-reference', {
+      const response = await authFetch('/api/upload-reference', {
         method: 'POST',
         body: formData,
       });
@@ -439,9 +500,14 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
 
   const handleGenerateStoryboard = async () => {
     if (isGeneratingStoryboard) return;
+    if (!isAuthenticated) {
+      setWorkspaceNotice('Sign in from the Account dashboard to unlock authenticated storyboard planning.');
+      return;
+    }
+
     setIsGeneratingStoryboard(true);
     try {
-      const response = await fetch('/api/generate-storyboard', {
+      const response = await authFetch('/api/generate-storyboard', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -577,6 +643,12 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
         </button>
       </div>
 
+      {workspaceNotice && (
+        <div className="rounded-2xl border border-amber-500/10 bg-amber-500/5 px-4 py-3 text-[12px] text-zinc-300 leading-relaxed">
+          {workspaceNotice}
+        </div>
+      )}
+
       <div className="flex gap-3 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-zinc-800 snap-x snap-mandatory">
         {scenes.map((scene, index) => {
           const shotCount = scene.storyboardShots?.length || 0;
@@ -684,22 +756,46 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
             </div>
           )}
 
-          <div className="space-y-1">
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Act Title</div>
+                <div className="mt-1 text-[11px] text-zinc-500 leading-relaxed">
+                  New acts jump here automatically so you can rename them immediately.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDeleteScene(selectedScene.id)}
+                disabled={scenes.length <= 1}
+                className="inline-flex items-center gap-1.5 rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-red-300 transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                title={scenes.length <= 1 ? 'At least one act must remain in the project.' : `Delete ${selectedScene.title}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Act</span>
+              </button>
+            </div>
+
+            <div className="space-y-1">
             <input
+              ref={sceneTitleInputRef}
               type="text"
-              title="Scene title"
+              title="Act title"
               value={selectedScene.title}
               onChange={e => commitScene({ ...selectedScene, title: e.target.value })}
               className="text-base font-semibold text-white bg-transparent border-b border-transparent focus:border-zinc-800 focus:outline-none w-full"
+              placeholder="Name this act"
             />
+            <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Act Description</div>
             <input
               type="text"
-              title="Scene description"
+              title="Act description"
               value={selectedScene.description}
               onChange={e => commitScene({ ...selectedScene, description: e.target.value })}
               className="text-xs text-zinc-400 bg-transparent border-b border-transparent focus:border-zinc-800 focus:outline-none w-full"
               placeholder="Describe the emotional and visual arc of the scene."
             />
+            </div>
           </div>
 
           <textarea
