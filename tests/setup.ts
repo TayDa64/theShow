@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { vi } from 'vitest';
+import { __resetAuthStoreForTests } from '../src/lib/authStore';
 
 const ffmpegState = {
   setPath: '',
@@ -110,6 +111,7 @@ vi.mock('@google/genai', () => ({
 (globalThis as any).__genaiState = genaiState;
 
 beforeEach(() => {
+  __resetAuthStoreForTests();
   ffmpegState.commands.length = 0;
   ffmpegState.setPath = '';
   genaiState.generateContentImpl.mockClear();

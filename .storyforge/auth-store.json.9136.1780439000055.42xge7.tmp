@@ -1,0 +1,181 @@
+{
+  "users": [
+    {
+      "id": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "name": "Rate Limit Tester",
+      "email": "rate-1780438999769-5dnjpo@example.com",
+      "passwordHash": "02c1f7edeeee31fb511933a36ea4a9589e82555931eefc422daaeaaaba533752d8bd77c05f55ef68418795836d4a008b36a26157b76b3618994c4099e43ce1dd",
+      "passwordSalt": "aa1d9d5d1a042f55442ebcb9200fee50",
+      "createdAt": "2026-06-02T22:23:19.772Z",
+      "updatedAt": "2026-06-02T22:23:19.772Z"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "ebf0b995-9f9b-4549-b473-1c8f70a6831b",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "csrfToken": "df27eed4450ac717890f4474d5846b405b0f008bbb550308",
+      "createdAt": "2026-06-02T22:23:19.847Z",
+      "lastSeenAt": "2026-06-02T22:23:19.847Z",
+      "expiresAt": "2026-07-02T22:23:19.847Z",
+      "userAgent": null,
+      "ipHash": "3e48ef9d22e096da6838540fb846999890462c8a32730a4f7a5eaee6945315f7",
+      "revokedAt": null
+    }
+  ],
+  "providers": [],
+  "usageEvents": [
+    {
+      "id": "e3057850-f9db-4a17-9604-7483419383bf",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780439000048-2pbx5",
+      "createdAt": "2026-06-02T22:23:20.048Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "186d9585-7aaa-403a-8a9e-f63c076c5465",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780439000031-1c2uw",
+      "createdAt": "2026-06-02T22:23:20.031Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "6ae27584-ad7e-4904-b353-cebbd87f81a1",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780439000016-khu7l",
+      "createdAt": "2026-06-02T22:23:20.016Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "c4b83757-ec03-4c1c-a4eb-a704d3341370",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780438999979-h7kda",
+      "createdAt": "2026-06-02T22:23:19.979Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "6af0e3ac-b38c-4a71-8f24-49dc2ad04fa1",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780438999936-9zf6e",
+      "createdAt": "2026-06-02T22:23:19.936Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "db770f94-aaeb-4e3c-a26f-a408eff542e5",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780438999908-i63ht",
+      "createdAt": "2026-06-02T22:23:19.908Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "c1a78a96-8aa0-434c-9622-98f51913a7f5",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780438999890-72zt4",
+      "createdAt": "2026-06-02T22:23:19.890Z",
+      "countsTowardDailyLimit": false
+    },
+    {
+      "id": "9e7eaeea-a23d-4dd3-ae8f-59a39d3333c6",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video-operation",
+      "providerMode": "sandbox",
+      "model": "veo-3.1-generate-preview",
+      "operationName": "mock-operation-veo-1780438999866-3v3wc",
+      "createdAt": "2026-06-02T22:23:19.867Z",
+      "countsTowardDailyLimit": false
+    }
+  ],
+  "auditEvents": [
+    {
+      "id": "375ea474-f27a-46aa-b66d-6eb4269f2042",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:20.054Z"
+    },
+    {
+      "id": "764f50da-5f3e-4ec2-ab18-464b334ada7c",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:20.035Z"
+    },
+    {
+      "id": "37bcae8e-b52e-4c0c-8cac-23935ddd184d",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:20.020Z"
+    },
+    {
+      "id": "d66261e7-7a03-48bd-9b9e-cede64f503ab",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:19.998Z"
+    },
+    {
+      "id": "84a26ea5-304a-429b-9052-5fbb89314af3",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:19.954Z"
+    },
+    {
+      "id": "5f25c13e-3d07-4fc8-91ce-6a10cdcdb76b",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:19.914Z"
+    },
+    {
+      "id": "dfa9c892-a888-4d69-a2da-058a40fa37a7",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:19.895Z"
+    },
+    {
+      "id": "823f6da6-9b50-46b0-9fad-540ac8d63c38",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "video.sandbox",
+      "detail": "Started a sandbox/mock render flow (veo-3.1-generate-preview).",
+      "createdAt": "2026-06-02T22:23:19.870Z"
+    },
+    {
+      "id": "2eab9867-8609-478d-9bce-47044fdc76d7",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "account.login",
+      "detail": "Signed in after account creation.",
+      "createdAt": "2026-06-02T22:23:19.853Z"
+    },
+    {
+      "id": "0d39dbc2-b131-4e07-a191-666a1cfab74e",
+      "userId": "b17e81a8-6a55-4a2d-bb80-279297381c1a",
+      "type": "account.created",
+      "detail": "Created a new StoryForge account.",
+      "createdAt": "2026-06-02T22:23:19.843Z"
+    }
+  ]
+}

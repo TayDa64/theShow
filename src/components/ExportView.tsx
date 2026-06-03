@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, RefreshCw, Layers, Copy, Check, Film, AlertTriangle, Wand2, Clapperboard, XCircle } from 'lucide-react';
 import type { ExportSettings, Character, Scene, CameraConfig, StoryboardSeedStrategy, StoryboardTransitionMode } from '../types';
+import { useAuth } from '../context/AuthContext';
 import { createRenderSeed, getSceneDisplayBackground, getSceneStoryboardFrameAsset, getShotDialogueExcerpt, normalizeStoryboardShot, primeNextStoryboardShotContinuity, sanitizeStoryboardSeed, upsertSceneStoryboardFrameAsset } from '../utils/storyforge';
 import type { FilmAssemblyJob } from '../types/pipeline';
 import { pollUntilComplete } from '../lib/veoChain';
@@ -236,6 +237,15 @@ function formatSeedSourceLabel(source: StoryboardSeedSource | null | undefined) 
   }
 }
 
+
+async function readErrorMessage(response: Response, fallback: string) {
+  try {
+    const data = await response.json();
+    return data?.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
 function resolveStoryboardShotSeed(
   shot: StoryboardSceneShot,
   previousShot: StoryboardSceneShot | undefined,
@@ -331,6 +341,7 @@ function describeSeedLineage(
 }
 
 export function ExportView({ settings, onUpdateSettings, onUpdateScenes, characters, scenes, camera }: ExportViewProps) {
+  const { authFetch, isAuthenticated, provider } = useAuth();
   const [copied, setCopied] = useState(false);
   const [renderMode, setRenderMode] = useState<RenderMode>('quick-preview');
   const storyboardJobsRef = useRef<StoryboardJob[]>([]);
@@ -388,10 +399,13 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     () => buildStoryboardAwareSubtitleCues(selectedScene, characters),
     [selectedScene, characters],
   );
-
-  const handleUpdate = (updates: Partial<ExportSettings>) => {
-    onUpdateSettings({ ...settings, ...updates });
-  };
+  const renderAccessMessage = !isAuthenticated
+    ? 'Sign in from the Account dashboard to unlock secure video rendering, storyboard queues, and cloud-backed export actions.'
+    : provider.mode === 'personal'
+      ? `${provider.remainingToday ?? 0} of ${provider.dailyVideoLimit ?? 0} personal live video generations remain today. Sandbox fallback is still available for safe mock workflows.`
+      : provider.mode === 'workspace'
+        ? 'Authenticated and using the workspace Gemini API provider for live generation. Connect a personal key in Account if you want isolated quota ownership.'
+        : 'Authenticated in sandbox-only mode. StoryForge can still run local mock/video fallback flows until you connect a live Gemini API key.';
 
   const upsertScene = (updatedScene: Scene) => {
     const nextScenes = scenes.some(scene => scene.id === updatedScene.id)
@@ -414,274 +428,6 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
     upsertScene(updatedScene);
     return updatedScene;
-  };
-
-  const drawCoverImage = (context: CanvasRenderingContext2D, image: CanvasImageSource, width: number, height: number) => {
-    const sourceWidth = 'width' in image ? Number(image.width) || width : width;
-    const sourceHeight = 'height' in image ? Number(image.height) || height : height;
-    const sourceRatio = sourceWidth / sourceHeight;
-    const targetRatio = width / height;
-
-    let drawWidth = width;
-    let drawHeight = height;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    if (sourceRatio > targetRatio) {
-      drawHeight = height;
-      drawWidth = height * sourceRatio;
-      offsetX = (width - drawWidth) / 2;
-    } else {
-      drawWidth = width;
-      drawHeight = width / sourceRatio;
-      offsetY = (height - drawHeight) / 2;
-    }
-
-    context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-  };
-
-  const wrapCanvasText = (
-    context: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    maxWidth: number,
-    lineHeight: number,
-    maxLines: number,
-  ) => {
-    const words = text.trim().split(/\s+/).filter(Boolean);
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (const word of words) {
-      const nextLine = currentLine ? `${currentLine} ${word}` : word;
-      if (context.measureText(nextLine).width <= maxWidth || !currentLine) {
-        currentLine = nextLine;
-        continue;
-      }
-
-      lines.push(currentLine);
-      currentLine = word;
-
-      if (lines.length === maxLines - 1) {
-        break;
-      }
-    }
-
-    if (currentLine && lines.length < maxLines) {
-      lines.push(currentLine);
-    }
-
-    if (lines.length === maxLines && words.length && context.measureText(lines[maxLines - 1]).width > maxWidth) {
-      while (lines[maxLines - 1].length > 3 && context.measureText(`${lines[maxLines - 1]}…`).width > maxWidth) {
-        lines[maxLines - 1] = lines[maxLines - 1].slice(0, -1).trimEnd();
-      }
-      lines[maxLines - 1] = `${lines[maxLines - 1]}…`;
-    }
-
-    lines.forEach((line, index) => {
-      context.fillText(line, x, y + (index * lineHeight));
-    });
-
-    return lines.length;
-  };
-
-  const loadCanvasImage = async (url: string) => {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error('Could not download the continuity image source.');
-    }
-
-    const blob = await response.blob();
-    if (!blob.size) {
-      throw new Error('Continuity image source was empty.');
-    }
-
-    const objectUrl = URL.createObjectURL(blob);
-
-    try {
-      return await new Promise<HTMLImageElement>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => reject(new Error('Continuity image source could not be decoded.'));
-        image.src = objectUrl;
-      });
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
-  };
-
-  const captureVideoFrameBlob = async (clipUrl: string, captureRatio = 0.92) => {
-    const clipResponse = await fetch(clipUrl);
-    if (!clipResponse.ok) {
-      throw new Error('Could not download the rendered clip for anchor-frame capture.');
-    }
-
-    const clipBlob = await clipResponse.blob();
-    if (!clipBlob.size) {
-      throw new Error('Rendered clip download was empty, so no anchor frame could be captured.');
-    }
-
-    return new Promise<Blob>((resolve, reject) => {
-      const video = document.createElement('video');
-      const objectUrl = URL.createObjectURL(clipBlob);
-      let isSettled = false;
-
-      const cleanup = () => {
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        video.remove();
-        URL.revokeObjectURL(objectUrl);
-      };
-
-      const settle = (callback: () => void) => {
-        if (isSettled) return;
-        isSettled = true;
-        callback();
-        cleanup();
-      };
-
-      const fail = (message: string) => settle(() => reject(new Error(message)));
-
-      const capture = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth || 1280;
-          canvas.height = video.videoHeight || 720;
-          const context = canvas.getContext('2d');
-          if (!context) {
-            fail('Could not prepare the anchor-frame capture canvas.');
-            return;
-          }
-
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (!blob) {
-              fail('Could not convert the captured frame into a PNG.');
-              return;
-            }
-
-            settle(() => resolve(blob));
-          }, 'image/png');
-        } catch {
-          fail('Rendered clip frame capture failed.');
-        }
-      };
-
-      video.preload = 'auto';
-      video.muted = true;
-      video.playsInline = true;
-      video.src = objectUrl;
-      video.className = 'fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none';
-
-      video.addEventListener('error', () => fail('Could not load the rendered clip for anchor-frame capture.'), { once: true });
-      video.addEventListener('loadedmetadata', () => {
-        const duration = Number.isFinite(video.duration) ? video.duration : 0;
-        const targetTime = duration > 0.35
-          ? Math.max(0, Math.min(duration - 0.08, duration * captureRatio))
-          : 0;
-
-        if (targetTime > 0.05) {
-          video.addEventListener('seeked', capture, { once: true });
-          video.currentTime = targetTime;
-          return;
-        }
-
-        capture();
-      }, { once: true });
-
-      document.body.appendChild(video);
-      video.load();
-    });
-  };
-
-  const captureStoryboardFallbackFrame = async (
-    sceneSnapshot: Scene,
-    shot: StoryboardSceneShot,
-    captureMeta: Pick<StoryboardJob, 'title' | 'resolvedSeed' | 'usingContinuityFrame' | 'continuitySource'>,
-  ) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1280;
-    canvas.height = 720;
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      throw new Error('Could not prepare the fallback anchor-frame canvas.');
-    }
-
-    const shotIndex = Math.max(0, (sceneSnapshot.storyboardShots || []).findIndex(item => item.id === shot.id));
-    const continuityBridge = resolveContinuityBridge(sceneSnapshot, shot, shotIndex);
-    const backgroundSourceUrl = getShotAnchorFrame(sceneSnapshot, shot)?.url
-      || continuityBridge.asset?.url
-      || getSceneDisplayBackground(sceneSnapshot)
-      || null;
-
-    if (backgroundSourceUrl) {
-      try {
-        const image = await loadCanvasImage(backgroundSourceUrl);
-        drawCoverImage(context, image, canvas.width, canvas.height);
-      } catch {
-        const fallbackGradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-        fallbackGradient.addColorStop(0, '#0f172a');
-        fallbackGradient.addColorStop(0.45, '#18181b');
-        fallbackGradient.addColorStop(1, '#020617');
-        context.fillStyle = fallbackGradient;
-        context.fillRect(0, 0, canvas.width, canvas.height);
-      }
-    } else {
-      const fallbackGradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-      fallbackGradient.addColorStop(0, '#0f172a');
-      fallbackGradient.addColorStop(0.45, '#18181b');
-      fallbackGradient.addColorStop(1, '#020617');
-      context.fillStyle = fallbackGradient;
-      context.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    const vignette = context.createLinearGradient(0, 0, 0, canvas.height);
-    vignette.addColorStop(0, 'rgba(2, 6, 23, 0.18)');
-    vignette.addColorStop(0.55, 'rgba(2, 6, 23, 0.38)');
-    vignette.addColorStop(1, 'rgba(2, 6, 23, 0.82)');
-    context.fillStyle = vignette;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    context.fillStyle = 'rgba(9, 9, 11, 0.72)';
-    context.fillRect(56, 52, 236, 44);
-    context.fillStyle = '#cbd5f5';
-    context.font = '600 18px Inter, system-ui, sans-serif';
-    context.fillText(`Scene ${shot.shotNumber} Anchor`, 76, 80);
-
-    context.fillStyle = 'rgba(9, 9, 11, 0.72)';
-    context.fillRect(56, 482, 1168, 182);
-
-    context.fillStyle = '#818cf8';
-    context.font = '600 20px Inter, system-ui, sans-serif';
-    context.fillText(sceneSnapshot.title || 'Storyboard Scene', 88, 532);
-
-    context.fillStyle = '#ffffff';
-    context.font = '700 36px Inter, system-ui, sans-serif';
-    context.fillText(shot.title || `Shot ${shot.shotNumber}`, 88, 578);
-
-    context.fillStyle = '#e4e4e7';
-    context.font = '500 22px Inter, system-ui, sans-serif';
-    const dialogueExcerpt = getShotDialogueExcerpt(sceneSnapshot, characters, shot) || shot.action || captureMeta.title || 'Storyboard continuity still';
-    wrapCanvasText(context, dialogueExcerpt, 88, 620, 1080, 28, 2);
-
-    context.fillStyle = '#a1a1aa';
-    context.font = '500 18px Inter, system-ui, sans-serif';
-    const footer = `${formatSeedStrategyLabel(shot.seedStrategy)} · ${captureMeta.resolvedSeed ? `Seed ${captureMeta.resolvedSeed.toLocaleString()}` : 'Seed pending'} · ${captureMeta.usingContinuityFrame ? (captureMeta.continuitySource || 'Continuity bridge used') : 'Sandbox continuity still'}`;
-    context.fillText(footer, 88, 680);
-
-    return new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error('Could not convert the fallback anchor frame into a PNG.'));
-          return;
-        }
-
-        resolve(blob);
-      }, 'image/png');
-    });
   };
 
   const persistShotAnchorFrame = async ({
@@ -716,7 +462,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     }
 
     try {
-      const response = await fetch('/api/extract-frame', {
+      const response = await authFetch('/api/extract-frame', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -848,7 +594,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   ) => {
     try {
       return await pollUntilComplete(async () => {
-        const response = await fetch('/api/video-status', {
+        const response = await authFetch('/api/video-status', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -856,6 +602,13 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
           body: JSON.stringify({ operationName: operationNameValue }),
           signal,
         });
+
+        if (!response.ok) {
+          return {
+            done: true,
+            error: await readErrorMessage(response, 'Could not poll the render status.'),
+          };
+        }
 
         return response.json();
       }, {
@@ -882,6 +635,11 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
   const triggerQuickPreview = async () => {
     if (!selectedScene) return;
+    if (!isAuthenticated) {
+      setVideoStatus('failed');
+      setVideoError('Sign in from the Account dashboard to render quick previews.');
+      return;
+    }
 
     const controller = new AbortController();
     setPollAbortController(controller);
@@ -893,7 +651,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       setVideoError(null);
       setIsQuotaExhausted(false);
 
-      const response = await fetch('/api/generate-video', {
+      const response = await authFetch('/api/generate-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -906,7 +664,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!response.ok) {
-        throw new Error('Failed to hand off prompt parameters to the Veo video engine.');
+        throw new Error(await readErrorMessage(response, 'Failed to hand off prompt parameters to the Veo video engine.'));
       }
 
       const data = await response.json();
@@ -939,10 +697,15 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
   const generateStoryboardPlan = async () => {
     if (!selectedScene) return [] as Scene['storyboardShots'];
+    if (!isAuthenticated) {
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText('Sign in from the Account dashboard to generate storyboard plans.');
+      return [] as Scene['storyboardShots'];
+    }
 
     try {
       setIsGeneratingStoryboardPlan(true);
-      const response = await fetch('/api/generate-storyboard', {
+      const response = await authFetch('/api/generate-storyboard', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -955,7 +718,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!response.ok) {
-        throw new Error('Failed to build storyboard plan.');
+        throw new Error(await readErrorMessage(response, 'Failed to build storyboard plan.'));
       }
 
       const data = await response.json();
@@ -1017,7 +780,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     });
 
     try {
-      const promptResponse = await fetch('/api/generate-shot-prompt', {
+      const promptResponse = await authFetch('/api/generate-shot-prompt', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1031,13 +794,13 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!promptResponse.ok) {
-        throw new Error('Failed to build the shot prompt.');
+        throw new Error(await readErrorMessage(promptResponse, 'Failed to build the shot prompt.'));
       }
 
       const promptData = await promptResponse.json();
       const bridgeFrame = previousShot ? getShotAnchorFrame(sceneSnapshot, previousShot) : undefined;
       const shouldExtend = !!(previousJob?.operationName && bridgeFrame?.url);
-      const response = await fetch(shouldExtend ? '/api/extend-clip' : '/api/generate-shot-video', {
+      const response = await authFetch(shouldExtend ? '/api/extend-clip' : '/api/generate-shot-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1059,7 +822,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!response.ok) {
-        throw new Error('Failed to start storyboard shot render.');
+        throw new Error(await readErrorMessage(response, 'Failed to start storyboard shot render.'));
       }
 
       const data = await response.json();
@@ -1147,6 +910,12 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   };
 
   const retryStoryboardShot = async (shotId: string, retryMode: Exclude<StoryboardRetryMode, 'configured'>) => {
+    if (!isAuthenticated) {
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText('Sign in from the Account dashboard to retry storyboard renders.');
+      return;
+    }
+
     const sceneSnapshot = scenes.find(scene => scene.id === selectedSceneId) || selectedScene;
     if (!sceneSnapshot?.storyboardShots?.length) return;
 
@@ -1175,6 +944,12 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
   const triggerStoryboardRender = async () => {
     if (!selectedScene) return;
+    if (!isAuthenticated) {
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText('Sign in from the Account dashboard to render storyboard clips.');
+      return;
+    }
+
     const controller = new AbortController();
     setPollAbortController(controller);
 
@@ -1388,12 +1163,21 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     if (!storyboardRenderedJobs.length) {
       return;
     }
+    if (!isAuthenticated) {
+      setFilmJob({
+        filmId: '',
+        clipCount: storyboardRenderedJobs.length,
+        status: 'failed',
+        error: 'Sign in from the Account dashboard to assemble exported films.',
+      });
+      return;
+    }
 
     setIsAssemblingFilm(true);
     setFilmJob(null);
 
     try {
-      const response = await fetch('/api/assemble-film', {
+      const response = await authFetch('/api/assemble-film', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1411,7 +1195,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!response.ok) {
-        throw new Error('Failed to assemble the film export.');
+        throw new Error(await readErrorMessage(response, 'Failed to assemble the film export.'));
       }
 
       const data = await response.json();
@@ -1440,6 +1224,28 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         <p className="text-xs text-zinc-300 leading-relaxed">
           Render storyboard clips in order, stop the queue on any failure, and assemble the completed shots into a downloadable MP4 from the server.
         </p>
+      </div>
+
+      <div className={`rounded-2xl border p-4 text-xs leading-relaxed ${!isAuthenticated
+        ? 'bg-amber-500/5 border-amber-500/10 text-zinc-300'
+        : provider.mode === 'personal'
+          ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
+          : provider.mode === 'workspace'
+            ? 'bg-indigo-500/5 border-indigo-500/10 text-zinc-300'
+            : 'bg-zinc-900/70 border-zinc-800 text-zinc-300'}`}
+      >
+        <div className="flex items-center gap-2 font-semibold mb-1">
+          <span className={`w-2 h-2 rounded-full ${!isAuthenticated
+            ? 'bg-amber-400'
+            : provider.mode === 'personal'
+              ? 'bg-emerald-400'
+              : provider.mode === 'workspace'
+                ? 'bg-indigo-400'
+                : 'bg-zinc-400'}`}
+          />
+          <span>{!isAuthenticated ? 'Account sign-in required' : provider.mode === 'personal' ? 'Personal Gemini provider active' : provider.mode === 'workspace' ? 'Workspace Gemini provider active' : 'Sandbox-only render mode'}</span>
+        </div>
+        <p>{renderAccessMessage}</p>
       </div>
 
       <div className="bg-gradient-to-b from-zinc-950 to-zinc-900 border border-zinc-900 rounded-2xl p-5 space-y-4 shadow-xl">
@@ -1504,7 +1310,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
             {videoStatus === 'idle' && (
               <button
                 onClick={triggerQuickPreview}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                disabled={!isAuthenticated}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
               >
                 <Film className="w-3.5 h-3.5" />
                 <span>Export Video</span>
@@ -1658,7 +1465,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <button
                   type="button"
                   onClick={generateStoryboardPlan}
-                  disabled={isGeneratingStoryboardPlan}
+                  disabled={isGeneratingStoryboardPlan || !isAuthenticated}
                   className="bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/20 text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <Wand2 className={`w-3.5 h-3.5 ${isGeneratingStoryboardPlan ? 'animate-spin' : ''}`} />
@@ -1667,7 +1474,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <button
                   type="button"
                   onClick={triggerStoryboardRender}
-                  disabled={isGeneratingStoryboardPlan || !selectedScene}
+                  disabled={isGeneratingStoryboardPlan || !selectedScene || !isAuthenticated}
                   className="bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg disabled:opacity-50"
                 >
                   <Film className="w-3.5 h-3.5" />
