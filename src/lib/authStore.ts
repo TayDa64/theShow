@@ -395,7 +395,12 @@ function parseCookieHeader(cookieHeader: string | undefined) {
   return cookieHeader.split(';').reduce<Record<string, string>>((accumulator, cookiePart) => {
     const [rawName, ...rawValue] = cookiePart.trim().split('=');
     if (!rawName) return accumulator;
-    accumulator[rawName] = decodeURIComponent(rawValue.join('='));
+    const joinedValue = rawValue.join('=');
+    try {
+      accumulator[rawName] = decodeURIComponent(joinedValue);
+    } catch {
+      accumulator[rawName] = joinedValue;
+    }
     return accumulator;
   }, {});
 }
