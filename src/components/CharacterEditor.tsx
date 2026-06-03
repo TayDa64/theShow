@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Sparkles, Image as ImageIcon, Check, RefreshCw, Upload } from 'lucide-react';
 import type { Character } from '../types';
+import { useAuth } from '../context/AuthContext';
 import {
   createReferenceAsset,
   getCharacterDisplayImage,
@@ -72,6 +73,7 @@ interface CharacterEditorProps {
 }
 
 export function CharacterEditor({ character, onClose, onSave }: CharacterEditorProps) {
+  const { authFetch, isAuthenticated } = useAuth();
   const [editedChar, setEditedChar] = useState<Character>(character);
   const [activeTab, setActiveTab] = useState<'appearance' | 'identity'>('appearance');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -117,7 +119,7 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
       formData.append('kind', 'character-upload');
       formData.append('label', file.name);
 
-      const response = await fetch('/api/upload-reference', {
+      const response = await authFetch('/api/upload-reference', {
         method: 'POST',
         body: formData,
       });
@@ -141,11 +143,15 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
 
   const triggerAIPortrait = async () => {
     if (isGeneratingPortrait) return;
+    if (!isAuthenticated) {
+      setGenMessage('Sign in from Account to unlock authenticated portrait generation.');
+      return;
+    }
     setIsGeneratingPortrait(true);
     setGenMessage('Conceiving neural concept sketch...');
 
     try {
-      const response = await fetch('/api/generate-portrait', {
+      const response = await authFetch('/api/generate-portrait', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -187,11 +193,16 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
 
   // Automated/AI Character Backstory & Aesthetic Generator
   const triggerAIGenerator = async () => {
+    if (!isAuthenticated) {
+      setGenMessage('Sign in from Account to unlock authenticated character generation.');
+      return;
+    }
+
     setIsGenerating(true);
     setGenMessage('Analyzing character outline...');
     
     try {
-      const response = await fetch('/api/generate-character', {
+      const response = await authFetch('/api/generate-character', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

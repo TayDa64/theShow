@@ -1,5 +1,69 @@
 export type ViewState = 'characters' | 'scenes' | 'cameras' | 'export';
 
+export type AuthViewState = 'account';
+
+export type AppViewState = ViewState | AuthViewState;
+
+export type WorkspaceSyncState = 'LOCAL' | 'SYNCING' | 'SYNCED';
+
+export type GenerationProviderMode = 'personal' | 'workspace' | 'sandbox';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+export interface AuthSessionSummary {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+  userAgent?: string | null;
+  ipPreview?: string | null;
+}
+
+export interface ProviderConnectionSummary {
+  mode: GenerationProviderMode;
+  status: 'connected' | 'disconnected';
+  providerType: 'gemini-api-key' | 'workspace-key' | 'sandbox';
+  label: string;
+  maskedApiKey?: string | null;
+  connectedAt?: string | null;
+  dailyVideoLimit?: number | null;
+  usedToday: number;
+  remainingToday?: number | null;
+  liveVideoEnabled: boolean;
+  sandboxFallbackEnabled: boolean;
+  note?: string | null;
+}
+
+export interface AuthAuditEvent {
+  id: string;
+  type: string;
+  detail: string;
+  createdAt: string;
+}
+
+export interface AuthCapabilities {
+  cloudSync: boolean;
+  aiTools: boolean;
+  liveVideo: boolean;
+  sandboxFallback: boolean;
+}
+
+export interface AuthStatus {
+  isAuthenticated: boolean;
+  user: AuthUser | null;
+  csrfToken: string | null;
+  provider: ProviderConnectionSummary;
+  sessions: AuthSessionSummary[];
+  auditEvents: AuthAuditEvent[];
+  capabilities: AuthCapabilities;
+}
+
 export type ReferenceAssetKind =
   | 'character-upload'
   | 'character-generated'
