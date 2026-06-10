@@ -9,7 +9,21 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 export const FADE_DURATION = 0.5;
 
-export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds'>[]) {
+function getClipPlaybackWindow(clip: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>) {
+  const sourceDurationSeconds = Number(clip.sourceDurationSeconds || clip.durationSeconds || clip.playbackDurationSeconds || 8);
+  const trimStartSeconds = Math.max(Number(clip.trimStartSeconds || 0), 0);
+  const requestedTrimEnd = Number(clip.trimEndSeconds || sourceDurationSeconds);
+  const trimEndSeconds = Math.min(Math.max(requestedTrimEnd, trimStartSeconds + 0.1), sourceDurationSeconds);
+  const playbackDurationSeconds = Number(clip.playbackDurationSeconds || (trimEndSeconds - trimStartSeconds) || clip.durationSeconds || 8);
+
+  return {
+    trimStartSeconds,
+    trimEndSeconds,
+    playbackDurationSeconds,
+  };
+}
+
+export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>[]) {
   if (!clips.length) {
     throw new Error('At least one clip is required to assemble a film.');
   }
@@ -18,14 +32,16 @@ export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSecon
   let currentVideoLabel = 'v0';
   let currentAudioLabel = 'a0';
 
-  filters.push('[0:v]format=yuv420p,setsar=1[v0]');
-  filters.push('[0:a]aresample=async=1:first_pts=0[a0]');
+  clips.forEach((clip, index) => {
+    const window = getClipPlaybackWindow(clip);
+    filters.push(`[${index}:v]trim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[v${index}]`);
+    filters.push(`[${index}:a]atrim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a${index}]`);
+  });
 
   for (let index = 1; index < clips.length; index += 1) {
-    filters.push(`[${index}:v]format=yuv420p,setsar=1[v${index}]`);
-    filters.push(`[${index}:a]aresample=async=1:first_pts=0[a${index}]`);
-
-    const offset = clips.slice(0, index).reduce((total, clip) => total + Number(clip.durationSeconds || 0), 0) - (FADE_DURATION * index);
+    const offset = clips
+      .slice(0, index)
+      .reduce((total, clip) => total + getClipPlaybackWindow(clip).playbackDurationSeconds, 0) - (FADE_DURATION * index);
     const nextVideoLabel = index === clips.length - 1 ? 'vout' : `vx${index}`;
     const nextAudioLabel = index === clips.length - 1 ? 'aout' : `ax${index}`;
 
@@ -48,7 +64,7 @@ export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSecon
   };
 }
 
-function buildConcatAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds'>[]) {
+function buildConcatAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>[]) {
   if (!clips.length) {
     throw new Error('At least one clip is required to assemble a film.');
   }
@@ -56,8 +72,9 @@ function buildConcatAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSecond
   const filters: string[] = [];
 
   for (let index = 0; index < clips.length; index += 1) {
-    filters.push(`[${index}:v]format=yuv420p,setsar=1[v${index}]`);
-    filters.push(`[${index}:a]aresample=async=1:first_pts=0[a${index}]`);
+    const window = getClipPlaybackWindow(clips[index]);
+    filters.push(`[${index}:v]trim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[v${index}]`);
+    filters.push(`[${index}:a]atrim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a${index}]`);
   }
 
   const concatInputs = clips.map((_, index) => `[v${index}][a${index}]`).join('');

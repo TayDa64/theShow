@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { generateSync } from 'otplib';
 import { describe, expect, it } from 'vitest';
 import { app } from '../server';
 
@@ -103,5 +104,75 @@ describe('auth routes', () => {
 
     expect(secondRender.status).toBe(429);
     expect(secondRender.body.error).toMatch(/Daily video generation quota reached/i);
+  });
+
+  it('creates a session from the Google OIDC callback flow', async () => {
+    process.env.GOOGLE_OIDC_CLIENT_ID = 'google-client-id';
+    process.env.GOOGLE_OIDC_CLIENT_SECRET = 'google-client-secret';
+    process.env.GOOGLE_OIDC_REDIRECT_URI = 'http://localhost:3000/api/auth/google/callback';
+
+    const agent = request.agent(app);
+    const start = await agent.get('/api/auth/google/start?mode=login');
+    expect(start.status).toBe(302);
+    const redirect = new URL(start.headers.location);
+    const state = redirect.searchParams.get('state');
+    expect(state).toBeTruthy();
+
+    const callback = await agent.get(`/api/auth/google/callback?state=${encodeURIComponent(state || '')}&code=mock-code`);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('authResult=google-login-success');
+
+    const session = await agent.get('/api/auth/session');
+    expect(session.status).toBe(200);
+    expect(session.body.isAuthenticated).toBe(true);
+    expect(session.body.user.email).toBe('google-user@example.com');
+    expect(session.body.user.googleLinked).toBe(true);
+    expect(session.body.user.hasPassword).toBe(false);
+  });
+
+  it('requires a valid TOTP code after password verification when local 2FA is enabled', async () => {
+    const { agent, csrfToken } = await registerAccount('Two Factor', `2fa-${Date.now()}@example.com`);
+
+    const setup = await agent
+      .post('/api/auth/2fa/setup')
+      .set('x-csrf-token', csrfToken)
+      .send({});
+    expect(setup.status).toBe(200);
+    const secret = setup.body.manualEntryKey as string;
+    expect(secret).toBeTruthy();
+
+    const confirm = await agent
+      .post('/api/auth/2fa/confirm')
+      .set('x-csrf-token', csrfToken)
+      .send({
+        token: generateSync({ secret }),
+      });
+    expect(confirm.status).toBe(200);
+    expect(confirm.body.user.twoFactorEnabled).toBe(true);
+
+    await agent
+      .post('/api/auth/logout')
+      .set('x-csrf-token', csrfToken)
+      .send({});
+
+    const login = await agent
+      .post('/api/auth/login')
+      .send({
+        email: confirm.body.user.email,
+        password: 'Passw0rd!23',
+      });
+    expect(login.status).toBe(202);
+    expect(login.body.requiresTwoFactor).toBe(true);
+    expect(login.body.challenge.challengeId).toBeTruthy();
+
+    const verify = await agent
+      .post('/api/auth/2fa/verify')
+      .send({
+        challengeId: login.body.challenge.challengeId,
+        token: generateSync({ secret }),
+      });
+    expect(verify.status).toBe(200);
+    expect(verify.body.isAuthenticated).toBe(true);
+    expect(verify.body.user.twoFactorEnabled).toBe(true);
   });
 });

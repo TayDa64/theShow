@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Cloud, KeyRound, LogIn, LogOut, RefreshCw, ShieldCheck, Sparkles, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -36,8 +36,18 @@ export function AccountDashboard() {
     sessions,
     auditEvents,
     capabilities,
+    identity,
+    pendingTwoFactorChallenge,
+    twoFactorSetup,
     login,
     register,
+    verifyTwoFactor,
+    clearTwoFactorChallenge,
+    beginGoogleSignIn,
+    disconnectGoogleIdentity,
+    beginTwoFactorSetup,
+    confirmTwoFactorSetup,
+    disableTwoFactor,
     logout,
     linkGeminiProvider,
     disconnectGeminiProvider,
@@ -48,6 +58,8 @@ export function AccountDashboard() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorDisableCode, setTwoFactorDisableCode] = useState('');
   const [providerLabel, setProviderLabel] = useState('My Gemini Project');
   const [providerApiKey, setProviderApiKey] = useState('');
   const [dailyVideoLimit, setDailyVideoLimit] = useState('3');
@@ -56,6 +68,28 @@ export function AccountDashboard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLinkingProvider, setIsLinkingProvider] = useState(false);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+  const [isManagingTwoFactor, setIsManagingTwoFactor] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authResult = params.get('authResult');
+    const authError = params.get('authError');
+
+    if (authResult === 'google-login-success') {
+      setMessage('Google sign-in completed successfully.');
+    } else if (authResult === 'google-link-success') {
+      setMessage('Google sign-in was linked to your StoryForge account.');
+    } else if (authError) {
+      setError(decodeURIComponent(authError));
+    }
+
+    if (authResult || authError) {
+      params.delete('authResult');
+      params.delete('authError');
+      const nextQuery = params.toString();
+      window.history.replaceState({}, document.title, `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`);
+    }
+  }, []);
 
   const capabilityItems = useMemo(() => ([
     {
@@ -69,14 +103,14 @@ export function AccountDashboard() {
       summary: capabilities.aiTools ? 'Authenticated AI routes are available to this account.' : 'Sign in to unlock authenticated AI text and video routes.',
     },
     {
-      label: 'Live video',
-      enabled: capabilities.liveVideo,
-      summary: capabilities.liveVideo ? 'A live Gemini API provider is ready for Veo requests.' : 'Live Veo generation is unavailable until a Gemini API key is connected.',
+      label: 'Google OIDC',
+      enabled: capabilities.googleOidc,
+      summary: capabilities.googleOidc ? 'Google sign-in is configured for this workspace.' : 'Set GOOGLE_OIDC_CLIENT_ID and GOOGLE_OIDC_CLIENT_SECRET to enable Google sign-in.',
     },
     {
-      label: 'Sandbox fallback',
-      enabled: capabilities.sandboxFallback,
-      summary: capabilities.sandboxFallback ? 'Mock/sandbox preview paths remain available for safe testing.' : 'Sandbox fallback activates after you sign in.',
+      label: 'Local 2FA',
+      enabled: capabilities.localTwoFactor,
+      summary: capabilities.localTwoFactor ? 'TOTP-based 2FA can protect local password sign-in.' : 'Local 2FA becomes available after you sign in with a password-capable account.',
     },
   ]), [capabilities]);
 
@@ -89,14 +123,37 @@ export function AccountDashboard() {
     try {
       if (mode === 'register') {
         await register({ name, email, password });
-        setMessage('Account created and signed in. Cloud sync and authenticated generation are now available.');
+        setMessage('Account created and signed in. Cloud sync, authenticated generation, and optional 2FA are now available.');
       } else {
-        await login({ email, password });
-        setMessage('Signed in successfully. Your secure workspace session is active.');
+        const result = await login({ email, password });
+        setMessage(result ? 'Signed in successfully. Your secure workspace session is active.' : 'Password verified. Enter the 2FA code from your authenticator app to finish signing in.');
       }
       setPassword('');
     } catch (authError: any) {
       setError(authError?.message || 'Authentication failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerifyTwoFactor = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!pendingTwoFactorChallenge) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await verifyTwoFactor({
+        challengeId: pendingTwoFactorChallenge.challengeId,
+        token: twoFactorCode,
+      });
+      setTwoFactorCode('');
+      setMessage('2FA verified. Your secure workspace session is active.');
+    } catch (twoFactorError: any) {
+      setError(twoFactorError?.message || '2FA verification failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -135,6 +192,64 @@ export function AccountDashboard() {
     }
   };
 
+  const handleDisconnectGoogle = async () => {
+    setError(null);
+    setMessage(null);
+
+    try {
+      await disconnectGoogleIdentity();
+      setMessage('Google sign-in was removed from this account.');
+    } catch (providerError: any) {
+      setError(providerError?.message || 'Google unlink failed.');
+    }
+  };
+
+  const handleStartTwoFactorSetup = async () => {
+    setIsManagingTwoFactor(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await beginTwoFactorSetup();
+      setMessage('Scan the QR code with your authenticator app, then enter the current code to enable 2FA.');
+    } catch (twoFactorError: any) {
+      setError(twoFactorError?.message || 'Could not start 2FA setup.');
+    } finally {
+      setIsManagingTwoFactor(false);
+    }
+  };
+
+  const handleConfirmTwoFactorSetup = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsManagingTwoFactor(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await confirmTwoFactorSetup(twoFactorCode);
+      setTwoFactorCode('');
+      setMessage('Two-factor authentication is now enabled for local password sign-in.');
+    } catch (twoFactorError: any) {
+      setError(twoFactorError?.message || 'Could not enable 2FA.');
+    } finally {
+      setIsManagingTwoFactor(false);
+    }
+  };
+
+  const handleDisableTwoFactor = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsManagingTwoFactor(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await disableTwoFactor(twoFactorDisableCode);
+      setTwoFactorDisableCode('');
+      setMessage('Two-factor authentication was disabled for local password sign-in.');
+    } catch (twoFactorError: any) {
+      setError(twoFactorError?.message || 'Could not disable 2FA.');
+    } finally {
+      setIsManagingTwoFactor(false);
+    }
+  };
+
   const handleLogout = async () => {
     setError(null);
     setMessage(null);
@@ -167,9 +282,15 @@ export function AccountDashboard() {
       <div>
         <h2 className="text-lg font-medium tracking-tight text-white">Account & Security</h2>
         <p className="text-[11px] text-zinc-500 font-mono mt-0.5">
-          Secure sign-in, provider isolation, session controls, and quota visibility for authenticated generation.
+          Password login, Google OIDC, local TOTP-based 2FA, session controls, and Gemini provider isolation.
         </p>
       </div>
+
+      {(message || error) && (
+        <div className={`rounded-2xl border p-3 text-sm ${error ? 'border-red-500/10 bg-red-500/5 text-red-300' : 'border-emerald-500/10 bg-emerald-500/5 text-emerald-300'}`}>
+          {error || message}
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <section className="bg-zinc-900/50 border border-zinc-900 rounded-2xl p-5 space-y-4">
@@ -180,7 +301,7 @@ export function AccountDashboard() {
                 <h3 className="text-sm font-semibold text-white">Workspace identity</h3>
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                StoryForge keeps app login separate from Gemini generation credentials so Gmail browser state never becomes the source of truth.
+                StoryForge keeps app identity separate from Gemini provider credentials and now supports Google OIDC alongside local password login.
               </p>
             </div>
             <ProviderStatusPill mode={provider.mode} />
@@ -198,67 +319,123 @@ export function AccountDashboard() {
                 </p>
               </div>
 
-              <div className="flex gap-2 rounded-xl bg-zinc-950 border border-zinc-900 p-1 w-fit">
-                <button
-                  type="button"
-                  onClick={() => setMode('login')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${mode === 'login' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
-                >
-                  Sign in
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('register')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${mode === 'register' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
-                >
-                  Create account
-                </button>
-              </div>
-
-              <form onSubmit={handleSubmitAuth} className="space-y-3">
-                {mode === 'register' && (
+              {pendingTwoFactorChallenge ? (
+                <form onSubmit={handleVerifyTwoFactor} className="space-y-3 rounded-2xl border border-zinc-900 bg-zinc-950/80 p-4">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Two-factor verification</div>
+                    <div className="mt-1 text-xs text-zinc-400">
+                      Password verified for {pendingTwoFactorChallenge.email}. Enter the current 6-digit code from your authenticator app before {formatDateTime(pendingTwoFactorChallenge.expiresAt)}.
+                    </div>
+                  </div>
                   <label className="block space-y-1">
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Display name</span>
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Authenticator code</span>
                     <input
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
+                      value={twoFactorCode}
+                      onChange={(event) => setTwoFactorCode(event.target.value)}
                       className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                      placeholder="StoryForge Operator"
+                      placeholder="123456"
+                      inputMode="numeric"
                     />
                   </label>
-                )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || !twoFactorCode.trim()}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>{isSubmitting ? 'Verifying…' : 'Verify 2FA code'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearTwoFactorChallenge();
+                        setTwoFactorCode('');
+                      }}
+                      className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm font-semibold px-4 py-2 rounded-xl"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="flex gap-2 rounded-xl bg-zinc-950 border border-zinc-900 p-1 w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setMode('login')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${mode === 'login' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode('register')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${mode === 'register' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                    >
+                      Create account
+                    </button>
+                  </div>
 
-                <label className="block space-y-1">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Email</span>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                    placeholder="operator@storyforge.dev"
-                  />
-                </label>
+                  <form onSubmit={handleSubmitAuth} className="space-y-3">
+                    {mode === 'register' && (
+                      <label className="block space-y-1">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Display name</span>
+                        <input
+                          value={name}
+                          onChange={(event) => setName(event.target.value)}
+                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                          placeholder="StoryForge Operator"
+                        />
+                      </label>
+                    )}
 
-                <label className="block space-y-1">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Password</span>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                    placeholder="At least 8 characters"
-                  />
-                </label>
+                    <label className="block space-y-1">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Email</span>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                        placeholder="operator@storyforge.dev"
+                      />
+                    </label>
 
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2"
-                >
-                  <LogIn className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Working…' : mode === 'register' ? 'Create secure account' : 'Sign in securely'}</span>
-                </button>
-              </form>
+                    <label className="block space-y-1">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Password</span>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                        placeholder="At least 8 characters"
+                      />
+                    </label>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        <span>{isSubmitting ? 'Working…' : mode === 'register' ? 'Create secure account' : 'Sign in securely'}</span>
+                      </button>
+
+                      {identity.googleOidcConfigured && (
+                        <button
+                          type="button"
+                          onClick={() => beginGoogleSignIn('login')}
+                          className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-2"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          <span>Continue with Google</span>
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -286,6 +463,115 @@ export function AccountDashboard() {
                 </div>
               </div>
 
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/80 p-4 space-y-2">
+                  <div className="text-sm font-semibold text-zinc-100">Sign-in methods</div>
+                  <div className="text-xs text-zinc-400 leading-relaxed">
+                    Local password: <span className="text-zinc-200">{identity.passwordLoginEnabled ? 'enabled' : 'not configured'}</span><br />
+                    Google OIDC: <span className="text-zinc-200">{identity.googleLinked ? 'linked' : (identity.googleOidcConfigured ? 'available to link' : 'not configured')}</span><br />
+                    Local 2FA: <span className="text-zinc-200">{identity.twoFactorEnabled ? 'enabled' : 'disabled'}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {identity.googleOidcConfigured && !identity.googleLinked && (
+                      <button
+                        type="button"
+                        onClick={() => beginGoogleSignIn('link')}
+                        className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-100 text-xs font-semibold px-3 py-2 rounded-xl"
+                      >
+                        Link Google sign-in
+                      </button>
+                    )}
+                    {identity.googleLinked && (
+                      <button
+                        type="button"
+                        onClick={handleDisconnectGoogle}
+                        disabled={!identity.passwordLoginEnabled}
+                        className="bg-zinc-900 hover:bg-zinc-800 disabled:opacity-60 border border-zinc-700 text-zinc-100 text-xs font-semibold px-3 py-2 rounded-xl"
+                      >
+                        Disconnect Google
+                      </button>
+                    )}
+                  </div>
+                  {identity.googleLinked && !identity.passwordLoginEnabled && (
+                    <div className="text-[11px] text-amber-300">
+                      Google cannot be disconnected until a password-based sign-in method exists for this account.
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/80 p-4 space-y-3">
+                  <div className="text-sm font-semibold text-zinc-100">Local 2FA</div>
+                  {!identity.passwordLoginEnabled ? (
+                    <div className="text-xs text-zinc-500 leading-relaxed">
+                      Local TOTP-based 2FA is only available for accounts that use password login.
+                    </div>
+                  ) : twoFactorSetup ? (
+                    <form onSubmit={handleConfirmTwoFactorSetup} className="space-y-3">
+                      <img src={twoFactorSetup.qrCodeDataUrl} alt="2FA QR code" className="w-44 h-44 rounded-2xl border border-zinc-900 bg-white p-2" />
+                      <div className="rounded-2xl border border-zinc-900 bg-zinc-900/40 p-3 text-[11px] font-mono text-zinc-400 break-all">
+                        Manual key: {twoFactorSetup.manualEntryKey}
+                      </div>
+                      <label className="block space-y-1">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Authenticator code</span>
+                        <input
+                          value={twoFactorCode}
+                          onChange={(event) => setTwoFactorCode(event.target.value)}
+                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                          placeholder="123456"
+                          inputMode="numeric"
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="submit"
+                          disabled={isManagingTwoFactor || !twoFactorCode.trim()}
+                          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold px-3 py-2 rounded-xl"
+                        >
+                          {isManagingTwoFactor ? 'Enabling…' : 'Enable 2FA'}
+                        </button>
+                      </div>
+                    </form>
+                  ) : identity.twoFactorEnabled ? (
+                    <form onSubmit={handleDisableTwoFactor} className="space-y-3">
+                      <div className="text-xs text-zinc-400 leading-relaxed">
+                        2FA is active for password sign-in. Enter a current authenticator code if you need to disable it.
+                      </div>
+                      <label className="block space-y-1">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Current 2FA code</span>
+                        <input
+                          value={twoFactorDisableCode}
+                          onChange={(event) => setTwoFactorDisableCode(event.target.value)}
+                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                          placeholder="123456"
+                          inputMode="numeric"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={isManagingTwoFactor || !twoFactorDisableCode.trim()}
+                        className="bg-red-500/10 hover:bg-red-500/20 disabled:opacity-60 border border-red-500/20 text-red-300 text-xs font-semibold px-3 py-2 rounded-xl"
+                      >
+                        {isManagingTwoFactor ? 'Disabling…' : 'Disable 2FA'}
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="text-xs text-zinc-400 leading-relaxed">
+                        Add a TOTP authenticator app challenge after password verification for local sign-in.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleStartTwoFactorSetup}
+                        disabled={isManagingTwoFactor}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold px-3 py-2 rounded-xl"
+                      >
+                        {isManagingTwoFactor ? 'Preparing…' : 'Set up 2FA'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -296,12 +582,6 @@ export function AccountDashboard() {
                   <span>Sign out</span>
                 </button>
               </div>
-            </div>
-          )}
-
-          {(message || error) && (
-            <div className={`rounded-2xl border p-3 text-sm ${error ? 'border-red-500/10 bg-red-500/5 text-red-300' : 'border-emerald-500/10 bg-emerald-500/5 text-emerald-300'}`}>
-              {error || message}
             </div>
           )}
         </section>

@@ -12,10 +12,16 @@ import {
   attachAuthToRequest,
   assertVideoGenerationAllowed,
   authenticateUser,
+  beginTwoFactorSetup,
   buildAuthStatus,
   clearSessionFromResponse,
+  completeGoogleAuthentication,
+  confirmTwoFactorSetup,
+  disconnectGoogleIdentity,
   disconnectPersonalGeminiProvider,
+  disableTwoFactor,
   getAuthStatusForRequest,
+  getGoogleAuthenticationUrl,
   getOperationApiKeyForUser,
   getRequestUserId,
   getVideoGenerationAccessForUser,
@@ -29,6 +35,7 @@ import {
   revokeUserSession,
   saveProjectStateForUser,
   userOwnsOperation,
+  verifyTwoFactorChallenge,
   writeSessionToResponse,
   type AuthenticatedRequest,
 } from './src/lib/authStore';
@@ -144,14 +151,81 @@ app.post('/api/auth/register', authRateLimiter, (req, res) => {
 
 app.post('/api/auth/login', authRateLimiter, (req, res) => {
   try {
-    const { user, session } = authenticateUser(req.body || {}, {
+    const { user, session, twoFactorChallenge } = authenticateUser(req.body || {}, {
       userAgent: req.get('user-agent') || undefined,
       ip: req.ip,
     });
+    if (twoFactorChallenge) {
+      return res.status(202).json({
+        requiresTwoFactor: true,
+        challenge: twoFactorChallenge,
+      });
+    }
+    if (!session) {
+      throw new Error('Could not establish a session for this sign-in attempt.');
+    }
     writeSessionToResponse(res, session.id);
     return res.json(buildAuthStatus(user, session));
   } catch (error: any) {
     return res.status(400).json({ error: error?.message || 'Sign-in failed.' });
+  }
+});
+
+app.post('/api/auth/2fa/verify', authRateLimiter, (req, res) => {
+  try {
+    const { user, session } = verifyTwoFactorChallenge({
+      challengeId: req.body?.challengeId || '',
+      token: req.body?.token || '',
+      metadata: {
+        userAgent: req.get('user-agent') || undefined,
+        ip: req.ip,
+      },
+    });
+    writeSessionToResponse(res, session.id);
+    return res.json(buildAuthStatus(user, session));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || '2FA verification failed.' });
+  }
+});
+
+app.get('/api/auth/google/start', (req, res) => {
+  try {
+    const mode = req.query.mode === 'link' ? 'link' : 'login';
+    const userId = mode === 'link' ? getRequestUserId(req) : null;
+    if (mode === 'link' && !userId) {
+      return res.status(401).json({ error: 'Sign in before linking Google.' });
+    }
+
+    const url = getGoogleAuthenticationUrl({
+      mode,
+      userId,
+    });
+    return res.redirect(url);
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not start Google sign-in.' });
+  }
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!state || !code) {
+      return res.redirect('/?authError=google-callback-missing-code');
+    }
+
+    const { user, session, mode } = await completeGoogleAuthentication({
+      state,
+      code,
+      metadata: {
+        userAgent: req.get('user-agent') || undefined,
+        ip: req.ip,
+      },
+    });
+    writeSessionToResponse(res, session.id);
+    return res.redirect(`/?authResult=${mode === 'link' ? 'google-link-success' : 'google-login-success'}`);
+  } catch (error: any) {
+    return res.redirect(`/?authError=${encodeURIComponent(error?.message || 'google-auth-failed')}`);
   }
 });
 
@@ -173,6 +247,62 @@ app.post('/api/auth/provider/gemini', requireAuth, requireCsrf, (req, res) => {
     return res.json(getAuthStatusForRequest(req));
   } catch (error: any) {
     return res.status(400).json({ error: error?.message || 'Could not connect Gemini API access.' });
+  }
+});
+
+app.delete('/api/auth/provider/google', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    disconnectGoogleIdentity(userId);
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not disconnect Google sign-in.' });
+  }
+});
+
+app.post('/api/auth/2fa/setup', requireAuth, requireCsrf, async (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    const setup = await beginTwoFactorSetup(userId);
+    return res.json(setup);
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not start 2FA setup.' });
+  }
+});
+
+app.post('/api/auth/2fa/confirm', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    confirmTwoFactorSetup(userId, req.body?.token || '');
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not enable 2FA.' });
+  }
+});
+
+app.post('/api/auth/2fa/disable', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    disableTwoFactor(userId, req.body?.token || '');
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not disable 2FA.' });
   }
 });
 
@@ -1579,9 +1709,24 @@ app.post('/api/assemble-film', fileOperationRateLimiter, requireAuth, requireCsr
       if (filePath.includes(`${path.sep}temp-clips${path.sep}`)) {
         tempFiles.push(filePath);
       }
+      const normalizedDurationSeconds = normalizeMockVideoDuration(clip.durationSeconds, 8);
+      const normalizedSourceDurationSeconds = normalizeMockVideoDuration(clip.sourceDurationSeconds ?? clip.durationSeconds, 8);
+      const normalizedTrimStartSeconds = Math.min(
+        Math.max(Number(clip.trimStartSeconds || 0), 0),
+        Math.max(normalizedSourceDurationSeconds - 0.1, 0),
+      );
+      const normalizedTrimEndSeconds = Math.min(
+        Math.max(Number(clip.trimEndSeconds ?? normalizedSourceDurationSeconds), normalizedTrimStartSeconds + 0.1),
+        normalizedSourceDurationSeconds,
+      );
+
       normalizedClips.push({
         ...clip,
-        durationSeconds: normalizeMockVideoDuration(clip.durationSeconds, 8),
+        durationSeconds: normalizedDurationSeconds,
+        sourceDurationSeconds: normalizedSourceDurationSeconds,
+        trimStartSeconds: normalizedTrimStartSeconds,
+        trimEndSeconds: normalizedTrimEndSeconds,
+        playbackDurationSeconds: Math.max(normalizedTrimEndSeconds - normalizedTrimStartSeconds, 0.1),
         filePath,
       });
     }

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, RefreshCw, Layers, Copy, Check, Film, AlertTriangle, Wand2, Clapperboard, XCircle } from 'lucide-react';
 import type { ExportSettings, Character, Scene, CameraConfig, StoryboardSeedStrategy, StoryboardTransitionMode } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { createRenderSeed, getSceneDisplayBackground, getSceneStoryboardFrameAsset, getShotDialogueExcerpt, normalizeStoryboardShot, primeNextStoryboardShotContinuity, sanitizeStoryboardSeed, upsertSceneStoryboardFrameAsset } from '../utils/storyforge';
+import { buildProjectTimelineManifest, createRenderSeed, getSceneDisplayBackground, getSceneStoryboardFrameAsset, getShotDialogueExcerpt, getStoryboardShotActiveGeneratedClip, normalizeStoryboardShot, primeNextStoryboardShotContinuity, sanitizeStoryboardSeed, upsertSceneStoryboardFrameAsset } from '../utils/storyforge';
 import type { FilmAssemblyJob } from '../types/pipeline';
 import { pollUntilComplete } from '../lib/veoChain';
 
@@ -764,6 +764,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
     const previousShot = shotIndex > 0 ? sceneSnapshot.storyboardShots?.[shotIndex - 1] : undefined;
     const previousJob = shotIndex > 0 ? storyboardJobsRef.current[shotIndex - 1] : undefined;
+    const previousGeneratedClip = previousShot ? getStoryboardShotActiveGeneratedClip(previousShot) : null;
     const seedResolution = resolveStoryboardShotSeed(shot, previousShot, retryMode);
 
     updateStoryboardJob(shot.id, {
@@ -799,7 +800,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
       const promptData = await promptResponse.json();
       const bridgeFrame = previousShot ? getShotAnchorFrame(sceneSnapshot, previousShot) : undefined;
-      const shouldExtend = !!(previousJob?.operationName && bridgeFrame?.url);
+      const previousOperationName = previousJob?.operationName || previousGeneratedClip?.operationName || null;
+      const shouldExtend = !!(previousOperationName && bridgeFrame?.url);
       const response = await authFetch(shouldExtend ? '/api/extend-clip' : '/api/generate-shot-video', {
         method: 'POST',
         headers: {
@@ -807,7 +809,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         },
         body: JSON.stringify(shouldExtend ? {
           prompt: promptData.prompt,
-          videoToExtend: buildOperationDownloadUrl(previousJob!.operationName || ''),
+          videoToExtend: buildOperationDownloadUrl(previousOperationName || ''),
           firstFrame: bridgeFrame?.url || null,
           aspectRatio: camera.aspectRatio,
           durationSeconds: shot.durationSeconds,
@@ -861,12 +863,36 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       let finalScene: Scene = updatedScene;
       let anchorSaved = false;
       let anchorError: string | null = null;
+      const renderedShotBeforePersist = updatedScene.storyboardShots?.[shotIndex];
 
-      const renderedShot = updatedScene.storyboardShots?.[shotIndex];
+      if (renderedShotBeforePersist) {
+        const nextGeneratedClips = [
+          ...((renderedShotBeforePersist.generatedClips || []).filter((clip) => clip.operationName !== data.operationName)),
+          {
+            id: `generated-${renderedShotBeforePersist.id}-${Date.now()}`,
+            operationName: data.operationName,
+            clipUrl: buildOperationDownloadUrl(data.operationName),
+            durationSeconds: data.durationSeconds || shot.durationSeconds,
+            createdAt: new Date().toISOString(),
+            resolvedSeed: appliedSeed,
+            continuitySource: data.continuitySource || null,
+            usingContinuityFrame: !!data.usingContinuityFrame,
+            providerMode: data.providerMode || provider.mode,
+          },
+        ];
+
+        finalScene = updateSceneStoryboardShot(updatedScene, shot.id, {
+          lastRenderSeed: appliedSeed,
+          generatedClips: nextGeneratedClips,
+          activeGeneratedClipId: nextGeneratedClips.at(-1)?.id || null,
+        });
+      }
+
+      const renderedShot = finalScene.storyboardShots?.[shotIndex];
       if (renderedShot) {
         try {
           const anchorResult = await persistShotAnchorFrame({
-            sceneSnapshot: updatedScene,
+            sceneSnapshot: finalScene,
             shot: renderedShot,
             operationName: data.operationName,
             title: shot.title,
@@ -1071,7 +1097,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       type: camera.shotType,
       aspect: camera.aspectRatio,
       lens: `${camera.focalLength}mm`
-    }
+    },
+    timeline: buildProjectTimelineManifest(scenes),
   }, null, 2);
 
   const handleCopyPayload = () => {
@@ -1094,7 +1121,10 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     ? Math.round((storyboardJobs.filter(job => job.status === 'completed').length / storyboardJobs.length) * 100)
     : 0;
 
-  const storyboardRenderedJobs = storyboardJobs.filter(job => job.status === 'completed' && job.operationName);
+  const projectTimelineManifest = useMemo(() => buildProjectTimelineManifest(scenes), [scenes]);
+  const includedTimelineClips = projectTimelineManifest.clips.filter((clip) => clip.includeInCut);
+  const readyTimelineClips = includedTimelineClips.filter((clip) => !!clip.operationName);
+  const missingTimelineSources = includedTimelineClips.filter((clip) => !clip.operationName);
   const storyboardManifest = useMemo(() => {
     if (!selectedScene) return null;
 
@@ -1160,13 +1190,29 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   };
 
   const handleAssembleFilm = async () => {
-    if (!storyboardRenderedJobs.length) {
+    if (!includedTimelineClips.length) {
+      setFilmJob({
+        filmId: '',
+        clipCount: 0,
+        status: 'failed',
+        error: 'No timeline clips are currently included in the project cut.',
+      });
+      return;
+    }
+
+    if (missingTimelineSources.length) {
+      setFilmJob({
+        filmId: '',
+        clipCount: includedTimelineClips.length,
+        status: 'failed',
+        error: `${missingTimelineSources.length} included timeline ${missingTimelineSources.length === 1 ? 'clip is' : 'clips are'} missing a saved source render. Render or exclude them from the Timeline workspace before assembly.`,
+      });
       return;
     }
     if (!isAuthenticated) {
       setFilmJob({
         filmId: '',
-        clipCount: storyboardRenderedJobs.length,
+        clipCount: includedTimelineClips.length,
         status: 'failed',
         error: 'Sign in from the Account dashboard to assemble exported films.',
       });
@@ -1183,13 +1229,16 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          title: selectedScene?.title || 'assembled-film',
-          clips: storyboardRenderedJobs.map((job, index) => ({
-            shotId: job.shotId,
-            title: job.title,
+          title: selectedScene?.title || 'timeline-film',
+          clips: readyTimelineClips.map((clip, index) => ({
+            shotId: clip.shotId,
+            title: clip.title,
             order: index + 1,
-            operationName: job.operationName || null,
-            durationSeconds: job.durationSeconds || storyboardShots.find((shot) => shot.id === job.shotId)?.durationSeconds || 8,
+            operationName: clip.operationName || null,
+            durationSeconds: clip.playbackDurationSeconds,
+            sourceDurationSeconds: clip.sourceDurationSeconds,
+            trimStartSeconds: clip.trimStartSeconds,
+            trimEndSeconds: clip.trimEndSeconds,
           })),
         }),
       });
@@ -1203,7 +1252,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     } catch (error: any) {
       setFilmJob({
         filmId: '',
-        clipCount: storyboardRenderedJobs.length,
+        clipCount: includedTimelineClips.length,
         status: 'failed',
         error: error?.message || 'Film assembly failed.',
       });
@@ -1757,10 +1806,13 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
               </div>
             )}
 
-            {storyboardRunStatus === 'completed' && storyboardRenderedJobs.length > 0 && (
+            {(includedTimelineClips.length > 0 || filmJob) && (
               <div className="flex flex-col gap-3 bg-emerald-500/5 border border-emerald-500/10 px-3 py-3 rounded-xl">
                 <div className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
-                  ● Storyboard sequence render complete — long dialogue has been preserved as separate shot clips instead of a single compressed preview.
+                  ● Timeline assembly uses saved storyboard source clips, so you can preserve long dialogue as separate beats and stitch only the cut you want.
+                </div>
+                <div className="text-[10px] font-mono text-zinc-400">
+                  Project cut status: {readyTimelineClips.length}/{includedTimelineClips.length} included timeline clips have reusable source media ready for assembly.
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button

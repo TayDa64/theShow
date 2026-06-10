@@ -1,22 +1,23 @@
 import React, { useState } from 'react';
-import { 
-  Users, 
-  Clapperboard, 
-  Video, 
-  ArrowUpRight, 
+import {
+  Users,
+  Clapperboard,
+  ArrowUpRight,
   Cloud,
   ShieldCheck,
+  Film,
+  X,
 } from 'lucide-react';
 import type { AppViewState, Character, Scene, CameraConfig, ExportSettings, WorkspaceSyncState } from './types';
 import { CharactersList } from './components/CharactersList';
 import { CharacterEditor } from './components/CharacterEditor';
 import { ScenesView } from './components/ScenesView';
-import { CamerasView } from './components/CamerasView';
 import { ExportView } from './components/ExportView';
+import { TimelineView } from './components/TimelineView';
 import { AccountDashboard } from './components/AccountDashboard';
 import { AuthGate } from './components/AuthGate';
 import { useAuth } from './context/AuthContext';
-import { normalizeCharacter, normalizeProjectState, normalizeScene } from './utils/storyforge';
+import { normalizeCharacter, normalizeProjectState, normalizeScene, syncSceneTimeline } from './utils/storyforge';
 
 // Upgraded Mock Characters to fully fit robust attributes!
 const initialCharacters: Character[] = [
@@ -108,9 +109,66 @@ const defaultExportSettings: ExportSettings = {
   meshLevel: 'high'
 };
 
+type PopupWorkspaceView = Exclude<AppViewState, 'timeline' | 'cameras'>;
+
+const POPUP_WORKSPACE_ORDER: PopupWorkspaceView[] = ['characters', 'scenes', 'export', 'account'];
+const MOBILE_WORKSPACE_ORDER: Array<'timeline' | PopupWorkspaceView> = ['timeline', 'characters', 'scenes', 'export', 'account'];
+
+const WORKSPACE_META: Record<'timeline' | PopupWorkspaceView, {
+  label: string;
+  shortLabel: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+}> = {
+  timeline: {
+    label: 'Timeline',
+    shortLabel: 'Timeline',
+    description: 'Primary editing canvas',
+    icon: Film,
+  },
+  characters: {
+    label: 'Roster',
+    shortLabel: 'Roster',
+    description: 'Character continuity and references',
+    icon: Users,
+  },
+  scenes: {
+    label: 'Scenes',
+    shortLabel: 'Scenes',
+    description: 'Acts, dialogue, and backgrounds',
+    icon: Clapperboard,
+  },
+  export: {
+    label: 'Pipeline',
+    shortLabel: 'Export',
+    description: 'Render and assembly workflow',
+    icon: ArrowUpRight,
+  },
+  account: {
+    label: 'Account',
+    shortLabel: 'Account',
+    description: 'Sync, auth, and providers',
+    icon: ShieldCheck,
+  },
+};
+
+function getInitialPopupView(): PopupWorkspaceView | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('authResult') || params.get('authError')) {
+      return 'account';
+    }
+
+    const saved = localStorage.getItem('sf_activePopupView');
+    return POPUP_WORKSPACE_ORDER.includes(saved as PopupWorkspaceView) ? saved as PopupWorkspaceView : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const { authFetch, isAuthenticated, isLoading: isAuthLoading, user, provider } = useAuth();
-  const [activeView, setActiveView] = useState<AppViewState>('characters');
+  const [activePopupView, setActivePopupView] = useState<PopupWorkspaceView | null>(() => getInitialPopupView());
   const [syncState, setSyncState] = useState<WorkspaceSyncState>('LOCAL');
   const [lastUpdatedAt, setLastUpdatedAt] = useState(() => {
     try {
@@ -120,6 +178,14 @@ export default function App() {
     }
   });
   
+  const prepareScenesForWorkspace = React.useCallback((inputScenes: Array<Partial<Scene> | Scene> | null | undefined) => {
+    if (!Array.isArray(inputScenes)) {
+      return [] as Scene[];
+    }
+
+    return inputScenes.map((scene) => syncSceneTimeline(normalizeScene(scene)));
+  }, []);
+
   // Initialize state synchronously with localStorage fallbacks to avoid layout shifts or blinking
   const [characters, setCharacters] = useState<Character[]>(() => {
     try {
@@ -136,9 +202,9 @@ export default function App() {
     try {
       const saved = localStorage.getItem('sf_scenes');
       const parsed = saved ? JSON.parse(saved) : initialScenes;
-      return normalizeProjectState({ scenes: parsed }).scenes || initialScenes.map(normalizeScene);
+      return prepareScenesForWorkspace(normalizeProjectState({ scenes: parsed }).scenes || initialScenes.map(normalizeScene));
     } catch {
-      return initialScenes.map(normalizeScene);
+      return prepareScenesForWorkspace(initialScenes.map(normalizeScene));
     }
   });
   const [camera, setCamera] = useState<CameraConfig>(() => {
@@ -189,7 +255,7 @@ export default function App() {
             if (cloudTime > localTime) {
               const normalized = normalizeProjectState(data);
               if (normalized.characters) setCharacters(normalized.characters);
-              if (normalized.scenes) setScenes(normalized.scenes);
+              if (normalized.scenes) setScenes(prepareScenesForWorkspace(normalized.scenes));
               if (data.camera) setCamera(data.camera);
               if (data.exportSettings) setExportSettings(data.exportSettings);
               setLastUpdatedAt(cloudUpdatedAt);
@@ -210,6 +276,10 @@ export default function App() {
     };
     void fetchCloudState();
   }, [authFetch, isAuthLoading, isAuthenticated, user]);
+
+  const handleSaveScenes = React.useCallback((nextScenes: Scene[]) => {
+    setScenes(prepareScenesForWorkspace(nextScenes));
+  }, [prepareScenesForWorkspace]);
 
   React.useEffect(() => {
     if (isAuthLoading || !hasLoadedCloud) {
@@ -290,6 +360,39 @@ export default function App() {
     setEditingCharacter(null);
   };
 
+  React.useEffect(() => {
+    try {
+      if (activePopupView) {
+        localStorage.setItem('sf_activePopupView', activePopupView);
+      } else {
+        localStorage.removeItem('sf_activePopupView');
+      }
+    } catch {
+      // ignore local persistence failures
+    }
+  }, [activePopupView]);
+
+  const openWorkspace = React.useCallback((view: AppViewState) => {
+    if (view === 'timeline' || view === 'cameras') {
+      setActivePopupView(null);
+      return;
+    }
+
+    setActivePopupView(view);
+    if (view !== 'characters') {
+      setEditingCharacter(null);
+    }
+  }, []);
+
+  const closePopup = React.useCallback(() => {
+    setActivePopupView(null);
+    setEditingCharacter(null);
+  }, []);
+
+  const handleSaveAndClosePopup = React.useCallback(() => {
+    closePopup();
+  }, [closePopup]);
+
   const syncBadgeTone = syncState === 'SYNCING'
     ? 'text-amber-300 bg-amber-400/10 border-amber-400/20 shadow-amber-400/5'
     : syncState === 'LOCAL'
@@ -300,11 +403,62 @@ export default function App() {
     ? 'SYNCING'
     : syncState;
 
+  const popupMeta = activePopupView ? WORKSPACE_META[activePopupView] : null;
+  const showPopupSaveAction = activePopupView !== null && activePopupView !== 'account' && !(activePopupView === 'characters' && editingCharacter);
+  const popupSaveLabel = activePopupView === 'export' ? 'Save & Close' : 'Save & Close';
+
+  const renderPopupBody = () => {
+    switch (activePopupView) {
+      case 'characters':
+        return editingCharacter ? (
+          <CharacterEditor
+            character={editingCharacter}
+            onClose={() => setEditingCharacter(null)}
+            onSave={handleSaveCharacter}
+            presentation="embedded"
+            closeOnSave
+          />
+        ) : (
+          <div className="space-y-5">
+            <CharactersList
+              characters={characters}
+              onSelect={setEditingCharacter}
+              onCreateNew={handleCreateNew}
+            />
+          </div>
+        );
+      case 'scenes':
+        return (
+          <ScenesView
+            scenes={scenes}
+            characters={characters}
+            camera={camera}
+            onSaveScenes={handleSaveScenes}
+          />
+        );
+      case 'export':
+        return (
+          <ExportView
+            settings={exportSettings}
+            onUpdateSettings={setExportSettings}
+            onUpdateScenes={handleSaveScenes}
+            characters={characters}
+            scenes={scenes}
+            camera={camera}
+          />
+        );
+      case 'account':
+        return <AccountDashboard />;
+      default:
+        return null;
+    }
+  };
+
   return (
     <AuthGate>
       <div className="min-h-screen bg-zinc-950 text-zinc-50 flex justify-center font-sans select-none">
-        <div className="w-full max-w-md md:max-w-5xl xl:max-w-6xl bg-zinc-950 min-h-screen flex flex-col relative overflow-hidden border-x md:border-x lg:border border-zinc-900 shadow-2xl">
-          <header className="flex items-center justify-between px-6 py-4 md:px-8 lg:px-10 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20">
+        <div className="w-full max-w-[1680px] bg-zinc-950 min-h-screen flex flex-col relative overflow-hidden border-x md:border-x lg:border border-zinc-900 shadow-2xl">
+          <header className="flex items-center justify-between px-4 py-3 md:px-6 lg:px-8 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded bg-indigo-500/20 flex items-center justify-center border border-indigo-500/50">
                 <span className="text-indigo-400 font-bold text-xs uppercase">SF</span>
@@ -325,11 +479,9 @@ export default function App() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setActiveView('account');
-                  setEditingCharacter(null);
-                }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${activeView === 'account'
+                onClick={() => openWorkspace('account')}
+                data-testid="account-workspace-trigger"
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${activePopupView === 'account'
                   ? 'bg-indigo-600/15 border-indigo-500/30 text-indigo-300'
                   : 'bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:text-zinc-100'}`}
               >
@@ -339,66 +491,98 @@ export default function App() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto px-6 py-6 pb-24 md:px-8 md:py-8 md:pb-28 lg:px-10 relative">
-            {!isAuthenticated && activeView !== 'account' && (
-              <div className="mb-6 rounded-2xl border border-amber-500/10 bg-amber-500/5 px-4 py-3 text-[12px] text-zinc-300 leading-relaxed">
+          <main className="flex-1 overflow-y-auto px-3 py-3 pb-20 md:px-4 md:py-4 md:pb-24 lg:px-6 lg:py-5 relative">
+            {!isAuthenticated && activePopupView !== 'account' && (
+              <div className="mb-4 rounded-2xl border border-amber-500/10 bg-amber-500/5 px-4 py-2.5 text-[12px] text-zinc-300 leading-relaxed">
                 <span className="font-semibold text-amber-300">Local mode active.</span>{' '}
-                Sign in from the <button type="button" onClick={() => setActiveView('account')} className="underline underline-offset-2 text-indigo-300">Account</button> dashboard to enable secure cloud sync, authenticated AI routes, and isolated Gemini provider access.
+                Sign in from the <button type="button" onClick={() => openWorkspace('account')} className="underline underline-offset-2 text-indigo-300">Account</button> panel to enable secure cloud sync, authenticated AI routes, and isolated Gemini provider access.
               </div>
             )}
 
-            {activeView === 'characters' && (
-              <CharactersList 
-                characters={characters} 
-                onSelect={setEditingCharacter}
-                onCreateNew={handleCreateNew}
-              />
-            )}
-            
-            {editingCharacter && activeView === 'characters' && (
-               <CharacterEditor 
-                  character={editingCharacter}
-                  onClose={() => setEditingCharacter(null)}
-                  onSave={handleSaveCharacter}
-               />
-            )}
+            <TimelineView
+              scenes={scenes}
+              characters={characters}
+              camera={camera}
+              onSaveScenes={handleSaveScenes}
+              onUpdateCamera={setCamera}
+              onOpenWorkspace={openWorkspace}
+              activeWorkspace={activePopupView}
+            />
 
-            {activeView === 'scenes' && (
-              <ScenesView 
-                scenes={scenes}
-                characters={characters}
-                camera={camera}
-                onSaveScenes={setScenes}
-              />
-            )}
+            {activePopupView && (
+              <div className="absolute inset-0 z-30 flex items-start justify-center bg-black/55 px-3 py-3 md:px-6 md:py-5">
+                <div
+                  className="flex max-h-[calc(100vh-120px)] w-full max-w-6xl flex-col overflow-hidden rounded-[24px] border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/40"
+                  data-testid="workspace-popup"
+                >
+                  <div className="flex items-start justify-between gap-4 border-b border-zinc-900 px-4 py-3 md:px-5">
+                    <div>
+                      <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-zinc-500">Workspace popup</div>
+                      <div className="mt-1 text-base font-semibold text-white" data-testid="workspace-popup-title">{popupMeta?.label}</div>
+                      <div className="mt-1 text-[11px] leading-relaxed text-zinc-500">{popupMeta?.description}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closePopup}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                      title="Close workspace popup"
+                      data-testid="popup-close-icon"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
 
-            {activeView === 'cameras' && (
-              <CamerasView 
-                config={camera}
-                onUpdateConfig={setCamera}
-              />
-            )}
+                  <div className="flex-1 overflow-y-auto px-4 py-4 md:px-5">
+                    {renderPopupBody()}
+                  </div>
 
-            {activeView === 'export' && (
-              <ExportView 
-                settings={exportSettings}
-                onUpdateSettings={setExportSettings}
-                onUpdateScenes={setScenes}
-                characters={characters}
-                scenes={scenes}
-                camera={camera}
-              />
+                  <div className="flex items-center justify-between gap-3 border-t border-zinc-900 bg-zinc-950/90 px-4 py-3 md:px-5">
+                    <div className="text-[11px] text-zinc-500">
+                      {activePopupView === 'characters' && editingCharacter
+                        ? 'Use the editor Save button to persist this character, or close the popup to keep browsing the roster.'
+                        : 'Workspace changes persist to local and cloud state automatically as you edit.'}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={closePopup}
+                        className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
+                        data-testid="popup-close-button"
+                      >
+                        Close
+                      </button>
+                      {showPopupSaveAction && (
+                        <button
+                          type="button"
+                          onClick={handleSaveAndClosePopup}
+                          className="rounded-xl border border-indigo-500/20 bg-indigo-600/15 px-3 py-2 text-xs font-semibold text-indigo-300 transition-colors hover:bg-indigo-600/25"
+                          data-testid="popup-save-close"
+                        >
+                          {popupSaveLabel}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
-
-            {activeView === 'account' && <AccountDashboard />}
           </main>
 
-          <nav className="absolute text-xs bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-6 py-4 pb-6 md:px-8 lg:px-10 flex items-center justify-between md:justify-center md:gap-14 z-20">
-            <NavItem icon={<Users />} label="Roster" active={activeView === 'characters'} onClick={() => { setActiveView('characters'); setEditingCharacter(null); }} />
-            <NavItem icon={<Clapperboard />} label="Scenes" active={activeView === 'scenes'} onClick={() => { setActiveView('scenes'); setEditingCharacter(null); }} />
-            <NavItem icon={<Video />} label="Cameras" active={activeView === 'cameras'} onClick={() => { setActiveView('cameras'); setEditingCharacter(null); }} />
-            <NavItem icon={<ArrowUpRight />} label="Pipeline" active={activeView === 'export'} onClick={() => { setActiveView('export'); setEditingCharacter(null); }} />
-            <NavItem icon={<ShieldCheck />} label="Account" active={activeView === 'account'} onClick={() => { setActiveView('account'); setEditingCharacter(null); }} />
+          <nav className="absolute text-xs bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-4 py-3 pb-5 md:px-6 lg:hidden flex items-center justify-between md:justify-center md:gap-10 z-20">
+            {MOBILE_WORKSPACE_ORDER.map((view) => {
+              const meta = WORKSPACE_META[view];
+              const Icon = meta.icon;
+              return (
+                <React.Fragment key={view}>
+                  <NavItem
+                    icon={<Icon />}
+                    label={meta.shortLabel}
+                    active={view === 'timeline' ? activePopupView === null : activePopupView === view}
+                    onClick={() => openWorkspace(view)}
+                  />
+                </React.Fragment>
+              );
+            })}
           </nav>
         </div>
       </div>

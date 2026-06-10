@@ -70,9 +70,17 @@ interface CharacterEditorProps {
   character: Character;
   onClose: () => void;
   onSave: (char: Character) => void;
+  presentation?: 'fullscreen' | 'embedded';
+  closeOnSave?: boolean;
 }
 
-export function CharacterEditor({ character, onClose, onSave }: CharacterEditorProps) {
+export function CharacterEditor({
+  character,
+  onClose,
+  onSave,
+  presentation = 'fullscreen',
+  closeOnSave = false,
+}: CharacterEditorProps) {
   const { authFetch, isAuthenticated } = useAuth();
   const [editedChar, setEditedChar] = useState<Character>(character);
   const [activeTab, setActiveTab] = useState<'appearance' | 'identity'>('appearance');
@@ -277,7 +285,9 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
   };
 
   return (
-    <div className="absolute inset-0 z-30 bg-zinc-950 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className={`${presentation === 'embedded'
+      ? 'relative z-30 flex min-h-[720px] flex-col overflow-hidden rounded-[24px] border border-zinc-900 bg-zinc-950'
+      : 'absolute inset-0 z-30 flex flex-col overflow-hidden bg-zinc-950'} animate-in fade-in zoom-in-95 duration-200`}>
       {/* Editor Header */}
       <header className="flex items-center justify-between px-5 py-4 border-b border-zinc-900 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-40">
         <button onClick={onClose} title="Close character editor" className="p-2 -ml-2 text-zinc-400 hover:text-white transition-colors">
@@ -285,7 +295,12 @@ export function CharacterEditor({ character, onClose, onSave }: CharacterEditorP
         </button>
         <div className="text-sm font-medium tracking-tight font-sans text-zinc-200">Character Builder</div>
         <button 
-          onClick={() => onSave(syncCharacterImageState(editedChar))} 
+          onClick={() => {
+            onSave(syncCharacterImageState(editedChar));
+            if (closeOnSave) {
+              onClose();
+            }
+          }}
           className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-1.5 rounded-full shadow-lg hover:shadow-indigo-500/20 transition-all flex items-center gap-1"
         >
           <Check className="w-3.5 h-3.5" />
