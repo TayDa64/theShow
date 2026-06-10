@@ -2,11 +2,17 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { NextFunction, Request, Response } from 'express';
+import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
+import { generateSecret, generateURI, verifySync } from 'otplib';
+import QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   AuthAuditEvent,
+  AuthIdentitySummary,
   AuthSessionSummary,
   AuthStatus,
+  TwoFactorChallenge,
+  TwoFactorSetup,
   AuthUser,
   GenerationProviderMode,
   ProviderConnectionSummary,
@@ -24,8 +30,13 @@ type StoredUser = {
   id: string;
   email: string;
   name: string;
-  passwordHash: string;
-  passwordSalt: string;
+  passwordHash: string | null;
+  passwordSalt: string | null;
+  googleSub?: string | null;
+  avatarUrl?: string | null;
+  twoFactorEnabled?: boolean;
+  twoFactorSecretEncrypted?: string | null;
+  pendingTwoFactorSecretEncrypted?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -73,12 +84,33 @@ type StoredAuditEvent = {
   createdAt: string;
 };
 
+type StoredOauthState = {
+  id: string;
+  state: string;
+  codeVerifier: string;
+  mode: 'login' | 'link';
+  userId?: string | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+type StoredTwoFactorChallenge = {
+  id: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  ipHash: string | null;
+};
+
 type AuthStoreShape = {
   users: StoredUser[];
   sessions: StoredSession[];
   providers: StoredProviderConnection[];
   usageEvents: StoredUsageEvent[];
   auditEvents: StoredAuditEvent[];
+  oauthStates: StoredOauthState[];
+  twoFactorChallenges: StoredTwoFactorChallenge[];
 };
 
 type ProjectStoreShape = {
@@ -112,9 +144,12 @@ const LEGACY_STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
 const SESSION_COOKIE_NAME = 'storyforge_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const SESSION_TOUCH_THRESHOLD_MS = 1000 * 30;
+const OAUTH_STATE_TTL_MS = 1000 * 60 * 10;
+const TWO_FACTOR_CHALLENGE_TTL_MS = 1000 * 60 * 10;
 const DEFAULT_PERSONAL_VIDEO_DAILY_LIMIT = 3;
 const MAX_AUDIT_EVENTS_PER_USER = 24;
 const MAX_USAGE_EVENTS_PER_USER = 64;
+const TWO_FACTOR_ISSUER = 'StoryForge Studio';
 
 let warnedAboutFallbackEncryptionKey = false;
 
@@ -148,6 +183,8 @@ const authStore: AuthStoreShape = readJsonFile<AuthStoreShape>(AUTH_STORE_PATH, 
   providers: [],
   usageEvents: [],
   auditEvents: [],
+  oauthStates: [],
+  twoFactorChallenges: [],
 });
 
 const projectStore: ProjectStoreShape = readJsonFile<ProjectStoreShape>(PROJECT_STORE_PATH, {
@@ -160,6 +197,8 @@ export function __resetAuthStoreForTests() {
   authStore.providers = [];
   authStore.usageEvents = [];
   authStore.auditEvents = [];
+  authStore.oauthStates = [];
+  authStore.twoFactorChallenges = [];
   projectStore.projects = {};
   persistAuthStore();
   persistProjectStore();
@@ -196,6 +235,56 @@ function parsePositiveInt(value: unknown, fallback: number | null = null) {
 
 function getNowIso() {
   return new Date().toISOString();
+}
+
+function getGoogleOidcConfig() {
+  const clientId = process.env.GOOGLE_OIDC_CLIENT_ID?.trim() || '';
+  const clientSecret = process.env.GOOGLE_OIDC_CLIENT_SECRET?.trim() || '';
+  const redirectUri = process.env.GOOGLE_OIDC_REDIRECT_URI?.trim() || 'http://localhost:3000/api/auth/google/callback';
+
+  if (!clientId || !clientSecret) {
+    return null;
+  }
+
+  return {
+    clientId,
+    clientSecret,
+    redirectUri,
+  };
+}
+
+function isGoogleOidcConfigured() {
+  return !!getGoogleOidcConfig();
+}
+
+function createGoogleOAuthClient() {
+  const config = getGoogleOidcConfig();
+  if (!config) {
+    throw new Error('Google OAuth is not configured. Set GOOGLE_OIDC_CLIENT_ID and GOOGLE_OIDC_CLIENT_SECRET.');
+  }
+
+  return new OAuth2Client(config.clientId, config.clientSecret, config.redirectUri);
+}
+
+function encodeBase64Url(input: Buffer) {
+  return input.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function sha256Base64Url(value: string) {
+  return encodeBase64Url(crypto.createHash('sha256').update(value).digest());
+}
+
+function buildCodeVerifier() {
+  return encodeBase64Url(crypto.randomBytes(32));
+}
+
+function maskEmail(value: string) {
+  const [name, domain] = value.split('@');
+  if (!name || !domain) {
+    return value;
+  }
+
+  return `${name.slice(0, 2)}•••@${domain}`;
 }
 
 function samePacificDay(leftIso: string, rightIso: string) {
@@ -274,6 +363,9 @@ function hashPassword(password: string, salt = crypto.randomBytes(16).toString('
 }
 
 function verifyPassword(password: string, storedUser: StoredUser) {
+  if (!storedUser.passwordHash || !storedUser.passwordSalt) {
+    return false;
+  }
   const candidateHash = crypto.scryptSync(password, storedUser.passwordSalt, 64);
   const actualHash = Buffer.from(storedUser.passwordHash, 'hex');
   return candidateHash.length === actualHash.length && crypto.timingSafeEqual(candidateHash, actualHash);
@@ -301,8 +393,16 @@ function findUserByEmail(email: string) {
   return authStore.users.find((user) => user.email === normalizeEmail(email)) || null;
 }
 
+function findUserByGoogleSub(googleSub: string) {
+  return authStore.users.find((user) => user.googleSub === googleSub) || null;
+}
+
 function findUserById(userId: string) {
   return authStore.users.find((user) => user.id === userId) || null;
+}
+
+function userHasPassword(user: StoredUser) {
+  return !!(user.passwordHash && user.passwordSalt);
 }
 
 function sanitizeUser(user: StoredUser): AuthUser {
@@ -311,6 +411,10 @@ function sanitizeUser(user: StoredUser): AuthUser {
     name: user.name,
     email: user.email,
     createdAt: user.createdAt,
+    avatarUrl: user.avatarUrl || null,
+    hasPassword: userHasPassword(user),
+    googleLinked: !!user.googleSub,
+    twoFactorEnabled: !!user.twoFactorEnabled,
   };
 }
 
@@ -323,6 +427,24 @@ function pruneSessions() {
 
   if (nextSessions.length !== authStore.sessions.length) {
     authStore.sessions = nextSessions;
+    persistAuthStore();
+  }
+}
+
+function pruneOauthStates() {
+  const now = Date.now();
+  const nextStates = authStore.oauthStates.filter((entry) => new Date(entry.expiresAt).getTime() > now);
+  if (nextStates.length !== authStore.oauthStates.length) {
+    authStore.oauthStates = nextStates;
+    persistAuthStore();
+  }
+}
+
+function pruneTwoFactorChallenges() {
+  const now = Date.now();
+  const nextChallenges = authStore.twoFactorChallenges.filter((challenge) => new Date(challenge.expiresAt).getTime() > now);
+  if (nextChallenges.length !== authStore.twoFactorChallenges.length) {
+    authStore.twoFactorChallenges = nextChallenges;
     persistAuthStore();
   }
 }
@@ -368,6 +490,87 @@ function createSession(userId: string, metadata: { userAgent?: string; ip?: stri
   authStore.sessions.unshift(session);
   persistAuthStore();
   return session;
+}
+
+function createOauthState(input: { mode: 'login' | 'link'; userId?: string | null }) {
+  pruneOauthStates();
+  const stateValue = encodeBase64Url(crypto.randomBytes(24));
+  const now = Date.now();
+  authStore.oauthStates.unshift({
+    id: uuidv4(),
+    state: stateValue,
+    codeVerifier: buildCodeVerifier(),
+    mode: input.mode,
+    userId: input.userId || null,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + OAUTH_STATE_TTL_MS).toISOString(),
+  });
+  persistAuthStore();
+  return authStore.oauthStates[0];
+}
+
+function consumeOauthState(stateValue: string) {
+  pruneOauthStates();
+  const match = authStore.oauthStates.find((entry) => entry.state === stateValue) || null;
+  if (!match) {
+    return null;
+  }
+
+  authStore.oauthStates = authStore.oauthStates.filter((entry) => entry.id !== match.id);
+  persistAuthStore();
+  return match;
+}
+
+function createTwoFactorChallenge(userId: string, metadata: { userAgent?: string; ip?: string }) {
+  pruneTwoFactorChallenges();
+  authStore.twoFactorChallenges = authStore.twoFactorChallenges.filter((challenge) => challenge.userId !== userId);
+
+  const now = Date.now();
+  const challenge: StoredTwoFactorChallenge = {
+    id: uuidv4(),
+    userId,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + TWO_FACTOR_CHALLENGE_TTL_MS).toISOString(),
+    userAgent: metadata.userAgent?.slice(0, 240) || null,
+    ipHash: hashIpAddress(metadata.ip),
+  };
+
+  authStore.twoFactorChallenges.unshift(challenge);
+  persistAuthStore();
+  return challenge;
+}
+
+function getTwoFactorChallengeById(challengeId: string) {
+  pruneTwoFactorChallenges();
+  return authStore.twoFactorChallenges.find((challenge) => challenge.id === challengeId) || null;
+}
+
+function consumeTwoFactorChallenge(challengeId: string) {
+  const challenge = getTwoFactorChallengeById(challengeId);
+  if (!challenge) {
+    return null;
+  }
+
+  authStore.twoFactorChallenges = authStore.twoFactorChallenges.filter((entry) => entry.id !== challenge.id);
+  persistAuthStore();
+  return challenge;
+}
+
+function buildIdentitySummary(user: StoredUser | null): AuthIdentitySummary {
+  return {
+    googleOidcConfigured: isGoogleOidcConfigured(),
+    googleLinked: !!user?.googleSub,
+    passwordLoginEnabled: !!(user && userHasPassword(user)),
+    twoFactorEnabled: !!user?.twoFactorEnabled,
+  };
+}
+
+function summarizeTwoFactorChallenge(user: StoredUser, challenge: StoredTwoFactorChallenge): TwoFactorChallenge {
+  return {
+    challengeId: challenge.id,
+    email: maskEmail(user.email),
+    expiresAt: challenge.expiresAt,
+  };
 }
 
 function setSessionCookie(res: Response, sessionId: string) {
@@ -562,20 +765,306 @@ function buildCapabilities(isAuthenticated: boolean, providerSummary: ProviderCo
     aiTools: isAuthenticated,
     liveVideo: isAuthenticated && providerSummary.liveVideoEnabled,
     sandboxFallback: isAuthenticated && providerSummary.sandboxFallbackEnabled,
+    googleOidc: isGoogleOidcConfigured(),
+    localTwoFactor: isAuthenticated,
   };
 }
 
 export function buildAuthStatus(user: AuthUser | null, session: StoredSession | null): AuthStatus {
-  const provider = user ? buildProviderSummaryForUser(user.id) : buildGuestProviderSummary();
+  const storedUser = user ? findUserById(user.id) : null;
+  const resolvedUser = storedUser ? sanitizeUser(storedUser) : user;
+  const provider = resolvedUser ? buildProviderSummaryForUser(resolvedUser.id) : buildGuestProviderSummary();
   return {
-    isAuthenticated: !!user,
-    user,
+    isAuthenticated: !!resolvedUser,
+    user: resolvedUser,
     csrfToken: session?.csrfToken || null,
     provider,
-    sessions: user ? buildSessionSummaries(user.id, session?.id || null) : [],
-    auditEvents: user ? buildAuditEvents(user.id) : [],
-    capabilities: buildCapabilities(!!user, provider),
+    sessions: resolvedUser ? buildSessionSummaries(resolvedUser.id, session?.id || null) : [],
+    auditEvents: resolvedUser ? buildAuditEvents(resolvedUser.id) : [],
+    capabilities: buildCapabilities(!!resolvedUser, provider),
+    identity: buildIdentitySummary(storedUser),
   };
+}
+
+function normalizeGoogleIdentityPayload(payload: Record<string, unknown>) {
+  const email = typeof payload.email === 'string' ? normalizeEmail(payload.email) : '';
+  const sub = typeof payload.sub === 'string' ? payload.sub : '';
+  const name = trimName(typeof payload.name === 'string' ? payload.name : (email.split('@')[0] || 'Google User'));
+  const picture = typeof payload.picture === 'string' ? payload.picture : null;
+  const emailVerified = payload.email_verified === true;
+
+  if (!sub || !email || !emailVerified) {
+    throw new Error('Google did not return a verified email address for this account.');
+  }
+
+  return {
+    sub,
+    email,
+    name: name || email.split('@')[0] || 'Google User',
+    picture,
+  };
+}
+
+function syncUserProfileFromGoogle(user: StoredUser, profile: ReturnType<typeof normalizeGoogleIdentityPayload>) {
+  user.googleSub = profile.sub;
+  user.email = profile.email;
+  user.name = profile.name || user.name;
+  user.avatarUrl = profile.picture;
+  user.updatedAt = getNowIso();
+}
+
+function createGoogleUser(profile: ReturnType<typeof normalizeGoogleIdentityPayload>) {
+  const now = getNowIso();
+  const user: StoredUser = {
+    id: uuidv4(),
+    email: profile.email,
+    name: profile.name,
+    passwordHash: null,
+    passwordSalt: null,
+    googleSub: profile.sub,
+    avatarUrl: profile.picture,
+    twoFactorEnabled: false,
+    twoFactorSecretEncrypted: null,
+    pendingTwoFactorSecretEncrypted: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  authStore.users.unshift(user);
+  persistAuthStore();
+  createAuditEvent(user.id, 'account.created.google', 'Created a StoryForge account with Google sign-in.');
+  return user;
+}
+
+export function getGoogleAuthenticationUrl(input: { mode: 'login' | 'link'; userId?: string | null }) {
+  const config = getGoogleOidcConfig();
+  if (!config) {
+    throw new Error('Google OAuth is not configured for this workspace.');
+  }
+
+  const client = createGoogleOAuthClient();
+  const oauthState = createOauthState({
+    mode: input.mode,
+    userId: input.userId || null,
+  });
+
+  return client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: input.mode === 'login' ? 'select_account' : 'consent',
+    scope: ['openid', 'email', 'profile'],
+    state: oauthState.state,
+    code_challenge: sha256Base64Url(oauthState.codeVerifier),
+    code_challenge_method: CodeChallengeMethod.S256,
+  });
+}
+
+export async function completeGoogleAuthentication(input: {
+  state: string;
+  code: string;
+  metadata: { userAgent?: string; ip?: string };
+}) {
+  const config = getGoogleOidcConfig();
+  if (!config) {
+    throw new Error('Google OAuth is not configured for this workspace.');
+  }
+
+  const oauthState = consumeOauthState(input.state);
+  if (!oauthState) {
+    throw new Error('The Google sign-in request is invalid or has expired. Please try again.');
+  }
+
+  const client = createGoogleOAuthClient();
+  const tokenResponse = await client.getToken({
+    code: input.code,
+    codeVerifier: oauthState.codeVerifier,
+    redirect_uri: config.redirectUri,
+  });
+  const idToken = tokenResponse.tokens.id_token;
+  if (!idToken) {
+    throw new Error('Google did not return an ID token for this login.');
+  }
+
+  const ticket = await client.verifyIdToken({
+    idToken,
+    audience: config.clientId,
+  });
+  const payload = ticket.getPayload();
+  if (!payload) {
+    throw new Error('Google did not return a usable identity payload.');
+  }
+  const profile = normalizeGoogleIdentityPayload(payload as unknown as Record<string, unknown>);
+
+  let user = findUserByGoogleSub(profile.sub);
+  if (oauthState.mode === 'link') {
+    if (!oauthState.userId) {
+      throw new Error('A signed-in account is required to link Google.');
+    }
+
+    user = findUserById(oauthState.userId);
+    if (!user) {
+      throw new Error('The account to link could not be found.');
+    }
+
+    const existingGoogleUser = findUserByGoogleSub(profile.sub);
+    if (existingGoogleUser && existingGoogleUser.id !== user.id) {
+      throw new Error('That Google account is already linked to a different StoryForge account.');
+    }
+
+    syncUserProfileFromGoogle(user, profile);
+    persistAuthStore();
+    createAuditEvent(user.id, 'account.google.linked', 'Linked Google sign-in to the current account.');
+  } else if (!user) {
+    const existingEmailUser = findUserByEmail(profile.email);
+    if (existingEmailUser) {
+      const existingGoogleUser = findUserByGoogleSub(profile.sub);
+      if (existingGoogleUser && existingGoogleUser.id !== existingEmailUser.id) {
+        throw new Error('That Google account is already linked to another StoryForge account.');
+      }
+
+      syncUserProfileFromGoogle(existingEmailUser, profile);
+      persistAuthStore();
+      createAuditEvent(existingEmailUser.id, 'account.google.linked', 'Linked Google sign-in to an existing account.');
+      user = existingEmailUser;
+    } else {
+      user = createGoogleUser(profile);
+    }
+  } else {
+    syncUserProfileFromGoogle(user, profile);
+    persistAuthStore();
+  }
+
+  const session = createSession(user.id, input.metadata);
+  createAuditEvent(user.id, 'account.login.google', 'Signed in with Google OIDC.');
+
+  return {
+    user: sanitizeUser(user),
+    session,
+    mode: oauthState.mode,
+  };
+}
+
+export function disconnectGoogleIdentity(userId: string) {
+  const user = findUserById(userId);
+  if (!user) {
+    throw new Error('Account could not be found.');
+  }
+  if (!user.googleSub) {
+    throw new Error('No Google sign-in is currently linked to this account.');
+  }
+  if (!userHasPassword(user)) {
+    throw new Error('Add a password login before unlinking Google so the account does not lose its only sign-in method.');
+  }
+
+  user.googleSub = null;
+  user.updatedAt = getNowIso();
+  persistAuthStore();
+  createAuditEvent(user.id, 'account.google.unlinked', 'Removed Google sign-in from the account.');
+}
+
+function getPendingTwoFactorSecret(user: StoredUser) {
+  if (!user.pendingTwoFactorSecretEncrypted) {
+    return null;
+  }
+
+  return decryptSecret(user.pendingTwoFactorSecretEncrypted);
+}
+
+function getActiveTwoFactorSecret(user: StoredUser) {
+  if (!user.twoFactorSecretEncrypted) {
+    return null;
+  }
+
+  return decryptSecret(user.twoFactorSecretEncrypted);
+}
+
+function normalizeTotpToken(value: string) {
+  return value.replace(/\s+/g, '').trim();
+}
+
+function verifyTotpToken(secret: string, token: string) {
+  return verifySync({
+    secret,
+    token: normalizeTotpToken(token),
+    epochTolerance: 30,
+  }).valid;
+}
+
+export async function beginTwoFactorSetup(userId: string): Promise<TwoFactorSetup> {
+  const user = findUserById(userId);
+  if (!user) {
+    throw new Error('Account could not be found.');
+  }
+  if (!userHasPassword(user)) {
+    throw new Error('Two-factor authentication is only available for local password sign-in.');
+  }
+
+  const secret = generateSecret();
+  const otpAuthUrl = generateURI({
+    issuer: TWO_FACTOR_ISSUER,
+    label: user.email,
+    secret,
+  });
+  const qrCodeDataUrl = await QRCode.toDataURL(otpAuthUrl);
+
+  user.pendingTwoFactorSecretEncrypted = encryptSecret(secret);
+  user.updatedAt = getNowIso();
+  persistAuthStore();
+
+  return {
+    issuer: TWO_FACTOR_ISSUER,
+    accountName: user.email,
+    manualEntryKey: secret,
+    otpAuthUrl,
+    qrCodeDataUrl,
+  };
+}
+
+export function confirmTwoFactorSetup(userId: string, token: string) {
+  const user = findUserById(userId);
+  if (!user) {
+    throw new Error('Account could not be found.');
+  }
+
+  const pendingSecret = getPendingTwoFactorSecret(user);
+  if (!pendingSecret) {
+    throw new Error('Start 2FA setup before confirming it.');
+  }
+  if (!verifyTotpToken(pendingSecret, token)) {
+    throw new Error('The 2FA code was invalid. Check your authenticator app and try again.');
+  }
+
+  user.twoFactorEnabled = true;
+  user.twoFactorSecretEncrypted = encryptSecret(pendingSecret);
+  user.pendingTwoFactorSecretEncrypted = null;
+  user.updatedAt = getNowIso();
+  persistAuthStore();
+  createAuditEvent(user.id, 'account.2fa.enabled', 'Enabled TOTP-based two-factor authentication.');
+
+  return sanitizeUser(user);
+}
+
+export function disableTwoFactor(userId: string, token: string) {
+  const user = findUserById(userId);
+  if (!user) {
+    throw new Error('Account could not be found.');
+  }
+
+  const secret = getActiveTwoFactorSecret(user);
+  if (!secret || !user.twoFactorEnabled) {
+    throw new Error('Two-factor authentication is not enabled on this account.');
+  }
+  if (!verifyTotpToken(secret, token)) {
+    throw new Error('The 2FA code was invalid. Check your authenticator app and try again.');
+  }
+
+  user.twoFactorEnabled = false;
+  user.twoFactorSecretEncrypted = null;
+  user.pendingTwoFactorSecretEncrypted = null;
+  user.updatedAt = getNowIso();
+  persistAuthStore();
+  createAuditEvent(user.id, 'account.2fa.disabled', 'Disabled TOTP-based two-factor authentication.');
+
+  return sanitizeUser(user);
 }
 
 export function registerUser(input: { name: string; email: string; password: string }, metadata: { userAgent?: string; ip?: string }) {
@@ -604,6 +1093,11 @@ export function registerUser(input: { name: string; email: string; password: str
     email,
     passwordHash: hash,
     passwordSalt: salt,
+    googleSub: null,
+    avatarUrl: null,
+    twoFactorEnabled: false,
+    twoFactorSecretEncrypted: null,
+    pendingTwoFactorSecretEncrypted: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -625,12 +1119,65 @@ export function authenticateUser(input: { email: string; password: string }, met
   const email = normalizeEmail(input.email);
   const password = input.password || '';
   const user = findUserByEmail(email);
-  if (!user || !verifyPassword(password, user)) {
+  if (!user) {
+    throw new Error('Invalid email or password.');
+  }
+  if (!userHasPassword(user)) {
+    throw new Error('This account uses Google sign-in. Continue with Google or link a password-based login first.');
+  }
+  if (!verifyPassword(password, user)) {
     throw new Error('Invalid email or password.');
   }
 
+  if (user.twoFactorEnabled) {
+    const challenge = createTwoFactorChallenge(user.id, metadata);
+    createAuditEvent(user.id, 'account.login.password.challenge', 'Password verified. Waiting for a 2FA code.');
+    return {
+      user: sanitizeUser(user),
+      session: null,
+      twoFactorChallenge: summarizeTwoFactorChallenge(user, challenge),
+    };
+  }
+
   const session = createSession(user.id, metadata);
-  createAuditEvent(user.id, 'account.login', 'Signed in to StoryForge.');
+  createAuditEvent(user.id, 'account.login.password', 'Signed in to StoryForge with password authentication.');
+
+  return {
+    user: sanitizeUser(user),
+    session,
+    twoFactorChallenge: null,
+  };
+}
+
+export function verifyTwoFactorChallenge(input: {
+  challengeId: string;
+  token: string;
+  metadata: { userAgent?: string; ip?: string };
+}) {
+  const challenge = consumeTwoFactorChallenge(input.challengeId);
+  if (!challenge) {
+    throw new Error('The 2FA challenge has expired. Start sign-in again.');
+  }
+
+  if (challenge.ipHash && challenge.ipHash !== hashIpAddress(input.metadata.ip)) {
+    throw new Error('The 2FA challenge must be completed from the same device.');
+  }
+
+  const user = findUserById(challenge.userId);
+  if (!user) {
+    throw new Error('The account for this 2FA challenge could not be found.');
+  }
+
+  const secret = getActiveTwoFactorSecret(user);
+  if (!secret || !user.twoFactorEnabled) {
+    throw new Error('Two-factor authentication is not enabled for this account.');
+  }
+  if (!verifyTotpToken(secret, input.token)) {
+    throw new Error('The 2FA code was invalid. Check your authenticator app and try again.');
+  }
+
+  const session = createSession(user.id, input.metadata);
+  createAuditEvent(user.id, 'account.login.password.2fa', 'Completed sign-in with password and 2FA.');
 
   return {
     user: sanitizeUser(user),

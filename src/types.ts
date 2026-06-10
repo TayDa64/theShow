@@ -1,4 +1,4 @@
-export type ViewState = 'characters' | 'scenes' | 'cameras' | 'export';
+export type ViewState = 'characters' | 'scenes' | 'cameras' | 'timeline' | 'export';
 
 export type AuthViewState = 'account';
 
@@ -13,6 +13,10 @@ export interface AuthUser {
   name: string;
   email: string;
   createdAt: string;
+  avatarUrl?: string | null;
+  hasPassword: boolean;
+  googleLinked: boolean;
+  twoFactorEnabled: boolean;
 }
 
 export interface AuthSessionSummary {
@@ -52,6 +56,29 @@ export interface AuthCapabilities {
   aiTools: boolean;
   liveVideo: boolean;
   sandboxFallback: boolean;
+  googleOidc: boolean;
+  localTwoFactor: boolean;
+}
+
+export interface AuthIdentitySummary {
+  googleOidcConfigured: boolean;
+  googleLinked: boolean;
+  passwordLoginEnabled: boolean;
+  twoFactorEnabled: boolean;
+}
+
+export interface TwoFactorChallenge {
+  challengeId: string;
+  email: string;
+  expiresAt: string;
+}
+
+export interface TwoFactorSetup {
+  issuer: string;
+  accountName: string;
+  manualEntryKey: string;
+  otpAuthUrl: string;
+  qrCodeDataUrl: string;
 }
 
 export interface AuthStatus {
@@ -62,6 +89,7 @@ export interface AuthStatus {
   sessions: AuthSessionSummary[];
   auditEvents: AuthAuditEvent[];
   capabilities: AuthCapabilities;
+  identity: AuthIdentitySummary;
 }
 
 export type ReferenceAssetKind =
@@ -113,6 +141,18 @@ export interface DialogueLine {
   sentiment: 'neutral' | 'tense' | 'playful' | 'mysterious' | 'determined';
 }
 
+export interface GeneratedShotClip {
+  id: string;
+  operationName: string;
+  clipUrl: string;
+  durationSeconds: number;
+  createdAt: string;
+  resolvedSeed?: number | null;
+  continuitySource?: string | null;
+  usingContinuityFrame?: boolean;
+  providerMode?: GenerationProviderMode;
+}
+
 export type StoryboardShotType =
   | CameraConfig['shotType']
   | 'two-shot'
@@ -141,6 +181,56 @@ export interface StoryboardShot {
   boardImageId?: string | null;
   transitionInMode?: StoryboardTransitionMode;
   transitionInAssetId?: string | null;
+  generatedClips?: GeneratedShotClip[];
+  activeGeneratedClipId?: string | null;
+}
+
+export interface TimelineClip {
+  id: string;
+  sceneId: string;
+  shotId: string;
+  order: number;
+  title: string;
+  selectedSourceClipId?: string | null;
+  includeInCut: boolean;
+  useFullSource: boolean;
+  preferredDurationSeconds?: number | null;
+  recommendedDurationSeconds: number;
+  sourceDurationSeconds: number;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
+  playbackDurationSeconds: number;
+  backgroundStateId: string;
+  continuityGroupId: string;
+  holdBackground: boolean;
+  dialogueLineIds: string[];
+  dialogueExcerpt?: string;
+  sourceHash: string;
+  dirty?: boolean;
+  dirtyReason?: string | null;
+  updatedAt: string;
+}
+
+export interface TimelineManifestClip extends TimelineClip {
+  clipId: string;
+  sceneTitle: string;
+  shotNumber: number;
+  operationName?: string | null;
+  clipUrl?: string | null;
+  resolvedSeed?: number | null;
+  continuitySource?: string | null;
+  usingContinuityFrame?: boolean;
+  sourceCreatedAt?: string | null;
+}
+
+export interface ProjectTimelineManifest {
+  generatedAt: string;
+  totalClipCount: number;
+  includedClipCount: number;
+  readyClipCount: number;
+  dirtyClipCount: number;
+  estimatedDurationSeconds: number;
+  clips: TimelineManifestClip[];
 }
 
 export interface Scene {
@@ -154,6 +244,7 @@ export interface Scene {
   storyboardFrameAssets?: ReferenceAsset[];
   activeBackgroundImageId?: string | null;
   storyboardShots?: StoryboardShot[];
+  timelineClips?: TimelineClip[];
 }
 
 export interface CameraConfig {

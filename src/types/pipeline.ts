@@ -1,6 +1,8 @@
 export type PipelineStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface ChainedClip {
+  clipId?: string;
+  sceneId?: string;
   shotId: string;
   title: string;
   order: number;
@@ -8,6 +10,10 @@ export interface ChainedClip {
   filePath?: string;
   operationName?: string | null;
   durationSeconds?: number;
+  sourceDurationSeconds?: number;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  playbackDurationSeconds?: number;
   bridgeFrameUrl?: string | null;
 }
 

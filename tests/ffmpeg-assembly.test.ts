@@ -29,6 +29,17 @@ describe('ffmpeg composer', () => {
     expect(graph.filterComplex).not.toContain('acopy');
   });
 
+  it('builds trim filters before stitching timeline edits', () => {
+    const graph = buildAssemblyFilterGraph([
+      { durationSeconds: 8, sourceDurationSeconds: 8, trimStartSeconds: 1.5, trimEndSeconds: 6.5, playbackDurationSeconds: 5 },
+      { durationSeconds: 8, sourceDurationSeconds: 8, trimStartSeconds: 0, trimEndSeconds: 8, playbackDurationSeconds: 8 },
+    ]);
+
+    expect(graph.filterComplex).toContain('[0:v]trim=start=1.5:end=6.5');
+    expect(graph.filterComplex).toContain('[0:a]atrim=start=1.5:end=6.5');
+    expect(graph.filterComplex).toContain('xfade=transition=dissolve:duration=0.5:offset=4.5');
+  });
+
   it('invokes ffmpeg with -sseof -0.1 when extracting the final frame', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffmpeg-frame-'));
     const inputPath = path.join(tempDir, 'clip.mp4');

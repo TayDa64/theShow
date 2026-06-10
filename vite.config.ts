@@ -22,6 +22,7 @@ export default defineConfig(() => {
       environment: 'node',
       globals: true,
       setupFiles: './tests/setup.ts',
+      exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
       coverage: {
         provider: 'v8',
         reporter: ['text', 'lcov'],

@@ -19,16 +19,21 @@ View your app in AI Studio: https://ai.studio/apps/43fefd0e-4d16-4be5-b3fc-939d9
 3. Optional but recommended for secure account/provider storage:
    - `SESSION_SECRET` — used for hardened local session handling
    - `STORYFORGE_ENCRYPTION_KEY` — used to encrypt any user-linked Gemini API keys at rest
+   - `GOOGLE_OIDC_CLIENT_ID` — enables Google OAuth2 / OIDC sign-in
+   - `GOOGLE_OIDC_CLIENT_SECRET` — server-side secret for Google OAuth2 / OIDC
+   - `GOOGLE_OIDC_REDIRECT_URI` — callback URL for Google sign-in (defaults to `http://localhost:3000/api/auth/google/callback`)
 4. Run the app:
    `npm run dev`
 
 ## Account dashboard and secure login
 
-The app now includes an **Account** dashboard for secure sign-in, session management, and Gemini provider isolation.
+The app now includes an **Account** dashboard for secure sign-in, session management, Google OIDC, optional local 2FA, and Gemini provider isolation.
 
 - You can keep working in **local draft mode** without signing in.
 - Sign-in is required for **cloud sync** and the authenticated AI/video API routes.
 - StoryForge keeps **app login** separate from **Gemini provider credentials**.
+- Google sign-in uses **OAuth2 / OpenID Connect** when the workspace is configured with Google OIDC environment variables.
+- Local password accounts can enable **TOTP-based two-factor authentication** from the Account dashboard.
 - If you connect a personal Gemini API key in the Account dashboard, it is stored **server-side only** and encrypted at rest.
 
 ### Provider modes

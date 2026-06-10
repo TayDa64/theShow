@@ -68,6 +68,24 @@ const genaiState = {
   getVideosOperationImpl: vi.fn(async () => ({ done: true, response: { generatedVideos: [{ video: { uri: 'https://example.com/mock.mp4' } }] } })),
 };
 
+const googleAuthState = vi.hoisted(() => ({
+  generateAuthUrlImpl: vi.fn((options: any) => `https://accounts.google.test/o/oauth2/v2/auth?state=${encodeURIComponent(options.state || '')}`),
+  getTokenImpl: vi.fn(async () => ({
+    tokens: {
+      id_token: 'mock-google-id-token',
+    },
+  })),
+  verifyIdTokenImpl: vi.fn(async () => ({
+    getPayload: () => ({
+      sub: 'google-subject-1',
+      email: 'google-user@example.com',
+      email_verified: true,
+      name: 'Google User',
+      picture: 'https://example.com/google-user.png',
+    }),
+  })),
+}));
+
 class MockGoogleGenAI {
   config: any;
 
@@ -107,8 +125,38 @@ vi.mock('@google/genai', () => ({
   },
 }));
 
+vi.mock('google-auth-library', () => ({
+  OAuth2Client: class {
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+
+    constructor(clientId?: string, clientSecret?: string, redirectUri?: string) {
+      this.clientId = clientId;
+      this.clientSecret = clientSecret;
+      this.redirectUri = redirectUri;
+    }
+
+    generateAuthUrl(options: any) {
+      return googleAuthState.generateAuthUrlImpl(options);
+    }
+
+    getToken(options: any) {
+      return googleAuthState.getTokenImpl(options);
+    }
+
+    verifyIdToken(options: any) {
+      return googleAuthState.verifyIdTokenImpl(options);
+    }
+  },
+  CodeChallengeMethod: {
+    S256: 'S256',
+  },
+}));
+
 (globalThis as any).__ffmpegState = ffmpegState;
 (globalThis as any).__genaiState = genaiState;
+(globalThis as any).__googleAuthState = googleAuthState;
 
 beforeEach(() => {
   __resetAuthStoreForTests();
@@ -123,4 +171,25 @@ beforeEach(() => {
     done: true,
     response: { generatedVideos: [{ video: { uri: 'https://example.com/mock.mp4' } }] },
   });
+  googleAuthState.generateAuthUrlImpl.mockClear();
+  googleAuthState.generateAuthUrlImpl.mockImplementation((options: any) => `https://accounts.google.test/o/oauth2/v2/auth?state=${encodeURIComponent(options.state || '')}`);
+  googleAuthState.getTokenImpl.mockClear();
+  googleAuthState.getTokenImpl.mockResolvedValue({
+    tokens: {
+      id_token: 'mock-google-id-token',
+    },
+  });
+  googleAuthState.verifyIdTokenImpl.mockClear();
+  googleAuthState.verifyIdTokenImpl.mockResolvedValue({
+    getPayload: () => ({
+      sub: 'google-subject-1',
+      email: 'google-user@example.com',
+      email_verified: true,
+      name: 'Google User',
+      picture: 'https://example.com/google-user.png',
+    }),
+  });
+  delete process.env.GOOGLE_OIDC_CLIENT_ID;
+  delete process.env.GOOGLE_OIDC_CLIENT_SECRET;
+  delete process.env.GOOGLE_OIDC_REDIRECT_URI;
 });
