@@ -6,6 +6,9 @@ playwright-report/
 test-results/
 .DS_Store
 *.log
+.storyforge/
+playwright-report/
+test-results/
 uploads/
 sandbox-state.json
 .env*

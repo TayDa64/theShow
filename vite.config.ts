@@ -16,13 +16,32 @@ export default defineConfig(() => {
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // In normal local dev, ignore generated/runtime files that should not cause
+      // full-page reload storms (for example account/project JSON persistence).
+      watch: process.env.DISABLE_HMR === 'true'
+        ? null
+        : {
+            ignored: [
+              '**/.git/**',
+              '**/node_modules/**',
+              '**/coverage/**',
+              '**/dist/**',
+              '**/uploads/**',
+              '**/.storyforge/**',
+              '**/playwright-report/**',
+              '**/test-results/**',
+              '**/README.md',
+              '**/status_liku.md',
+              '**/docs/**',
+              '**/playwright/**',
+            ],
+          },
     },
     test: {
       environment: 'node',
       globals: true,
       setupFiles: './tests/setup.ts',
-      exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+      exclude: ['playwright/**', 'e2e/**', 'node_modules/**', 'dist/**'],
       coverage: {
         provider: 'v8',
         reporter: ['text', 'lcov'],

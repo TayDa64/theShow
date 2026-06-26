@@ -59,7 +59,7 @@ import type { AssembleFilmRequest, ChainedClip, FilmAssemblyJob } from './src/ty
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const UPLOADS_DIR = getUploadsRoot();
 const FILMS_DIR = path.join(UPLOADS_DIR, 'films');
 const MOCK_VIDEOS_DIR = path.join(UPLOADS_DIR, 'mock-videos');
@@ -1074,7 +1074,7 @@ const buildLocalStoryboard = (scene: any, characters: any[], camera: any) => {
       }, [] as any[][])
     : [[]];
 
-  return chunks.map((chunk, index) => {
+  return chunks.map((chunk: any[], index: number) => {
     const leadDialogue = chunk[0];
     const leadCharacter = characters.find((character: any) => character.id === leadDialogue?.characterId) || characters[0];
     const shotType = ['wide-landscape', 'medium-shot', 'close-up', 'over-the-shoulder', 'two-shot', 'tracking'][index % 6];
@@ -1410,15 +1410,20 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
       }
     });
 
+    const operationName = operation.name;
+    if (!operationName) {
+      throw new Error('The Veo provider did not return an operation name for this storyboard clip.');
+    }
+
     recordVideoOperation(userId, {
-      operationName: operation.name,
+      operationName,
       model: 'veo-3.1-generate-preview',
       providerMode,
       countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
     });
 
     return res.json({
-      operationName: operation.name,
+      operationName,
       isFallback: false,
       usingReferenceImages,
       durationSeconds,
@@ -1836,14 +1841,19 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
       }
     });
 
+    const operationName = operation.name;
+    if (!operationName) {
+      throw new Error('The Veo provider did not return an operation name for this quick preview render.');
+    }
+
     recordVideoOperation(userId, {
-      operationName: operation.name,
+      operationName,
       model: 'veo-3.1-lite-generate-preview',
       providerMode,
       countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
     });
 
-    return res.json({ operationName: operation.name, isFallback: false, providerMode });
+    return res.json({ operationName, isFallback: false, providerMode });
   } catch (error: any) {
     if (error?.message?.includes('Daily video generation quota reached')) {
       return res.status(429).json({ error: error.message, isQuotaExceeded: true, providerMode });
