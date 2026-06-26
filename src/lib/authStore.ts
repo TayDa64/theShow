@@ -1233,14 +1233,14 @@ export function loadProjectStateForUser(userId: string): StoredProjectState {
         scenes: parsed.scenes ?? null,
         camera: parsed.camera ?? null,
         exportSettings: parsed.exportSettings ?? null,
-        updatedAt: parsed.updatedAt || null,
+        updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined,
       };
     } catch {
-      return { characters: null, scenes: null, camera: null, exportSettings: null, updatedAt: null };
+      return { characters: null, scenes: null, camera: null, exportSettings: null, updatedAt: undefined };
     }
   }
 
-  return { characters: null, scenes: null, camera: null, exportSettings: null, updatedAt: null };
+  return { characters: null, scenes: null, camera: null, exportSettings: null, updatedAt: undefined };
 }
 
 export function linkPersonalGeminiProvider(userId: string, input: UserConnectionInput) {
@@ -1308,7 +1308,8 @@ export function getVideoGenerationAccessForUser(userId: string): VideoGeneration
 
 export function assertVideoGenerationAllowed(userId: string) {
   const provider = buildProviderSummaryForUser(userId);
-  if (provider.dailyVideoLimit !== null && provider.remainingToday !== null && provider.remainingToday <= 0) {
+  const remainingToday = provider.remainingToday ?? null;
+  if (provider.dailyVideoLimit !== null && remainingToday !== null && remainingToday <= 0) {
     throw new Error(`Daily video generation quota reached for ${provider.label}. Try again after midnight Pacific or switch providers.`);
   }
   return provider;
