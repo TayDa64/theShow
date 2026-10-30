@@ -1,40 +1,80 @@
 # theShow as a Grok Plugin
 
-This directory contains the scaffolding to turn theShow (StoryForge) into a Grok Build plugin and MCP server for controlled video generation.
+This directory turns theShow (StoryForge) into a Grok Build plugin and MCP server for controlled, continuity-first video generation.
 
 ## Structure
 
-- `plugin.json` – Grok Build plugin manifest
-- `.mcp.json` – MCP server declaration
-- `skills/theshow/SKILL.md` – Detailed workflow instructions for Grok
-- `mcp/server.ts` – MCP server skeleton exposing the core tools
+- `plugin.json` — Grok Build plugin manifest
+- `.mcp.json` — MCP server declaration
+- `mcp/launch.mjs` — zero-setup launcher (installs dependencies on first run)
+- `skills/theshow/SKILL.md` — workflow instructions the model follows
+- `mcp/server.ts` — MCP server exposing the core tools
 
-## How to Use
+## Install
 
-### Local Grok Build Plugin
+The fastest path pulls straight from GitHub:
 
-1. Copy this folder into `~/.grok/plugins/theshow` or into a project `.grok/plugins/theshow`.
-2. Or point a marketplace source at this repo path.
-3. In Grok Build TUI: `/plugins` → enable theshow.
-4. Ask Grok to “generate a controlled multi-shot film with theShow” — the skill will guide it.
+```bash
+grok plugin install TayDa64/theShow --trust
+```
 
-### Remote MCP (Grok API / Connectors)
+Pin a release by appending a tag, for example `TayDa64/theShow@v0.1.0`. To install from a local checkout instead, pass the folder path in place of the GitHub shorthand.
 
-1. Deploy the MCP server (HTTP Streamable recommended for remote).
-2. In grok.com/connectors → New Connector → Custom → paste the public MCP URL.
-3. Or pass `mcp(server_url=...)` in the xAI SDK tools array.
+The server installs its own dependencies on first launch through `mcp/launch.mjs`, so there is no manual `npm install` step. Confirm the wiring with:
 
-### Integration Notes
+```bash
+grok mcp doctor
+```
 
-- The MCP tools are currently stubs. Wire them to the existing Express routes in `server.ts` or directly to the Google GenAI / xAI video APIs.
-- Prefer Grok Imagine Video 1.5 for native support of up to 14 reference images, first/last frames, keyframes, and extension.
+You should see `theshow` healthy with six tools discovered.
+
+## Use
+
+Ask for a film in plain language:
+
+> Generate a two-shot, 16-second film about a lamplighter in the rain. Keep the same character in both shots.
+
+The bundled skill sequences the six tools for you:
+
+| Tool | Role |
+|---|---|
+| `create_character` | Stores a named character with reference images |
+| `plan_storyboard` | Turns a scene into numbered shots |
+| `generate_controlled_clip` | Renders one shot, optionally seeded by the previous clip's last frame |
+| `extract_last_frame` | Produces the bridge frame for the next shot |
+| `extend_clip` | Continues an existing take (API-key backends only) |
+| `assemble_film` | Cross-fades the ordered clips into one film with FFmpeg |
+
+## Authentication
+
+`generate_controlled_clip` resolves a backend in this order:
+
+1. **`XAI_API_KEY`** if set — billed as xAI API credits.
+2. **Grok subscription session** — read from `~/.grok/auth.json` after `grok login`. No API key required.
+3. **Veo** via `GEMINI_API_KEY`, where configured.
+
+Subscription sessions cannot use `extend_clip`; the proxy rejects extensions. Continuity is carried instead by passing each shot the previous clip's extracted last frame as `firstFrameUrl`, which must be an image.
+
+## Remote MCP (Grok API / Connectors)
+
+1. Deploy the MCP server, using HTTP Streamable for remote access.
+2. In grok.com/connectors, choose New Connector, then Custom, and paste the public MCP URL.
+3. Alternatively pass `mcp(server_url=...)` in the xAI SDK tools array.
+
+## Integration Notes
+
+- The MCP tools are live. `generate_controlled_clip` renders real video through the xAI API or a Grok subscription session, and `assemble_film` stitches clips with FFmpeg cross-fades.
+- Grok Imagine Video 1.5 supports up to 14 reference images plus first/last frames, keyframes, and extension.
 - Keep the Veo path as a fallback for existing projects.
+
+## Cost
+
+Every clip is a real charge. In measured runs an eight-second Grok Imagine clip cost roughly $0.64, so a three-shot film is about $2 before assembly. Check the sidecar metadata written alongside each render for exact figures.
 
 ## Next Steps
 
-1. Replace stub implementations with real calls.
-2. Add authentication (API key or session) to the MCP server.
-3. Submit a catalog entry to https://github.com/xai-org/plugin-marketplace (remote source + SHA pin).
-4. Add slash commands under `commands/` if desired.
+1. Submit a catalog entry to https://github.com/xai-org/plugin-marketplace, using a remote source with a SHA pin.
+2. Add slash commands under `commands/` for common recipes.
+3. Publish a public write-up covering install, a first film, and cost expectations.
 
-See the main theShow README for running the full UI.
+See the main theShow README for running the full StoryForge UI.
