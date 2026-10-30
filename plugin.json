@@ -1,0 +1,12 @@
+{
+  "name": "theshow",
+  "version": "0.1.0",
+  "description": "Controlled continuity-first video generation with character references, multi-shot storyboards, sequential clip chaining (first-frame / extend), and FFmpeg assembly. Supports Veo and Grok Imagine Video backends.",
+  "author": {
+    "name": "TayDa64"
+  },
+  "homepage": "https://github.com/TayDa64/theShow",
+  "keywords": ["video", "storyboard", "continuity", "veo", "grok-imagine", "film", "theshow"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}
