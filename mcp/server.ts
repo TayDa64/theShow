@@ -1,9 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * theShow MCP Server
- * Thin wrapper exposing controlled video generation tools.
- * In production this would call the existing Express routes or extract pure functions from server.ts.
- * For Grok Build / Remote MCP use.
+ * theShow MCP Server (enhanced for testing)
+ * - Stubs for most tools
+ * - generate_controlled_clip calls real Grok Imagine Video when XAI_API_KEY is set
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,21 +14,11 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-// --- Tool Schemas (Zod) ---
-
 const CharacterSchema = z.object({
   name: z.string(),
   role: z.string().optional(),
   description: z.string().optional(),
   referenceImageUrls: z.array(z.string().url()).optional(),
-});
-
-const ShotSchema = z.object({
-  title: z.string(),
-  action: z.string(),
-  dialogueExcerpt: z.string().optional(),
-  durationSeconds: z.number().min(4).max(15).default(8),
-  continuityNotes: z.string().optional(),
 });
 
 server.registerTool(
@@ -39,7 +28,6 @@ server.registerTool(
     inputSchema: CharacterSchema,
   },
   async (args) => {
-    // TODO: call existing /api/generate-character + store refs
     return {
       content: [{
         type: "text",
@@ -56,7 +44,7 @@ server.registerTool(
 server.registerTool(
   "plan_storyboard",
   {
-    description: "Plan multi-shot storyboard for a scene using Gemini cinematographer logic.",
+    description: "Plan multi-shot storyboard for a scene.",
     inputSchema: z.object({
       sceneDescription: z.string(),
       characters: z.array(z.string()),
@@ -65,21 +53,65 @@ server.registerTool(
     }),
   },
   async (args) => {
-    // TODO: call /api/generate-storyboard
-    const shots: z.infer<typeof ShotSchema>[] = [
-      { title: "Establishing", action: "Wide shot of the location", durationSeconds: 8 },
-      { title: "Character Intro", action: "Medium shot of main character", durationSeconds: 8 },
+    const shots = [
+      { title: "Establishing", action: "Wide shot of the location", durationSeconds: 8, continuityNotes: "Set the atmosphere" },
+      { title: "Character Intro", action: "Medium shot of main character", durationSeconds: 8, continuityNotes: "Match previous lighting" },
     ];
     return {
-      content: [{ type: "text", text: JSON.stringify({ shots }, null, 2) }]
+      content: [{ type: "text", text: JSON.stringify({ shots, scene: args.sceneDescription }, null, 2) }]
     };
   }
 );
 
+async function callGrokImagineVideo(args: {
+  prompt: string;
+  durationSeconds?: number;
+  aspectRatio?: string;
+  model?: string;
+  referenceImageUrls?: string[];
+  firstFrameUrl?: string;
+}) {
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) {
+    return { error: "XAI_API_KEY not set", fallback: "stub" };
+  }
+
+  const body: Record<string, unknown> = {
+    model: args.model || "grok-imagine-video-1.5",
+    prompt: args.prompt,
+    duration: args.durationSeconds || 8,
+    aspect_ratio: args.aspectRatio || "16:9",
+  };
+
+  if (args.firstFrameUrl) {
+    body.image = { url: args.firstFrameUrl };
+  }
+  if (args.referenceImageUrls && args.referenceImageUrls.length > 0) {
+    body.reference_images = args.referenceImageUrls.map(url => ({ url }));
+  }
+
+  const res = await fetch("https://api.x.ai/v1/videos/generations", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    return { error: `API error ${res.status}`, detail: text };
+  }
+
+  const data = await res.json();
+  return { requestId: data.request_id, status: "submitted", raw: data };
+}
+
 server.registerTool(
   "generate_controlled_clip",
   {
-    description: "Generate a single video clip with reference images and optional first-frame continuity. Supports Grok Imagine Video 1.5 (preferred) or Veo.",
+    description: "Generate a single video clip with reference images and optional first-frame continuity. Calls real Grok Imagine Video when XAI_API_KEY is set.",
     inputSchema: z.object({
       prompt: z.string(),
       referenceImageUrls: z.array(z.string().url()).optional(),
@@ -90,15 +122,16 @@ server.registerTool(
     }),
   },
   async (args) => {
-    // TODO: route to Grok Imagine API or existing /api/generate-shot-video
+    const result = await callGrokImagineVideo(args);
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          requestId: `req_${Date.now()}`,
-          status: "submitted",
-          message: "Clip generation started (stub). Implement real call to xAI video API or theShow Veo path.",
-          ...args
+          ...result,
+          message: result.requestId
+            ? "Real generation submitted to Grok Imagine Video. Poll with the requestId or check console.x.ai."
+            : "Stub response (set XAI_API_KEY for real generation).",
+          args,
         }, null, 2)
       }]
     };
@@ -108,7 +141,7 @@ server.registerTool(
 server.registerTool(
   "extend_clip",
   {
-    description: "Extend an existing clip from its last frame (video_to_extend).",
+    description: "Extend an existing clip from its last frame.",
     inputSchema: z.object({
       videoUrl: z.string().url(),
       prompt: z.string(),
@@ -117,7 +150,7 @@ server.registerTool(
   },
   async (args) => {
     return {
-      content: [{ type: "text", text: JSON.stringify({ requestId: `ext_${Date.now()}`, ...args }) }]
+      content: [{ type: "text", text: JSON.stringify({ requestId: `ext_${Date.now()}`, status: "stub", ...args }) }]
     };
   }
 );
@@ -132,7 +165,7 @@ server.registerTool(
   },
   async (args) => {
     return {
-      content: [{ type: "text", text: JSON.stringify({ frameUrl: "https://example.com/frame.png", ...args }) }]
+      content: [{ type: "text", text: JSON.stringify({ frameUrl: "https://example.com/frame.png", status: "stub", ...args }) }]
     };
   }
 );
@@ -140,7 +173,7 @@ server.registerTool(
 server.registerTool(
   "assemble_film",
   {
-    description: "Assemble ordered clips into a single film with cross-fades using FFmpeg.",
+    description: "Assemble ordered clips into a single film with cross-fades.",
     inputSchema: z.object({
       clips: z.array(z.object({
         url: z.string().url(),
@@ -158,7 +191,9 @@ server.registerTool(
         text: JSON.stringify({
           filmId: `film_${Date.now()}`,
           downloadUrl: "https://example.com/film.mp4",
-          message: "Assembly stub. Wire to existing /api/assemble-film."
+          status: "stub",
+          message: "Assembly stub. Wire to existing /api/assemble-film.",
+          clipCount: args.clips.length,
         }, null, 2)
       }]
     };
@@ -168,7 +203,10 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("theShow MCP server running on stdio");
+  console.error("theShow MCP server running on stdio (enhanced test build)");
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
