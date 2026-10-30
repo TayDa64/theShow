@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "theshow": {
+      "command": "npx",
+      "args": ["-y", "tsx", "mcp/server.ts"],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}",
+        "XAI_API_KEY": "${XAI_API_KEY}"
+      }
+    }
+  }
+}
