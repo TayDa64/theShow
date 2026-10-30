@@ -32,6 +32,9 @@ export default defineConfig({
       ...process.env,
       PORT: '3100',
       DISABLE_HMR: 'true',
+      // The e2e suites assert sandbox behaviour and must not bill a real
+      // subscription. The opt-in live specs set their own backend.
+      THESHOW_VIDEO_BACKEND: process.env.THESHOW_VIDEO_BACKEND ?? 'sandbox',
       // Explicitly forward live-generation credentials so the opt-in live Veo spec
       // (RUN_LIVE_VEO=1) can reach a real workspace provider. When unset, the app
       // stays in sandbox mode and the live spec is skipped — zero quota is used.

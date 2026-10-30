@@ -2,8 +2,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { app } from '../server';
+
+// This suite proves film assembly, so it needs deterministic preview clips from
+// the sandbox backend. The route no longer mocks a render that has no backend,
+// which means the sandbox has to be requested by name here.
+afterEach(() => {
+  delete process.env.THESHOW_VIDEO_BACKEND;
+});
 
 async function createAuthenticatedAgent() {
   const agent = request.agent(app);
@@ -24,6 +31,7 @@ async function createAuthenticatedAgent() {
 
 describe('film pipeline routes', () => {
   it('assembles 3 clips and returns a downloadable MP4 URL', async () => {
+    process.env.THESHOW_VIDEO_BACKEND = 'sandbox';
     const { agent, csrfToken } = await createAuthenticatedAgent();
     const clipBodies = await Promise.all([1, 2, 3].map(async (index) => {
       const generation = await agent
