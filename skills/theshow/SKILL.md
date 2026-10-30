@@ -43,6 +43,44 @@ You are driving the theShow continuity-first video pipeline. Prefer sequential m
 - For Grok Imagine Video 1.5: up to 14 reference images + first/last/keyframes + extend.
 - For classic Veo path: up to 3 refs, sequential video_to_extend.
 
+## Authentication (read before generating anything)
+
+`generate_controlled_clip` authenticates in this order:
+
+1. **`XAI_API_KEY`** if set — calls go to `https://api.x.ai` and bill to xAI API credits.
+2. **Grok CLI session** in `~/.grok/auth.json` — calls go to the CLI inference proxy and bill to the
+   user's **Grok subscription**. No API key is needed. Sign in with `grok login --device-code`.
+   The token is re-read from disk on every call, so a refresh in the CLI is picked up automatically.
+
+Every result reports `auth` and `billedTo`, so you always know which path paid.
+
+Treat an unresolved `${XAI_API_KEY}` placeholder as absent: the Grok CLI substitutes placeholders
+literally when the variable is unset, so a naive truthiness check sends `${XAI_API_KEY}` as a bearer
+token and the API answers `400 Incorrect API key`.
+
+### `extend_clip` is API-key only
+
+The subscription proxy answers `POST /v1/videos/extensions` with HTTP 405, so `extend_clip` reports
+that plainly instead of failing obscurely. To continue a shot on the subscription path, use
+`generate_controlled_clip` with `firstFrameUrl` set to the frame from `extract_last_frame`.
+
+## Continuity chain
+
+The reliable pattern for a multi-shot film:
+
+1. `plan_storyboard` — returns shots with `shotType`, `cameraMove`, `continuityNotes`, a
+   `focusCharacter`, and `characterContext` when the character was created first.
+2. `generate_controlled_clip` for shot 1.
+3. `extract_last_frame` on shot 1's `videoUrl` — returns a local `framePath` and a `dataUri`.
+4. `generate_controlled_clip` for shot 2 with `firstFrameUrl` set to that `framePath` or `dataUri`.
+   The first frame is pinned, so wardrobe, lighting, and framing carry across the cut.
+5. Repeat 3-4 for each further shot.
+6. `assemble_film` with the ordered clip URLs; it cross-fades with real FFmpeg.
+
+`firstFrameUrl` and `referenceImageUrls` accept a public https URL, a data URI, or a local path.
+Local paths are inlined as data URIs, so the chain works without any upload step. A **video** URL is
+not valid as `firstFrameUrl`; run `extract_last_frame` first.
+
 ## Error Handling
 
 - If generation fails or hits quota, fall back to sandbox/mock mode if the tool supports it, or ask the user for a different model / shorter duration.

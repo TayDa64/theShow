@@ -41,6 +41,21 @@ import {
 } from './src/lib/authStore';
 import { generateCinematicPrompt } from './src/lib/geminiDirector';
 import {
+  createGrokOperationName,
+  describeGrokVideoAccess,
+  ensureGrokClipFile,
+  getGrokClip,
+  getGrokClipDownloadUrl,
+  isGrokClipOperation,
+  pollGrokClip,
+  registerGrokClip,
+  resolveAppAssetForGrok,
+  resolveVideoBackend,
+  type VideoBackend,
+} from './src/lib/grokClipStore';
+import { generateGrokClip } from './mcp/grokVideo';
+import { resolveVideoCredential } from './mcp/grok-auth';
+import {
   ensureMockVideoAsset,
   normalizeMockVideoAspectRatio,
   normalizeMockVideoDuration,
@@ -1362,6 +1377,122 @@ app.post('/api/generate-shot-prompt', generationRateLimiter, requireAuth, requir
   return res.json({ prompt });
 });
 
+const GROK_CLIP_MODEL = 'grok-imagine-video-1.5';
+const GROK_RENDER_TIMEOUT_SECONDS = 240;
+
+/** Map the app's camera controls onto the aspect ratios Grok Imagine Video accepts. */
+function resolveGrokAspectRatio(aspectRatio: unknown): '16:9' | '9:16' {
+  return aspectRatio === '9:16' ? '9:16' : '16:9';
+}
+
+/**
+ * Submit one shot to Grok Imagine Video and register it as an app operation.
+ *
+ * A render normally finishes inside this request, which keeps the existing
+ * submit-then-poll client flow working unchanged. If it outlives the timeout the
+ * operation is still registered, so `/api/video-status` picks it up and downloads
+ * the clip when it lands.
+ */
+async function startGrokShotRender(input: {
+  userId: string;
+  prompt: string;
+  aspectRatio: '16:9' | '9:16';
+  durationSeconds: number;
+  firstFrameUrl?: string | null;
+  referenceUrls?: string[];
+  continuitySource?: string | null;
+}) {
+  const operationName = createGrokOperationName();
+
+  const firstFrame = input.firstFrameUrl ? resolveAppAssetForGrok(input.firstFrameUrl) : null;
+  const referenceImageUrls = (input.referenceUrls || [])
+    .map((url) => resolveAppAssetForGrok(url))
+    .filter((url): url is string => Boolean(url));
+
+  const result = await generateGrokClip(
+    {
+      prompt: input.prompt,
+      durationSeconds: input.durationSeconds,
+      aspectRatio: input.aspectRatio,
+      model: GROK_CLIP_MODEL,
+      firstFrameUrl: firstFrame ?? undefined,
+      referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
+    },
+    { waitForCompletion: true, timeoutSeconds: GROK_RENDER_TIMEOUT_SECONDS },
+  );
+
+  if (!result.requestId || !result.baseUrl) {
+    return { result, operationName: null, record: null };
+  }
+
+  const record = registerGrokClip({
+    operationName,
+    requestId: result.requestId,
+    baseUrl: result.baseUrl,
+    userId: input.userId,
+    prompt: input.prompt,
+    aspectRatio: input.aspectRatio,
+    durationSeconds: input.durationSeconds,
+    createdAt: new Date().toISOString(),
+    billedTo: result.billedTo || 'Grok subscription',
+    authKind: result.auth === 'XAI_API_KEY' ? 'api-key' : 'session',
+    status: result.status === 'completed' ? 'completed' : result.status === 'failed' ? 'failed' : 'submitted',
+    costUsd: result.costUsd,
+    errorMessage: result.status === 'failed' ? result.detail : undefined,
+  });
+
+  if (result.status === 'completed' && result.videoUrl) {
+    try {
+      const target = await ensureGrokClipFile(operationName);
+      const finished = getGrokClip(operationName);
+      return {
+        result: { ...result, videoUrl: getGrokClipDownloadUrl(operationName), filePath: target },
+        operationName,
+        record: finished ?? record,
+      };
+    } catch (error: any) {
+      const failed = registerGrokClip({
+        ...record,
+        status: 'failed',
+        errorMessage: error?.message || 'Could not save the rendered clip.',
+      });
+      return { result: { ...result, error: failed.errorMessage }, operationName, record: failed };
+    }
+  }
+
+  return { result, operationName, record };
+}
+
+/** Turn a failed Grok submission into an actionable HTTP answer for the UI. */
+function sendGrokCredentialError(res: express.Response, result: { code?: string; reason?: string; detail?: string; hint?: string }) {
+  const reason = result.reason || result.detail || 'Grok video generation is unavailable.';
+  const isAuthProblem = result.code === 'no-credential' || result.code === 'expired-credential' || result.code === 'rejected';
+
+  if (result.code === 'expired-credential') {
+    return res.status(401).json({
+      error: `Grok session expired: ${reason}`,
+      code: 'grok-credential-expired',
+      action: 'Run `grok login --device-code` on the server, or set XAI_API_KEY, then render the shot again.',
+    });
+  }
+
+  if (isAuthProblem) {
+    return res.status(503).json({
+      error: result.code === 'rejected'
+        ? `Grok rejected the stored credential: ${reason}`
+        : `No Grok video credential is available: ${reason}`,
+      code: 'grok-credential-missing',
+      action: 'Sign in with `grok login --device-code` so ~/.grok/auth.json exists, or set XAI_API_KEY on the server.',
+      hint: result.hint ?? null,
+    });
+  }
+
+  return res.status(502).json({
+    error: `Grok Imagine Video request failed: ${reason}`,
+    code: 'grok-request-failed',
+  });
+}
+
 app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   let userId: string | null = null;
   let providerMode: GenerationProviderMode = 'sandbox';
@@ -1371,24 +1502,104 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     userId = generationContext.userId;
     providerMode = generationContext.access.provider.mode;
     const { ai, access } = generationContext;
-    const { characters = [], scene, shot, camera, resolvedSeed } = req.body || {};
+    const { characters = [], scene, shot, camera, resolvedSeed, firstFrameUrl } = req.body || {};
 
     if (!scene || !shot) {
       return res.status(400).json({ error: 'Scene and shot data are required to render a storyboard clip.' });
     }
 
-    assertVideoGenerationAllowed(userId);
+
+    // The Grok subscription has its own limits, so the Gemini daily quota only
+    // applies once the Gemini path is actually selected.
+    const { backend, pinned } = resolveVideoBackend(Boolean(ai));
+    if (backend !== 'grok') {
+      assertVideoGenerationAllowed(userId);
+    }
+
+    // With no Gemini provider and no Grok credential there is nothing live to
+    // render on. Say so plainly instead of handing back a mock operation that
+    // looks like a real render, unless a sandbox preview was asked for by name.
+    if (backend === 'sandbox' && !pinned && !ai) {
+      const grokAccess = describeGrokVideoAccess();
+      return res.status(503).json({
+        error: `No video backend is available: ${grokAccess.reason || 'no credential resolved.'}`,
+        code: 'no-video-backend',
+        action:
+          'Sign in with `grok login --device-code` on the server so the Grok subscription backs rendering, ' +
+          'or connect a Gemini API key in Account. Set THESHOW_VIDEO_BACKEND=sandbox to use mock previews.',
+      });
+    }
 
     const { referenceUrls, continuityReference } = pickReferenceUrlsForShot(characters, scene, shot);
-    const referenceImages = await buildReferenceImages(referenceUrls);
-    const usingReferenceImages = referenceImages.length > 0;
-    const durationSeconds = usingReferenceImages ? 8 : ([4, 6, 8].includes(Number(shot?.durationSeconds)) ? Number(shot.durationSeconds) : 6);
+    const durationSeconds = normalizeGrokShotDuration(shot?.durationSeconds);
     const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
-    const aspect = camera?.aspectRatio === '9:16' ? '9:16' : '16:9';
+    const aspect = resolveGrokAspectRatio(camera?.aspectRatio);
     const seedResolution = resolveStoryboardSeedForShot(scene, shot, resolvedSeed);
 
-    if (!ai) {
-      throw new Error('No live Gemini provider configured. Emulating storyboard shot rendering pipeline.');
+    if (backend === 'grok') {
+      const bridgeFrame = typeof firstFrameUrl === 'string' && firstFrameUrl.trim()
+        ? firstFrameUrl.trim()
+        : continuityReference?.url ?? null;
+
+      const { result, operationName, record } = await startGrokShotRender({
+        userId,
+        prompt: videoPrompt,
+        aspectRatio: aspect,
+        durationSeconds,
+        firstFrameUrl: bridgeFrame,
+        referenceUrls,
+        continuitySource: continuityReference?.sourceLabel ?? null,
+      });
+
+      if (!operationName || !record) {
+        return sendGrokCredentialError(res, result);
+      }
+
+      if (result.error || record.status === 'failed') {
+        const reason = record.errorMessage || result.detail || result.error || 'unknown error';
+        return res.status(502).json({
+          error: `Grok Imagine Video could not render this shot: ${reason}`,
+          code: 'grok-render-failed',
+          hint: result.hint ?? null,
+          operationName,
+        });
+      }
+
+      recordVideoOperation(userId, {
+        operationName,
+        model: GROK_CLIP_MODEL,
+        // No Gemini provider was charged, so this must not count against its quota.
+        providerMode,
+        countsTowardDailyLimit: false,
+        videoBackend: 'grok',
+      });
+
+      return res.json({
+        operationName,
+        isFallback: false,
+        backend: 'grok',
+        videoBackend: 'grok',
+        usingReferenceImages: (result.status === 'completed') && referenceUrls.length > 0,
+        durationSeconds: record.actualDurationSeconds ?? durationSeconds,
+        resolvedSeed: seedResolution.resolvedSeed,
+        seedSource: seedResolution.seedSource,
+        usingContinuityFrame: !!bridgeFrame,
+        continuitySource: continuityReference?.sourceLabel || null,
+        providerMode,
+        billedTo: record.billedTo,
+        authSource: record.authKind === 'session' ? 'Grok CLI session' : 'XAI_API_KEY',
+        costUsd: record.costUsd ?? null,
+        clipUrl: record.status === 'completed' ? getGrokClipDownloadUrl(operationName) : null,
+        requestId: record.requestId,
+      });
+    }
+
+    const referenceImages = await buildReferenceImages(referenceUrls);
+    const usingReferenceImages = referenceImages.length > 0;
+    const veoDuration = usingReferenceImages ? 8 : ([4, 6, 8].includes(Number(shot?.durationSeconds)) ? Number(shot.durationSeconds) : 6);
+
+    if (backend === 'sandbox' || !ai) {
+      throw new Error('No live video provider configured. Emulating storyboard shot rendering pipeline.');
     }
 
     const operation = await ai.models.generateVideos({
@@ -1398,7 +1609,7 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
         numberOfVideos: 1,
         resolution: '720p',
         aspectRatio: aspect,
-        durationSeconds,
+        durationSeconds: veoDuration,
         seed: seedResolution.resolvedSeed,
         negativePrompt: STORYBOARD_NEGATIVE_PROMPT,
         ...(usingReferenceImages
@@ -1425,8 +1636,10 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     return res.json({
       operationName,
       isFallback: false,
+      backend: 'gemini',
+      videoBackend: 'gemini',
       usingReferenceImages,
-      durationSeconds,
+      durationSeconds: veoDuration,
       resolvedSeed: seedResolution.resolvedSeed,
       seedSource: seedResolution.seedSource,
       usingContinuityFrame: !!continuityReference?.url,
@@ -1468,6 +1681,8 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     return res.json({
       operationName: mockId,
       isFallback: true,
+      backend: 'sandbox',
+      videoBackend: 'sandbox',
       isQuotaExhausted,
       usingReferenceImages: false,
       durationSeconds: requestedDurationSeconds,
@@ -1480,12 +1695,23 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
   }
 });
 
+/** Grok Imagine Video takes whole seconds; keep the app's beat durations intact. */
+function normalizeGrokShotDuration(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.min(Math.max(Math.round(parsed), 1), 15);
+}
+
 function isSafeFilmId(value: string) {
   return /^[a-f0-9-]{36}$/i.test(value);
 }
 
 async function downloadOperationToTempFile(operationName: string, userId: string) {
   ensureOperationOwnership(userId, operationName);
+
+  if (isGrokClipOperation(operationName)) {
+    return ensureGrokClipFile(operationName);
+  }
 
   if (operationName.startsWith('mock-operation-')) {
     const mockOp = mockOperations.get(operationName);
@@ -1543,6 +1769,51 @@ async function safeRemoveTempFile(filePath: string | null | undefined) {
   }
 }
 
+/**
+ * Resolve the image that seeds the next clip. The app normally sends an anchor
+ * frame already, so this only touches the video when a caller passes a bare
+ * `videoToExtend` and expects the backend to bridge from its final frame.
+ */
+async function resolveExtendBridgeFrame(firstFrame: unknown, videoToExtend: unknown): Promise<string | null> {
+  if (typeof firstFrame === 'string') {
+    const resolved = resolveAppAssetForGrok(firstFrame);
+    if (resolved) {
+      // A video passed as first_frame is rejected by the API (invalid_image).
+      return /\.(mp4|mov|webm|mkv)$/i.test(resolved) ? null : resolved;
+    }
+  }
+
+  if (typeof videoToExtend !== 'string') {
+    return null;
+  }
+
+  const operationName = extractOperationNameFromClipUrl(videoToExtend);
+  if (!operationName || !isGrokClipOperation(operationName)) {
+    return null;
+  }
+
+  const sourcePath = await ensureGrokClipFile(operationName);
+  const framePath = path.join(getTempClipsDirectory(), `${uuidv4()}.png`);
+  try {
+    await extractLastFrame(sourcePath, framePath);
+    // Keep the frame: it is inlined into the request body before this returns.
+    return framePath;
+  } catch (error) {
+    console.warn('[Grok Extend] Could not extract the previous clip frame:', error);
+    return null;
+  }
+}
+
+/** Read `operationName` back out of the app's own clip URL helper. */
+function extractOperationNameFromClipUrl(value: string) {
+  try {
+    const parsed = new URL(value, 'http://localhost');
+    return parsed.searchParams.get('operationName');
+  } catch {
+    return null;
+  }
+}
+
 app.post('/api/extend-clip', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   let userId: string | null = null;
   let providerMode: GenerationProviderMode = 'sandbox';
@@ -1560,7 +1831,63 @@ app.post('/api/extend-clip', generationRateLimiter, requireAuth, requireCsrf, as
       return res.status(400).json({ error: 'prompt and videoToExtend are required.' });
     }
 
-    assertVideoGenerationAllowed(userId);
+    const { backend: extendBackend } = resolveVideoBackend(Boolean(ai));
+    if (extendBackend !== 'grok') {
+      assertVideoGenerationAllowed(userId);
+    }
+
+    if (extendBackend === 'grok') {
+      // The subscription proxy has no extension route (POST /v1/videos/extensions
+      // answers 405), so continue the take from the previous clip's last frame.
+      const bridgeFrame = await resolveExtendBridgeFrame(firstFrame, videoToExtend);
+      const grokDurationSeconds = normalizeGrokShotDuration(durationSeconds);
+      const { result, operationName, record } = await startGrokShotRender({
+        userId,
+        prompt,
+        aspectRatio: resolveGrokAspectRatio(aspectRatio),
+        durationSeconds: grokDurationSeconds,
+        firstFrameUrl: bridgeFrame,
+        referenceUrls: Array.isArray(referenceImages) ? referenceImages : [],
+        continuitySource: bridgeFrame ? 'Previous clip last frame' : null,
+      });
+
+      if (!operationName || !record) {
+        return sendGrokCredentialError(res, result);
+      }
+
+      if (result.error || record.status === 'failed') {
+        const reason = record.errorMessage || result.detail || result.error || 'unknown error';
+        return res.status(502).json({
+          error: `Grok Imagine Video could not render this extension: ${reason}`,
+          code: 'grok-render-failed',
+          hint: result.hint ?? null,
+          operationName,
+        });
+      }
+
+      recordVideoOperation(userId, {
+        operationName,
+        model: GROK_CLIP_MODEL,
+        providerMode,
+        countsTowardDailyLimit: false,
+        videoBackend: 'grok',
+      });
+
+      return res.json({
+        operationName,
+        isFallback: false,
+        backend: 'grok',
+        videoBackend: 'grok',
+        extendedWithFirstFrame: true,
+        usingContinuityFrame: !!bridgeFrame,
+        continuitySource: bridgeFrame ? 'Previous clip last frame' : null,
+        durationSeconds: record.actualDurationSeconds ?? grokDurationSeconds,
+        providerMode,
+        billedTo: record.billedTo,
+        costUsd: record.costUsd ?? null,
+        requestId: record.requestId,
+      });
+    }
 
     if (!ai) {
       const mockId = startMockVideoOperation(prompt, {
@@ -1805,29 +2132,142 @@ const VEO_AESTHETIC_MAP: Record<string, string> = {
   'sentient-object': 'Expressive sentient object mascot. Everyday organic items or rigid objects engineered with fluid physical materials, blending glass/ceramic surfaces with soft cartoon organic face muscles.'
 };
 
-// 1. POST /api/generate-video - Start Veo video generation
+/** Quick Preview renders a single take of one scene, so the take is eight seconds. */
+const QUICK_PREVIEW_DURATION_SECONDS = 8;
+
+// 1. POST /api/generate-video - Start a quick preview render
 app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   let userId: string | null = null;
   let providerMode: GenerationProviderMode = 'sandbox';
+  // Kept outside the try so a failed render is reported as a failure rather than
+  // being converted into a sandbox preview that looks like a finished render.
+  let renderBackend: VideoBackend | null = null;
 
   try {
     const generationContext = getGenerationContextForRequest(req);
     userId = generationContext.userId;
     providerMode = generationContext.access.provider.mode;
-    const { ai, access } = generationContext;
+    const { ai } = generationContext;
     const { characters, scenes, camera } = req.body || {};
+    const cast = Array.isArray(characters) ? characters : [];
     const firstScene = scenes?.[0];
-    const videoPrompt = buildQuickPreviewPrompt(Array.isArray(characters) ? characters : [], firstScene, camera);
+    const videoPrompt = buildQuickPreviewPrompt(cast, firstScene, camera);
+    const aspect = resolveGrokAspectRatio(camera?.aspectRatio);
 
-    let aspect: '16:9' | '9:16' = '16:9';
-    if (camera?.aspectRatio === '9:16') {
-      aspect = '9:16';
+    // The Grok subscription has its own limits, so the Gemini daily quota only
+    // applies once the Gemini path is actually selected.
+    const { backend, pinned } = resolveVideoBackend(Boolean(ai));
+    renderBackend = backend;
+    if (backend !== 'grok') {
+      assertVideoGenerationAllowed(userId);
     }
 
-    assertVideoGenerationAllowed(userId);
+    if (backend === 'grok') {
+      const durationSeconds = normalizeGrokShotDuration(QUICK_PREVIEW_DURATION_SECONDS);
+      // Quick Preview has no shot, so the cast and the scene plate supply the
+      // identity and set references a storyboard shot would carry itself.
+      const referenceUrls = [
+        ...new Set(
+          [
+            getCharacterActiveImageUrl(cast[0]),
+            getSceneActiveBackgroundUrl(firstScene),
+            ...cast.slice(1).map((character: any) => getCharacterActiveImageUrl(character)),
+          ].filter((url): url is string => Boolean(url)),
+        ),
+      ].slice(0, 3);
 
+      const { result, operationName, record } = await startGrokShotRender({
+        userId,
+        prompt: videoPrompt,
+        aspectRatio: aspect,
+        durationSeconds,
+        referenceUrls,
+      });
+
+      if (!operationName || !record) {
+        return sendGrokCredentialError(res, result);
+      }
+
+      if (result.error || record.status === 'failed') {
+        const reason = record.errorMessage || result.detail || result.error || 'unknown error';
+        return res.status(502).json({
+          error: `Grok Imagine Video could not render this quick preview: ${reason}`,
+          code: 'grok-render-failed',
+          hint: result.hint ?? null,
+          operationName,
+        });
+      }
+
+      recordVideoOperation(userId, {
+        operationName,
+        model: GROK_CLIP_MODEL,
+        // No Gemini provider was charged, so this must not count against its quota.
+        providerMode,
+        countsTowardDailyLimit: false,
+        videoBackend: 'grok',
+      });
+
+      return res.json({
+        operationName,
+        isFallback: false,
+        backend: 'grok',
+        videoBackend: 'grok',
+        durationSeconds: record.actualDurationSeconds ?? durationSeconds,
+        billedTo: record.billedTo,
+        authSource: record.authKind === 'session' ? 'Grok CLI session' : 'XAI_API_KEY',
+        costUsd: record.costUsd ?? null,
+        clipUrl: record.status === 'completed' ? getGrokClipDownloadUrl(operationName) : null,
+        providerMode,
+        requestId: record.requestId,
+      });
+    }
+
+    // With no Gemini provider and no Grok credential there is nothing live to
+    // render on. Say so plainly instead of handing back a mock operation that
+    // looks like a real render, unless a sandbox preview was asked for by name.
+    if (backend === 'sandbox' && !pinned && !ai) {
+      const credential = resolveVideoCredential();
+      return sendGrokCredentialError(res, {
+        code: credential.ok
+          ? 'no-credential'
+          : credential.code === 'expired' ? 'expired-credential' : 'no-credential',
+        reason: credential.ok ? 'No Grok video credential resolved.' : credential.reason,
+      });
+    }
+
+    if (backend === 'sandbox') {
+      const mockId = startMockVideoOperation(firstScene?.description || 'Storyboard Concept', {
+        aspectRatio: normalizeMockVideoAspectRatio(camera?.aspectRatio),
+        durationSeconds: QUICK_PREVIEW_DURATION_SECONDS,
+        userId,
+      });
+      if (userId) {
+        recordVideoOperation(userId, {
+          operationName: mockId,
+          model: 'veo-3.1-lite-generate-preview',
+          providerMode: 'sandbox',
+          countsTowardDailyLimit: false,
+        });
+      }
+      return res.json({
+        operationName: mockId,
+        isFallback: true,
+        isQuotaExhausted: false,
+        backend: 'sandbox',
+        videoBackend: 'sandbox',
+        durationSeconds: QUICK_PREVIEW_DURATION_SECONDS,
+        providerMode: 'sandbox',
+      });
+    }
+
+    // resolveVideoBackend picks Gemini only when a client exists, so this guards
+    // an invariant rather than a normal branch.
     if (!ai) {
-      throw new Error('No live Gemini provider configured. Emulating Veo Sandbox rendering pipeline.');
+      return res.status(503).json({
+        error: 'The Gemini backend was selected without a connected Gemini provider.',
+        code: 'no-video-backend',
+        action: 'Connect a Gemini API key in Account, or unset THESHOW_VIDEO_BACKEND so the Grok subscription renders instead.',
+      });
     }
 
     console.log(`[Veo Video Engine] Triggering request with prompt: "${videoPrompt.substring(0, 110)}..."`);
@@ -1850,18 +2290,34 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
       operationName,
       model: 'veo-3.1-lite-generate-preview',
       providerMode,
-      countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && access.provider.dailyVideoLimit !== null),
+      countsTowardDailyLimit: providerMode === 'personal' || (providerMode === 'workspace' && generationContext.access.provider.dailyVideoLimit !== null),
     });
 
-    return res.json({ operationName, isFallback: false, providerMode });
+    return res.json({
+      operationName,
+      isFallback: false,
+      backend: 'gemini',
+      videoBackend: 'gemini',
+      providerMode,
+    });
   } catch (error: any) {
     if (error?.message?.includes('Daily video generation quota reached')) {
       return res.status(429).json({ error: error.message, isQuotaExceeded: true, providerMode });
     }
 
+    // A Grok attempt that fails is an error. It must never be turned into a
+    // sandbox preview, which would report a finished render that does not exist.
+    if (renderBackend === 'grok') {
+      console.error('[Grok Quick Preview] Render failed:', error?.message || error);
+      return res.status(502).json({
+        error: `Grok Imagine Video could not render this quick preview: ${error?.message || 'unknown error'}`,
+        code: 'grok-render-failed',
+      });
+    }
+
+    // Gemini keeps its sandbox pre-visualization fallback. The response is
+    // flagged as a fallback so the client can label it as simulated.
     const isQuotaExhausted = isQuotaExhaustedError(error);
-                             
-    // Graceful fallback to sandbox pre-visualization without printing standard error warnings to console
     if (isQuotaExhausted) {
       console.log("[Veo Video Emulator] Active 429 quota exhaustion fallback. Returning simulated pre-visualization.");
     } else {
@@ -1870,7 +2326,7 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
 
     const mockId = startMockVideoOperation(req.body?.scenes?.[0]?.description || 'Storyboard Concept', {
       aspectRatio: normalizeMockVideoAspectRatio(req.body?.camera?.aspectRatio),
-      durationSeconds: 8,
+      durationSeconds: QUICK_PREVIEW_DURATION_SECONDS,
       userId,
     });
     if (userId) {
@@ -1881,7 +2337,14 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
         countsTowardDailyLimit: false,
       });
     }
-    return res.json({ operationName: mockId, isFallback: true, isQuotaExhausted, providerMode: 'sandbox' });
+    return res.json({
+      operationName: mockId,
+      isFallback: true,
+      isQuotaExhausted,
+      backend: 'sandbox',
+      videoBackend: 'sandbox',
+      providerMode: 'sandbox',
+    });
   }
 });
 
@@ -1892,6 +2355,22 @@ app.post('/api/video-status', requireAuth, requireCsrf, async (req, res) => {
     const { operationName } = req.body || {};
     if (!operationName) {
       return res.status(400).json({ error: "Missing operation name identifier." });
+    }
+
+    if (isGrokClipOperation(operationName)) {
+      ensureOperationOwnership(userId, operationName);
+      const progress = await pollGrokClip(operationName);
+      if (progress.done) {
+        return res.json({
+          done: true,
+          error: progress.error,
+          status: progress.record ? 'Grok render complete' : undefined,
+          clipUrl: progress.record ? getGrokClipDownloadUrl(operationName) : null,
+          durationSeconds: progress.record?.actualDurationSeconds ?? null,
+          costUsd: progress.record?.costUsd ?? null,
+        });
+      }
+      return res.json({ done: false, progress: progress.progress, status: progress.status });
     }
 
     ensureOperationOwnership(userId, operationName);
@@ -1938,6 +2417,17 @@ app.all('/api/video-download', requireAuth, async (req, res) => {
     }
 
     ensureOperationOwnership(userId, operationName);
+
+    if (isGrokClipOperation(operationName)) {
+      const clipPath = await ensureGrokClipFile(operationName);
+      return res.sendFile(clipPath, {
+        headers: {
+          'Content-Type': 'video/mp4',
+          // The clip id is stable, but a re-render can replace the bytes.
+          'Cache-Control': 'no-cache',
+        },
+      });
+    }
 
     if (operationName.startsWith('mock-operation-')) {
       const mockOp = mockOperations.get(operationName);

@@ -41,6 +41,10 @@ export interface ProviderConnectionSummary {
   remainingToday?: number | null;
   liveVideoEnabled: boolean;
   sandboxFallbackEnabled: boolean;
+  /** Engine that will render the next shot. Separate from `mode`, which tracks the Gemini quota pool. */
+  videoBackend?: 'grok' | 'gemini' | 'sandbox';
+  videoBackendLabel?: string | null;
+  videoBilling?: string | null;
   note?: string | null;
 }
 

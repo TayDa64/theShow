@@ -127,6 +127,10 @@ interface StoryboardJob {
   error?: string | null;
   usingReferenceImages?: boolean;
   durationSeconds?: number;
+  /** Which engine rendered the shot, so the card can say what actually paid. */
+  videoBackend?: VideoBackend;
+  billedTo?: string | null;
+  costUsd?: number | null;
   isQuotaExhausted?: boolean;
   seedStrategy?: StoryboardSeedStrategy;
   resolvedSeed?: number | null;
@@ -135,6 +139,20 @@ interface StoryboardJob {
   inheritedFromSeed?: number | null;
   usingContinuityFrame?: boolean;
   continuitySource?: string | null;
+}
+
+type VideoBackend = 'grok' | 'gemini' | 'sandbox';
+
+function formatBackendLabel(job: Pick<StoryboardJob, 'videoBackend' | 'billedTo' | 'costUsd'>) {
+  if (!job.videoBackend) return null;
+  const engine = job.videoBackend === 'grok'
+    ? 'Grok Imagine Video'
+    : job.videoBackend === 'gemini'
+      ? 'Gemini Veo'
+      : 'Sandbox preview';
+  const payer = job.billedTo ? ` — billed to ${job.billedTo}` : '';
+  const cost = typeof job.costUsd === 'number' ? ` ($${job.costUsd.toFixed(2)})` : '';
+  return `${engine}${payer}${cost}`;
 }
 
 interface PersistAnchorFrameResult {
@@ -401,7 +419,9 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   );
   const renderAccessMessage = !isAuthenticated
     ? 'Sign in from the Account dashboard to unlock secure video rendering, storyboard queues, and cloud-backed export actions.'
-    : provider.mode === 'personal'
+    : provider.videoBackend === 'grok'
+      ? `Rendering with Grok Imagine Video, billed to your ${provider.videoBilling || 'Grok subscription'} instead of Gemini quota. Shots render live and download into this project.`
+      : provider.mode === 'personal'
       ? `${provider.remainingToday ?? 0} of ${provider.dailyVideoLimit ?? 0} personal live video generations remain today. Sandbox fallback is still available for safe mock workflows.`
       : provider.mode === 'workspace'
         ? 'Authenticated and using the workspace Gemini API provider for live generation. Connect a personal key in Account if you want isolated quota ownership.'
@@ -836,6 +856,9 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         operationName: data.operationName,
         usingReferenceImages: !!data.usingReferenceImages,
         durationSeconds: data.durationSeconds,
+        videoBackend: data.videoBackend || data.backend || undefined,
+        billedTo: data.billedTo ?? null,
+        costUsd: typeof data.costUsd === 'number' ? data.costUsd : null,
         isQuotaExhausted: !!data.isQuotaExhausted,
         resolvedSeed: appliedSeed,
         seedStrategy: shot.seedStrategy || 'auto',
@@ -1277,7 +1300,9 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
       <div className={`rounded-2xl border p-4 text-xs leading-relaxed ${!isAuthenticated
         ? 'bg-amber-500/5 border-amber-500/10 text-zinc-300'
-        : provider.mode === 'personal'
+        : provider.videoBackend === 'grok'
+          ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
+          : provider.mode === 'personal'
           ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
           : provider.mode === 'workspace'
             ? 'bg-indigo-500/5 border-indigo-500/10 text-zinc-300'
@@ -1286,13 +1311,23 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         <div className="flex items-center gap-2 font-semibold mb-1">
           <span className={`w-2 h-2 rounded-full ${!isAuthenticated
             ? 'bg-amber-400'
-            : provider.mode === 'personal'
+            : provider.videoBackend === 'grok'
+              ? 'bg-emerald-400'
+              : provider.mode === 'personal'
               ? 'bg-emerald-400'
               : provider.mode === 'workspace'
                 ? 'bg-indigo-400'
                 : 'bg-zinc-400'}`}
           />
-          <span>{!isAuthenticated ? 'Account sign-in required' : provider.mode === 'personal' ? 'Personal Gemini provider active' : provider.mode === 'workspace' ? 'Workspace Gemini provider active' : 'Sandbox-only render mode'}</span>
+          <span>{!isAuthenticated
+            ? 'Account sign-in required'
+            : provider.videoBackend === 'grok'
+              ? `Grok Imagine Video active — billed to ${provider.videoBilling || 'Grok subscription'}`
+              : provider.mode === 'personal'
+                ? 'Personal Gemini provider active'
+                : provider.mode === 'workspace'
+                  ? 'Workspace Gemini provider active'
+                  : 'Sandbox-only render mode'}</span>
         </div>
         <p>{renderAccessMessage}</p>
       </div>
@@ -1691,6 +1726,12 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                             <div className="mt-1 text-[11px] text-zinc-200">{formatTransitionModeLabel(shot?.transitionInMode || 'none')}</div>
                           </div>
                         </div>
+
+                        {job.status === 'completed' && formatBackendLabel(job) && (
+                          <div className="rounded-xl border border-zinc-900 bg-zinc-900/60 px-3 py-2.5 text-[10px] font-mono text-zinc-400 leading-relaxed">
+                            Rendered by {formatBackendLabel(job)}
+                          </div>
+                        )}
 
                         {job.usingContinuityFrame && (
                           <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-3 py-2.5 text-[10px] font-mono text-emerald-300 leading-relaxed">

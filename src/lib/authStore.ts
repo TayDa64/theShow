@@ -1,11 +1,13 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import type { NextFunction, Request, Response } from 'express';
 import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import { generateSecret, generateURI, verifySync } from 'otplib';
 import QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
+import { describeGrokVideoAccess, resolveVideoBackend } from './grokClipStore';
 import type {
   AuthAuditEvent,
   AuthIdentitySummary,
@@ -137,7 +139,10 @@ export type VideoGenerationAccess = {
   provider: ProviderConnectionSummary;
 };
 
-const DATA_DIR = path.join(process.cwd(), '.storyforge');
+// A test run resets this store, so keep it out of the working copy's real data.
+const DATA_DIR = process.env.VITEST
+  ? path.join(os.tmpdir(), `storyforge-test-${process.pid}`)
+  : path.join(process.cwd(), '.storyforge');
 const AUTH_STORE_PATH = path.join(DATA_DIR, 'auth-store.json');
 const PROJECT_STORE_PATH = path.join(DATA_DIR, 'project-states.json');
 const LEGACY_STATE_FILE_PATH = path.join(process.cwd(), 'sandbox-state.json');
@@ -770,10 +775,32 @@ function buildCapabilities(isAuthenticated: boolean, providerSummary: ProviderCo
   };
 }
 
+/**
+ * The Gemini quota summary says nothing about which engine renders a shot, and
+ * a Grok render is billed to the subscription rather than that quota pool.
+ * Attach the backend separately so the UI can name the real renderer without
+ * disturbing the quota logic that reads `mode`.
+ */
+function withVideoBackend(summary: ProviderConnectionSummary): ProviderConnectionSummary {
+  const hasGeminiProvider = summary.mode === 'personal' || summary.mode === 'workspace';
+  const { backend } = resolveVideoBackend(hasGeminiProvider);
+  const grok = describeGrokVideoAccess();
+  return {
+    ...summary,
+    videoBackend: backend,
+    videoBackendLabel: backend === 'grok'
+      ? 'Grok Imagine Video'
+      : backend === 'gemini'
+        ? 'Gemini Veo'
+        : 'Sandbox preview',
+    videoBilling: backend === 'grok' ? (grok.billedTo || 'Grok subscription') : backend === 'gemini' ? 'Gemini API quota' : null,
+  };
+}
+
 export function buildAuthStatus(user: AuthUser | null, session: StoredSession | null): AuthStatus {
   const storedUser = user ? findUserById(user.id) : null;
   const resolvedUser = storedUser ? sanitizeUser(storedUser) : user;
-  const provider = resolvedUser ? buildProviderSummaryForUser(resolvedUser.id) : buildGuestProviderSummary();
+  const provider = withVideoBackend(resolvedUser ? buildProviderSummaryForUser(resolvedUser.id) : buildGuestProviderSummary());
   return {
     isAuthenticated: !!resolvedUser,
     user: resolvedUser,
@@ -1320,6 +1347,8 @@ export function recordVideoOperation(userId: string, input: {
   model: string;
   providerMode: GenerationProviderMode;
   countsTowardDailyLimit: boolean;
+  /** Backend that rendered, when it is not the Gemini provider. */
+  videoBackend?: 'grok';
 }) {
   authStore.usageEvents.unshift({
     id: uuidv4(),
@@ -1342,6 +1371,8 @@ export function recordVideoOperation(userId: string, input: {
 
   if (input.countsTowardDailyLimit) {
     createAuditEvent(userId, 'video.generated', `Started a ${input.model} render using ${input.providerMode} provider access.`);
+  } else if (input.videoBackend === 'grok') {
+    createAuditEvent(userId, 'video.grok', `Rendered a ${input.model} clip on the Grok subscription.`);
   } else {
     createAuditEvent(userId, 'video.sandbox', `Started a sandbox/mock render flow (${input.model}).`);
   }
