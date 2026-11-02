@@ -20,7 +20,7 @@ Confirm it worked:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with nine tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, and `check_sequence`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
+You want `theshow` reported healthy with ten tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, `retry_shot`, and `check_sequence`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
 
 An early build died during initialize for one of two reasons, both fixed in the launcher. Startup used to install dependencies, about 13 seconds of work, which overran the client's initialize window, or the client resolved the script from the home directory instead of the plugin folder. The launcher now runs the bundle and resolves paths from its own file. Update with:
 
@@ -36,7 +36,7 @@ Ask in plain language. You never call the tools yourself.
 
 Here is what happens behind that sentence.
 
-**Brief.** `configure_film` runs first. It puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, aspect ratio, audio, hard constraints, and an optional reference image. The card returns those answers as JSON, plus a cost estimate marked `isEstimate: true`. It renders nothing and spends nothing. Only the scene is required. The other fields default to two shots, eight seconds each, 16:9, diegetic audio, and Photoreal cinematic. Shot count on the card runs from 1 to 8.
+**Brief.** `configure_film` runs first. It puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, aspect ratio, audio, hard constraints, an optional reference image, and an optional music or voiceover path (`audioTrack`). The card returns those answers as JSON, plus a cost estimate marked `isEstimate: true`. It renders nothing and spends nothing. Only the scene is required. The other fields default to two shots, eight seconds each, 16:9, diegetic audio, and Photoreal cinematic. Shot count on the card runs from 1 to 8. `audio` is dialogue, diegetic sound, or silence. `audioTrack` is a separate file, passed later as `audioTrackUrl`.
 
 A blank stays blank. The form says anything you leave out is left out of the film, and the tool tells the caller never to invent a character detail you left empty. That invented detail is a second paid render. One card is one model turn; asking the same questions one at a time spends a turn on each of them before a frame exists. If the client cannot draw a form, the tool returns `elicitationSupported: false` and the same fields as text. Decline and cancel both come back as instructions not to render.
 
@@ -48,11 +48,17 @@ The MCP form has no file upload, so the reference field takes a path or an https
 
 The job exists because a multi-shot chain outlives the MCP client's 60-second request timeout. The first version awaited the chain inside the request. The clips landed on disk, the money was spent, and the caller got a timeout instead of a film. The chain stops on the first shot that fails, and it stops if a rendered shot's last frame cannot be extracted. The job names that shot and does not start the ones after it.
 
-One call takes 1 to 12 shots, each 1 to 15 seconds. Twelve shots of 15 seconds is three minutes. Past that, pass the finished job's `lastFramePath` as `firstFrameUrl` on the next sequence, which pins the first new shot to the previous film's last frame. That call renders and bills only the shots you hand it. `spentUsd` is that job's spend. One file covering both jobs is a later `assemble_film` over the clip paths. Job ids live in the server process. After a restart `check_sequence` reports an unknown id and says jobs do not survive one. Clips already written to disk stay on disk.
+One call takes 1 to 12 shots, each 1 to 15 seconds. Twelve shots of 15 seconds is three minutes. Past that, call `render_sequence` again with `resumeFromJobId` set to the finished job and only the new shots. Earlier shots are reused, they cost nothing more, the first new shot chains from that film's last frame, and the assembly is the whole film, not just the new tail. The result splits `spentUsd` (this run), `carriedOverUsd` (what earlier legs already cost), and `filmTotalUsd` (the film). Job ids live in the server process, so a film can only be continued in the session that rendered it. After a restart the clips are on disk and the id is gone.
 
 **One shot at a time.** `generate_controlled_clip`, `extract_last_frame`, and `assemble_film` still work shot by shot. Render, pull the last frame as a PNG (`framePath`, plus a data URI unless you turn that off), pass that image as `firstFrameUrl` on the next shot, and assemble the ordered clips yourself.
 
-**Assembly.** With an FFmpeg that has `xfade`, joins are cross-fades. `render_sequence` defaults `fadeDuration` to 0.25 seconds. `assemble_film` defaults it to 0.5 seconds. The bundled binary has no `xfade`, and a system binary that has the filter is preferred. Without the filter, assembly is a stream-copy concat: a hard cut. With the filter present, the duration you pass is the duration `xfade` gets, and 0 stays on that cross-fade path as a zero-length transition.
+**Assembly.** Joins are hard cuts. `fadeDuration` defaults to 0 on both `assemble_film` and `render_sequence`. Chained generations drift a little in fine texture, and a dissolve blends the two patterns through each other: the same cobblestones double-expose, and sharpness dips for the length of the fade. A cut stays sharp, and it pops where that drift shows. A fade of 0.15 to 0.3 seconds is for two shots that continue one camera move in the same framing, where a cut would pop.
+
+A zero fade used to take the xfade path anyway. FFmpeg treats a zero-length transition as the second input starting where the first ends, and chained, that collapsed a three-shot film to the first clip: 2.04 seconds, and no error. Hard cuts now take a real concat path. `xfade` runs only when the fade is longer than zero.
+
+**Music and narration.** `assemble_film` and `render_sequence` both take `audioTrackUrl`: an https URL, a `file://` URL, or a local path, including a chat attachment. The track is mixed under the clips' own ambient audio. A short bed is looped, a long one is trimmed to the film's exact length, and it fades out at the end so nothing stops mid-note. `audioTrackVolume` defaults to 0.25, under dialogue, and `audioTrackFadeOutSeconds` defaults to 1.5. The mix uses `duration=first`, so the picture stays the authority and a long track cannot stretch the film. The card's `audioTrack` is this path.
+
+**One bad shot.** `retry_shot` re-renders a single shot of a finished film and splices it back in. Every other shot is reused at no cost, and the film is assembled again with the original resolution, joins, and audio. It is two-step, like `render_sequence`. Without `confirm` it returns the price of that one render and spends nothing. With `confirm: true` it returns a `jobId` to poll with `check_sequence`. It is honest about the seam it cannot repair: shots after the new one were chained from the original shot's last frame, so that next join is a cut, and the tool says so in `warnings`. Cost comes back three ways: `spentUsd` for this run, `filmTotalUsd` for the film as it stands, and `filmSpentIncludingReplacedUsd`, which still counts the shot you replaced. Without this, one bad shot means paying for the whole chain again. The job has to be the one this server process rendered.
 
 ## What it costs
 
@@ -60,7 +66,7 @@ Every clip is a real charge, and the rate is the resolution you name. Measured o
 
 Omitting `resolution` on the API request lets the API pick a soft 848×480 frame. That measured default is the soft picture, and it is what the old flat eight-cents-a-second line was quoting. A tool call that leaves the argument off is filled in as 720p and billed at $0.14 a second. Name the resolution beside any price. The configure card has no resolution field, so its estimate uses the 720p rate and labels it `isEstimate: true`.
 
-`plan_storyboard` and an unconfirmed `render_sequence` spend nothing. Re-rendering a shot because the board was wrong is the expensive mistake.
+`plan_storyboard`, an unconfirmed `render_sequence`, and an unconfirmed `retry_shot` spend nothing. Re-planning after the board was wrong is the expensive mistake. A single bad roll is `retry_shot`, priced as one shot.
 
 Each finished render reports `costUsd`, converted from `usage.cost_in_usd_ticks` at 10^10 ticks per dollar. Audit from that field. The StoryForge web app writes a JSON sidecar beside its own downloaded clips; a plugin run leaves the figure on the tool result.
 
@@ -84,7 +90,7 @@ StoryForge Studio is the other. Clone the repository, run `npm install` and `npm
 ## Known edges
 
 - `firstFrameUrl` must be an image. The video API rejects a clip with `invalid_image`.
-- The pinned `@ffmpeg-installer` binary has no `xfade` filter. A system FFmpeg on the path is preferred. Assembly still succeeds, as a hard-cut concat, on the old binary.
+- Assembly defaults to a hard cut, and that path does not use a cross-fade filter. `xfade` runs only when you set `fadeDuration` above zero. The bundled FFmpeg is an old build without that filter. That does not change the default join, and you do not need a newer binary to assemble a film.
 - An unset MCP environment variable can arrive as a literal `${VAR}` string. theShow treats that shape as absent, so it is not sent as a bearer token.
 
 ## Where this goes next
