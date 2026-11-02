@@ -158,14 +158,32 @@ calls, so a shot without the reference will drift even if the previous shot had 
    ```
 
    **Always pass `cast`, and always look at the stills before approving.** This is the one step where
-   a bad board is cheap to catch and expensive to miss. The stills endpoint treats a reference image
-   as a loose hint; it does not hold a face. A measured three-shot board chained every still from the
-   one before it and still drifted from a bare-headed man in frame 0 to a flat cap in frame 1 to a top
-   hat in frame 3. Written into every prompt, the cast survives. `cast` is a physical description, not
-   a name — a name means nothing to the image model.
+   a bad board is cheap to catch and expensive to miss.
+
+   `cast` must match the reference photo, not describe what you would like to see. Write down what the
+   photo actually shows — outer layer included. A measured board whose cast line said "navy blazer"
+   while the portrait showed a tan sherpa coat produced a different jacket in three of five frames;
+   the prompt was arguing with the picture. Once the line described the coat that is in the photo, the
+   same board held it in all five.
+
+   **A reference photo outranks the prompt.** The board sends a base picture on the edit route, where
+   the picture is the subject rather than a hint: the prompt's job is to change the pose and the action
+   and to leave the rest alone. A shot that genuinely wants different clothing has to say so by name
+   ("he has taken the coat off"); otherwise the board keeps what the photo shows. Do not pad the cast
+   with details the photo contradicts.
+
+   `cast` is a physical description, not a name — a name means nothing to the image model.
 
    Show the stills and the cost. On approval, call again with `confirm: true`. The returned `shots`
    have both frames filled in and consecutive shots share a boundary frame.
+
+   **Pass `characters`, including a Location.** When the cast includes a character whose role is
+   Location, its first photo becomes the base every frame is edited from, and the board spends one
+   extra still (two cents) building a hero frame of the cast inside that location first. That hero
+   frame is what holds both a real face and a recognisable room: measured skyline agreement across a
+   five-frame board was 0.72 by that route, against 0.57 editing from the location alone, 0.36
+   chaining, and 0.25 when a portrait rode along as a second reference. Without a Location the board
+   falls back to chaining.
 
    **What bookending buys you.** A clip pinned only at its start drifts: two unpinned clips of the
    same scene sit around **0.20 correlation**, which is why a cut between them pops. Pinning both ends

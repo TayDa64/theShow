@@ -535,7 +535,13 @@ export async function generateGrokStill(
   let route: "generations" | "edits" = "generations";
   if (job.baseImageUrl) {
     route = "edits";
-    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+    // A base picture is not a bookend: it is the ground truth for a face and a
+    // room, and detail is what holds them. The bookend's 75 KB budget was set to
+    // fit TWO images in one body; a base is a single image and measured fine at
+    // the full inline budget (a 155 KB JPEG, ~207 KB on the wire, returned 200
+    // while a 343 KB one also passed — the encoder's own width cap is what
+    // actually binds, so 220 KB is the ceiling that matters).
+    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
     // Order is meaning, not housekeeping: the FIRST picture is the subject the
     // edit acts on, the rest are context. A portrait first ("place this man into
     // the office in the second photo") kept a face that a prompt describing him

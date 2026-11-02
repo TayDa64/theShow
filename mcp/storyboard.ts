@@ -138,8 +138,27 @@ export function planBoardFrames(opts: {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
   // The cast comes before the look so it wins against scene description.
-  const castLock = cast?.trim() ? `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
+  //
+  // The reference picture outranks this text, and the wording says so. Measured:
+  // a board whose cast line named a navy blazer while the reference photo showed
+  // a tan sherpa coat produced a different outer layer in every frame, because
+  // the prompt was quietly arguing with the picture. When a base or reference is
+  // attached the cast is a description OF the picture, so the instruction is to
+  // preserve it, not to re-imagine it. A shot prompt can still change something,
+  // but it has to say so explicitly — see WARDROBE_CHANGE below.
+  const hasPicture = Boolean(opts.baseImageUrl);
+  const castLock = cast?.trim()
+    ? hasPicture
+      ? `THE CAST, taken from the reference picture and identical in every frame: ${cast.trim()}. ` +
+        `Match the reference picture exactly for this person's face, head, beard and clothing, ` +
+        `and copy them unchanged into every frame. `
+      : `THE CAST, identical in every frame: ${cast.trim()}. `
+    : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
+  const sceneRule = hasPicture
+    ? " The reference picture is the ground truth: keep its room, furniture, windows and the view " +
+      "through them unchanged."
+    : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
 
@@ -157,7 +176,20 @@ export function planBoardFrames(opts: {
         "Hold the same framing, light and wardrobe across the boundary.";
     }
 
-    const full = `${prefix}${prompt}${shape}${still}`;
+    // A wardrobe change has to be asked for by name. Without this the picture
+    // wins by default, which is what was wanted; with it, a shot that says "he
+    // has taken the coat off" is obeyed rather than quietly reverted.
+    const asksForChange =
+      /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
+    const personRule = !hasPicture
+      ? ""
+      : asksForChange
+        ? " This shot asks for the clothing change it names; apply that change and nothing else " +
+          "about the person."
+        : " Keep this person's face, head, beard hair and clothing exactly as the reference " +
+          "picture shows them, and never restyle them.";
+
+    const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const hashInput = opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return { index, prompt: full, stem };

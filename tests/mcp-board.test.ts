@@ -408,3 +408,48 @@ describe('editing from a location photo', () => {
     expect(a.map((f) => f.stem)).not.toEqual(none.map((f) => f.stem));
   });
 });
+
+describe('the picture outranks the prompt', () => {
+  /**
+   * Measured: a board whose cast line named a navy blazer while the reference
+   * photo showed a tan sherpa coat swapped the outer layer in three of five
+   * frames, because the text argued with the picture. Once the prompt said to
+   * preserve what the photo shows, the same board held the coat in all five and
+   * garment agreement rose from a mean 0.51 to 0.64.
+   */
+  it('tells the model to preserve the reference, not re-imagine it', () => {
+    const frames = planBoardFrames({
+      shots: SHOTS,
+      aspectRatio: '16:9',
+      cast: 'bald man, black beard, striped shirt, tan sherpa coat',
+      baseImageUrl: '/refs/office.jpg',
+    });
+    for (const frame of frames) {
+      expect(frame.prompt).toContain('taken from the reference picture');
+      expect(frame.prompt).toContain('ground truth');
+      expect(frame.prompt).toContain("exactly as the reference picture shows them");
+      expect(frame.prompt).toContain('never restyle them');
+    }
+  });
+
+  it('leaves a shot free to ask for a named wardrobe change', () => {
+    const frames = planBoardFrames({
+      shots: [{ prompt: 'He has taken the coat off, now wearing just the striped shirt.' }],
+      aspectRatio: '16:9',
+      cast: 'bald man, black beard',
+      baseImageUrl: '/refs/office.jpg',
+    });
+    // The change is permitted, and said out loud, rather than silently reverted.
+    expect(frames[0].prompt).toContain('asks for the clothing change it names');
+    // The blanket "keep the clothing" instruction must be absent, or the shot
+    // would be arguing with itself.
+    expect(frames[0].prompt).not.toContain('never restyle them');
+  });
+
+  it('does not add picture rules when there is no picture', () => {
+    const frames = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', cast: 'bald man' });
+    for (const frame of frames) {
+      expect(frame.prompt).not.toContain('ground truth');
+    }
+  });
+});

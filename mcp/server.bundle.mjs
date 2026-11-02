@@ -42974,7 +42974,7 @@ async function generateGrokStill(job, opts) {
   let route = "generations";
   if (job.baseImageUrl) {
     route = "edits";
-    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
     const subjects = job.referenceImageUrls?.length ? await inlineReferenceSet(job.referenceImageUrls) : [];
     base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
     delete base.reference_images;
@@ -43088,8 +43088,10 @@ function shotPrompt(shot) {
 function planBoardFrames(opts) {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
-  const castLock = cast?.trim() ? `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
+  const hasPicture = Boolean(opts.baseImageUrl);
+  const castLock = cast?.trim() ? hasPicture ? `THE CAST, taken from the reference picture and identical in every frame: ${cast.trim()}. Match the reference picture exactly for this person's face, head, beard and clothing, and copy them unchanged into every frame. ` : `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
+  const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
   return Array.from({ length: prompts.length + 1 }, (_, index) => {
@@ -43101,7 +43103,9 @@ function planBoardFrames(opts) {
     } else {
       prompt = `Boundary frame: the last frame of shot ${index} and the first frame of shot ${index + 1}. The action of shot ${index} has just resolved \u2014 ${prompts[index - 1]} This is where shot ${index + 1} begins \u2014 ${prompts[index]} Hold the same framing, light and wardrobe across the boundary.`;
     }
-    const full = `${prefix}${prompt}${shape}${still}`;
+    const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
+    const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
+    const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const hashInput = opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full;
     const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return { index, prompt: full, stem };
