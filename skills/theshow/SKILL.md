@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**The six tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These seven tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -21,8 +21,17 @@ isn't loaded in this session — do not quietly build the film another way and p
 **This is the single most important rule.** Generating before configuration is how you get a film
 full of invented detail that the user never asked for and cannot correct without paying twice.
 
-Ask the user for the following, grouped into one short round of questions, and show their answers
-back as a config block for confirmation. Offer defaults so they can just say "yes, go".
+**Call `configure_film` first.** It presents every field below as one interactive form card and
+returns the answers as JSON with a cost estimate. One card costs one turn; asking the same questions
+conversationally costs a turn each, and turns cost real money on top of the renders. Use the form
+unless the user has already answered everything in chat.
+
+If `configure_film` comes back with `elicitationSupported: false`, the client cannot draw a form.
+Then ask for the same fields in a single message, not one at a time, and show the config block:
+- `action: "decline"` or `"cancel"` means the user dismissed it. Do not render. Ask what to change.
+- Reuse `config` verbatim. Every blank the user left blank stays blank — see the rule below.
+
+The fields, whether they arrive by form or by message:
 
 1. **Scene** — one or two sentences. Location, time of day, weather, mood.
 2. **Characters** — name, age range, build, wardrobe, distinguishing features. Anything that must
@@ -37,6 +46,10 @@ back as a config block for confirmation. Offer defaults so they can just say "ye
 8. **Reference images** — ask directly: "Do you have a photo of the character, or a still of the
    location, I should match?" A real reference beats any amount of description and is the single
    biggest drop in unwanted invention. Ask once, take no for an answer.
+
+The form's reference field takes a **path or URL, not a file** — the MCP protocol has no file
+upload. So when the user wants to supply an image, have them attach it in chat and paste the path,
+or give you a public https link.
 
 Then render the confirmed block back to them like this before spending anything:
 
@@ -173,6 +186,7 @@ Every render returns `costUsd`. Real measured figures: 3s ≈ $0.24, 4s ≈ $0.3
 
 - Quote the **actual** returned figure, never an estimate stated as fact.
 - Before the first render, give the estimate from the config block and say it is an estimate.
+  `configure_film` returns `estimate.totalUsd` already labelled `isEstimate: true`.
 - After each render, report what it actually cost.
 - Never invent a price. If a number isn't available, say it isn't available.
 
