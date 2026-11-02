@@ -535,7 +535,18 @@ export async function generateGrokStill(
   let route: "generations" | "edits" = "generations";
   if (job.baseImageUrl) {
     route = "edits";
-    base.image = { url: await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES }) };
+    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+    // Order is meaning, not housekeeping: the FIRST picture is the subject the
+    // edit acts on, the rest are context. A portrait first ("place this man into
+    // the office in the second photo") kept a face that a prompt describing him
+    // could not, which is how the hero frame is built. Base alone is the plain
+    // case: one picture, changed.
+    const subjects = job.referenceImageUrls?.length
+      ? await inlineReferenceSet(job.referenceImageUrls)
+      : [];
+    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    // `reference_images` would be a second, competing copy of the same picture.
+    delete base.reference_images;
   }
 
   const headers = {

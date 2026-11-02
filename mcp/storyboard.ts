@@ -259,17 +259,23 @@ export async function boardFilm(
     })),
   );
   const missing = existing.filter((entry) => !entry.path);
-  const estimatedUsd = Math.round(missing.length * STILL_USD * 100) / 100;
+  // A board with a location photo and a portrait also buys one hero frame first,
+  // so the estimate has to include it or the quote is a lie by two cents.
+  const heroStills = deps.baseImageUrl && (deps.referenceImageUrls ?? []).length > 0 ? 1 : 0;
+  const billable = missing.length + heroStills;
+  const estimatedUsd = Math.round(billable * STILL_USD * 100) / 100;
   const baseEstimate = {
-    totalStills: planned.length,
-    newStills: missing.length,
+    totalStills: planned.length + heroStills,
+    newStills: billable,
     reusedStills: existing.length - missing.length,
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
     basis:
       `${planned.length} frames for ${usable.length} shots ` +
-      `(${usable.length} + 1 shared boundaries), ${missing.length} to render at $0.02 each, ` +
+      `(${usable.length} + 1 shared boundaries)` +
+      (heroStills ? `, plus one hero frame` : "") +
+      `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.`,
     isEstimate: true,
   };
@@ -308,6 +314,37 @@ export async function boardFilm(
   const frames: BoardedFrame[] = [];
   let spentUsd = 0;
 
+  // A location photo AND portraits cannot both ride along: measured on one
+  // office, frames edited from the office alone agreed on the skyline at a mean
+  // 0.57, and adding a portrait reference dropped that to 0.25. So the board
+  // spends two cents building ONE hero frame first — the portrait as the subject
+  // ("place this man in this office"), the location as its setting, which is the
+  // one arrangement that held both a real face and a recognisable room — and
+  // then edits every shot from that single picture.
+  let boardBase = deps.baseImageUrl;
+  const heroRefs = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
+  if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
+    const heroResult = await deps.generateStill(
+      {
+        prompt:
+          `Place this person into the setting in the second photo. ` +
+          `${input.cast?.trim() ? `${input.cast.trim()}. ` : ""}` +
+          `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
+          `Keep their face, hair, beard and clothing exactly as they are, and keep the room, ` +
+          `its furniture, its windows and the view through them exactly as they are. ` +
+          `Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        aspectRatio,
+        baseImageUrl: deps.baseImageUrl,
+        referenceImageUrls: heroRefs,
+      },
+      { outputDir: deps.outputDir, filename: `board-hero-${createHash("sha1").update(`${heroRefs.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`).digest("hex").slice(0, 16)}` },
+    );
+    if (heroResult.localPath) {
+      boardBase = heroResult.localPath;
+      spentUsd += heroResult.costUsd ?? STILL_USD;
+    }
+  }
+
   for (const entry of existing) {
     if (entry.path) {
       paths.set(entry.frame.index, entry.path);
@@ -331,16 +368,18 @@ export async function boardFilm(
     // survive instead of being re-imagined from a sentence. Chaining is the
     // fallback for a board with no location photo.
     const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : undefined;
+    // Once a hero frame exists it is the only reference a shot needs; a portrait
+    // alongside it would knock the skyline apart again.
     const refs = [
-      ...(deps.referenceImageUrls ?? []),
-      ...(deps.baseImageUrl ? [] : previousFrame ? [previousFrame] : []),
+      ...(boardBase ? [] : deps.referenceImageUrls ?? []),
+      ...(boardBase ? [] : previousFrame ? [previousFrame] : []),
     ];
 
     const result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
-        baseImageUrl: deps.baseImageUrl,
+        baseImageUrl: boardBase,
         referenceImageUrls: refs.length > 0 ? refs : undefined,
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem },

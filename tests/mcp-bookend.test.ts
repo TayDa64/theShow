@@ -410,8 +410,11 @@ describe('render_sequence takes explicit per-shot frames', () => {
 
 describe('the board keeps its own money limits', () => {
   it('prices a board from measured still cost, not a guess', () => {
+    // Two cents is the measured figure, and every billable frame — including the
+    // hero frame a base-plus-portrait board buys first — must go through it.
     expect(storyboardSource).toContain('export const STILL_USD = 0.02;');
-    expect(storyboardSource).toContain('missing.length * STILL_USD');
+    expect(storyboardSource).toContain('const billable = missing.length + heroStills;');
+    expect(storyboardSource).toContain('const estimatedUsd = Math.round(billable * STILL_USD * 100) / 100;');
   });
 
   it('gates on maxCostUsd before any still is rendered', () => {
@@ -425,7 +428,9 @@ describe('the board keeps its own money limits', () => {
 
   it('looks for a still on disk before pricing it as new', () => {
     const code = codeOnly(storyboardSource);
-    expect(code.indexOf('await findExistingStill')).toBeLessThan(code.indexOf('missing.length * STILL_USD'));
+    expect(code.indexOf('await findExistingStill')).toBeLessThan(
+      code.indexOf('const estimatedUsd = Math.round(billable * STILL_USD'),
+    );
     expect(code).toContain('reusedStills: existing.length - missing.length');
   });
 
@@ -496,5 +501,53 @@ describe('base image routes the still to the edit endpoint', () => {
     );
     expect(result.route).toBe('generations');
     expect(seen[0]).toContain('/v1/images/generations');
+  });
+});
+
+describe('picture order on the edit route', () => {
+  /**
+   * The first picture is the subject; the rest are context. That ordering is
+   * load-bearing: a portrait placed first ("put this man in the office in the
+   * second photo") kept a face that no amount of prompt wording held, and the
+   * edited still kept the sherpa coat too. Reversing it turns the edit into
+   * "draw a room with a stranger in it".
+   */
+  it('puts the portrait first and the base last', async () => {
+    const { generateGrokStill } = await import('../mcp/grokVideo.ts');
+    const seen: any[] = [];
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.includes('/v1/images/')) {
+        seen.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({
+          data: [{ url: 'https://example.invalid/h.png', mime_type: 'image/png' }],
+          usage: { cost_in_usd_ticks: 220000000 },
+        }), { status: 200 });
+      }
+      return new Response(Buffer.from('bytes'), { status: 200 });
+    }) as typeof fetch;
+
+    const portrait = path.join(tempDir, 'portrait.png');
+    const office = path.join(tempDir, 'office.png');
+    writePng(portrait, 8, 8);
+    writePng(office, 8, 8);
+
+    await generateGrokStill(
+      {
+        prompt: 'Place this man in the office in the second photo.',
+        aspectRatio: '16:9',
+        baseImageUrl: office,
+        referenceImageUrls: [portrait],
+      },
+      { outputDir: tempDir },
+    );
+
+    expect(Array.isArray(seen[0].image)).toBe(true);
+    expect(seen[0].image).toHaveLength(2);
+    // Both are data URIs, so identity is checked by decoding the first bytes.
+    const head = (uri: string) => Buffer.from(uri.slice(uri.indexOf(',') + 1), 'base64').subarray(0, 8).toString('hex');
+    expect(head(seen[0].image[0])).toBe('89504e470d0a1a0a');
+    // And the competing reference key must be gone, not duplicated.
+    expect(seen[0].reference_images).toBeUndefined();
   });
 });

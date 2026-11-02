@@ -42974,7 +42974,10 @@ async function generateGrokStill(job, opts) {
   let route = "generations";
   if (job.baseImageUrl) {
     route = "edits";
-    base.image = { url: await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES }) };
+    const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+    const subjects = job.referenceImageUrls?.length ? await inlineReferenceSet(job.referenceImageUrls) : [];
+    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    delete base.reference_images;
   }
   const headers = {
     Authorization: `Bearer ${credential.token}`,
@@ -43152,15 +43155,17 @@ async function boardFilm(input2, deps) {
     }))
   );
   const missing = existing.filter((entry) => !entry.path);
-  const estimatedUsd = Math.round(missing.length * STILL_USD * 100) / 100;
+  const heroStills = deps.baseImageUrl && (deps.referenceImageUrls ?? []).length > 0 ? 1 : 0;
+  const billable = missing.length + heroStills;
+  const estimatedUsd = Math.round(billable * STILL_USD * 100) / 100;
   const baseEstimate = {
-    totalStills: planned.length,
-    newStills: missing.length,
+    totalStills: planned.length + heroStills,
+    newStills: billable,
     reusedStills: existing.length - missing.length,
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries), ${missing.length} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.`,
+    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.`,
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43185,6 +43190,23 @@ async function boardFilm(input2, deps) {
   const paths = /* @__PURE__ */ new Map();
   const frames = [];
   let spentUsd = 0;
+  let boardBase = deps.baseImageUrl;
+  const heroRefs = deps.baseImageUrl ? deps.referenceImageUrls ?? [] : [];
+  if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
+    const heroResult = await deps.generateStill(
+      {
+        prompt: `Place this person into the setting in the second photo. ${input2.cast?.trim() ? `${input2.cast.trim()}. ` : ""}${input2.look?.trim() ? `${input2.look.trim()} ` : ""}Keep their face, hair, beard and clothing exactly as they are, and keep the room, its furniture, its windows and the view through them exactly as they are. Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        aspectRatio,
+        baseImageUrl: deps.baseImageUrl,
+        referenceImageUrls: heroRefs
+      },
+      { outputDir: deps.outputDir, filename: `board-hero-${createHash2("sha1").update(`${heroRefs.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}`).digest("hex").slice(0, 16)}` }
+    );
+    if (heroResult.localPath) {
+      boardBase = heroResult.localPath;
+      spentUsd += heroResult.costUsd ?? STILL_USD;
+    }
+  }
   for (const entry of existing) {
     if (entry.path) {
       paths.set(entry.frame.index, entry.path);
@@ -43198,14 +43220,14 @@ async function boardFilm(input2, deps) {
     }
     const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : void 0;
     const refs = [
-      ...deps.referenceImageUrls ?? [],
-      ...deps.baseImageUrl ? [] : previousFrame ? [previousFrame] : []
+      ...boardBase ? [] : deps.referenceImageUrls ?? [],
+      ...boardBase ? [] : previousFrame ? [previousFrame] : []
     ];
     const result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
-        baseImageUrl: deps.baseImageUrl,
+        baseImageUrl: boardBase,
         referenceImageUrls: refs.length > 0 ? refs : void 0
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem }
