@@ -186,6 +186,16 @@ export type AssembleClip = {
 export async function assembleClips(input: {
   clips: AssembleClip[];
   fadeDuration: number;
+  /**
+   * Optional music, narration, or ambience laid under the whole film. It is
+   * looped if short, trimmed to the film, faded out at the end, and mixed under
+   * the clips' own audio rather than replacing it.
+   */
+  audioTrackFile?: string;
+  /** Bed level as a linear gain. 0.25 is a bed you can talk over; 1.0 is loud. */
+  audioTrackVolume?: number;
+  /** Seconds of fade at the end of the bed, so a film never ends on a cut-off note. */
+  audioTrackFadeOutSeconds?: number;
 }) {
   const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
@@ -281,6 +291,8 @@ export async function assembleClips(input: {
   }
 
   let mode: "concat" | "xfade";
+  // Needed for the bed: it has to be trimmed to exactly the film's length.
+  let totalDuration = durations.reduce((sum, d) => sum + d, 0);
 
   if (fade === 0) {
     // Hard cuts. concat joins the streams end to end with no overlap, which is
@@ -306,12 +318,36 @@ export async function assembleClips(input: {
       previousA = aLabel;
       elapsed = offset + durations[i];
     }
+    totalDuration = elapsed;
     mode = "xfade";
+  }
+
+  // Music or narration bed, if one was supplied. Added as an extra input after
+  // the clips so its index is the clip count, and looped so a 30-second track
+  // can sit under a three-minute film.
+  let audioMap = "[aout]";
+  if (input.audioTrackFile) {
+    const bedIndex = input.clips.length;
+    const gain = Math.min(Math.max(input.audioTrackVolume ?? 0.25, 0.01), 4);
+    const fadeOut = Math.min(
+      input.audioTrackFadeOutSeconds ?? 1.5,
+      Math.max(totalDuration / 2, 0.1),
+    );
+    args.push("-stream_loop", "-1", "-i", input.audioTrackFile);
+    filters.push(
+      `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
+      `volume=${gain.toFixed(3)},` +
+      `afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}[bed]`,
+    );
+    // duration=first keeps the film's own length and lets the music stop with it.
+    filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    audioMap = "[aoutmix]";
   }
 
   args.push(
     "-filter_complex", filters.join(";"),
-    "-map", "[vout]", "-map", "[aout]",
+    "-map", "[vout]", "-map", audioMap,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "128k",
     "-movflags", "+faststart",
@@ -320,8 +356,8 @@ export async function assembleClips(input: {
 
   await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
   return mode === "xfade"
-    ? { path: outPath, mode, hasXfade, fadeSeconds: fade }
-    : { path: outPath, mode, hasXfade, fadeSeconds: 0 };
+    ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input.audioTrackFile), durationSeconds: totalDuration }
+    : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input.audioTrackFile), durationSeconds: totalDuration };
 }
 
 export async function pathToDataUrl(file: string, mime = "image/png") {
