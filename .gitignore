@@ -13,3 +13,4 @@ uploads/
 sandbox-state.json
 .env*
 !.env.example
+reb
