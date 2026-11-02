@@ -26,7 +26,14 @@ const CharacterSchema = z.object({
   name: z.string(),
   role: z.string().optional(),
   description: z.string().optional(),
-  referenceImageUrls: z.array(z.string().url()).optional(),
+  // Deliberately not z.string().url(): a local path or a chat attachment has to
+  // reach toApiImageRef, which inlines it as a data URI. Zod's .url() rejects
+  // "/workspace/photo.png", so the same reference worked on
+  // generate_controlled_clip and failed here with no useful message.
+  referenceImageUrls: z.array(z.string()).optional().describe(
+    "Portrait reference images: public https URLs, data URIs, or local file paths. " +
+    "Each is inlined for the API, so a path from a chat attachment or extract_last_frame works.",
+  ),
 });
 
 /** Characters created in this process, so storyboards can use their real context. */
@@ -264,7 +271,14 @@ server.registerTool(
       "falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
     inputSchema: z.object({
       prompt: z.string(),
-      referenceImageUrls: z.array(z.string()).optional(),
+      characters: z.array(z.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged " +
+        "into referenceImageUrls automatically, so you never have to copy paths by hand.",
+      ),
+      referenceImageUrls: z.array(z.string()).optional().describe(
+        "Portrait or scene reference images: public https URLs, data URIs, or local paths. " +
+        "Combined with any images registered on `characters`.",
+      ),
       firstFrameUrl: z
         .string()
         .optional()
@@ -280,7 +294,22 @@ server.registerTool(
     }),
   },
   async (args) => {
-    const { waitForCompletion, timeoutSeconds, ...job } = args;
+    const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
+    const job: VideoJob = { ...rest };
+
+    // Fold registered character portraits into the reference list. Without this
+    // the references sit in the store while the render runs blind, which is
+    // exactly how a film drifts off the character the user supplied.
+    const fromCharacters: string[] = [];
+    const missing: string[] = [];
+    for (const name of characters ?? []) {
+      const known = lookupCharacter(name);
+      if (!known) { missing.push(name); continue; }
+      fromCharacters.push(...(known.referenceImageUrls ?? []));
+    }
+    const merged = [...(rest.referenceImageUrls ?? []), ...fromCharacters];
+    job.referenceImageUrls = merged.length > 0 ? Array.from(new Set(merged)) : undefined;
+
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
       content: [{
@@ -292,6 +321,8 @@ server.registerTool(
             : result.requestId
               ? "Generation submitted. Poll statusUrl for the finished clip."
               : "Stub response: no credential available, so nothing was generated.",
+          referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
+          unknownCharacters: missing.length > 0 ? missing : undefined,
           args,
         }, null, 2)
       }]

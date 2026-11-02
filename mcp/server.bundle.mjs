@@ -42881,7 +42881,13 @@ var CharacterSchema = external_exports.object({
   name: external_exports.string(),
   role: external_exports.string().optional(),
   description: external_exports.string().optional(),
-  referenceImageUrls: external_exports.array(external_exports.string().url()).optional()
+  // Deliberately not z.string().url(): a local path or a chat attachment has to
+  // reach toApiImageRef, which inlines it as a data URI. Zod's .url() rejects
+  // "/workspace/photo.png", so the same reference worked on
+  // generate_controlled_clip and failed here with no useful message.
+  referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+    "Portrait reference images: public https URLs, data URIs, or local file paths. Each is inlined for the API, so a path from a chat attachment or extract_last_frame works."
+  )
 });
 var characterStore = /* @__PURE__ */ new Map();
 function rememberCharacter(args) {
@@ -43060,7 +43066,12 @@ server.registerTool(
     description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
     inputSchema: external_exports.object({
       prompt: external_exports.string(),
-      referenceImageUrls: external_exports.array(external_exports.string()).optional(),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`."
+      ),
       firstFrameUrl: external_exports.string().optional().describe(
         "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
       ),
@@ -43072,7 +43083,20 @@ server.registerTool(
     })
   },
   async (args) => {
-    const { waitForCompletion, timeoutSeconds, ...job } = args;
+    const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
+    const job = { ...rest };
+    const fromCharacters = [];
+    const missing = [];
+    for (const name of characters ?? []) {
+      const known = lookupCharacter(name);
+      if (!known) {
+        missing.push(name);
+        continue;
+      }
+      fromCharacters.push(...known.referenceImageUrls ?? []);
+    }
+    const merged = [...rest.referenceImageUrls ?? [], ...fromCharacters];
+    job.referenceImageUrls = merged.length > 0 ? Array.from(new Set(merged)) : void 0;
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
       content: [{
@@ -43080,6 +43104,8 @@ server.registerTool(
         text: JSON.stringify({
           ...result,
           message: result.videoUrl ? "Clip generated. Use extract_last_frame on it to carry continuity into the next shot." : result.requestId ? "Generation submitted. Poll statusUrl for the finished clip." : "Stub response: no credential available, so nothing was generated.",
+          referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
+          unknownCharacters: missing.length > 0 ? missing : void 0,
           args
         }, null, 2)
       }]
