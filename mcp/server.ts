@@ -305,6 +305,14 @@ const FILM_FORM_SCHEMA = {
       description: "Hard constraints, stated literally: no on-screen text, no logos, no extra people.",
       maxLength: 400,
     },
+    audioTrack: {
+      type: "string" as const,
+      title: "Music or voiceover path (optional)",
+      description:
+        "Attach the track in chat and paste its path here, or use an https link. It is mixed " +
+        "under the film, looped if short and faded out at the end. Leave blank for no music.",
+      maxLength: 500,
+    },
     referenceImage: {
       type: "string" as const,
       title: "Reference image path (optional)",
@@ -420,6 +428,7 @@ server.registerTool(
             audio: v.audio ?? "Diegetic only",
             neverShow: v.neverShow ?? "",
             referenceImage: v.referenceImage || undefined,
+            audioTrack: v.audioTrack || undefined,
           },
           estimate: {
             perShotUsd: perShot,
@@ -434,7 +443,8 @@ server.registerTool(
             "Show this back for a yes, then call plan_storyboard, and create_character with " +
             "referenceImageUrls if a reference image was given. Pass continuityBlock as " +
             "render_sequence's `continuity` so every shot carries the same set, wardrobe and " +
-            "constraints. Never invent a character detail the user left blank.",
+            "constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the " +
+            "user left blank.",
         }, null, 2),
       }],
     };

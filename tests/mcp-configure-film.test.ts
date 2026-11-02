@@ -51,6 +51,7 @@ describe('configure_film', () => {
       'audio',
       'neverShow',
       'referenceImage',
+      'audioTrack',
     ]) {
       expect(formBlock).toContain(`${field}: {`);
     }

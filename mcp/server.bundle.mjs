@@ -43143,6 +43143,12 @@ var FILM_FORM_SCHEMA = {
       description: "Hard constraints, stated literally: no on-screen text, no logos, no extra people.",
       maxLength: 400
     },
+    audioTrack: {
+      type: "string",
+      title: "Music or voiceover path (optional)",
+      description: "Attach the track in chat and paste its path here, or use an https link. It is mixed under the film, looped if short and faded out at the end. Leave blank for no music.",
+      maxLength: 500
+    },
     referenceImage: {
       type: "string",
       title: "Reference image path (optional)",
@@ -43234,7 +43240,8 @@ server.registerTool(
             aspectRatio: v.aspectRatio ?? "16:9",
             audio: v.audio ?? "Diegetic only",
             neverShow: v.neverShow ?? "",
-            referenceImage: v.referenceImage || void 0
+            referenceImage: v.referenceImage || void 0,
+            audioTrack: v.audioTrack || void 0
           },
           estimate: {
             perShotUsd: perShot,
@@ -43243,7 +43250,7 @@ server.registerTool(
             isEstimate: true
           },
           continuityBlock: buildContinuityBlock(v),
-          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints. Never invent a character detail the user left blank."
+          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the user left blank."
         }, null, 2)
       }]
     };
