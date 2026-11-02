@@ -43127,7 +43127,8 @@ function planBoardFrames(opts) {
     const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
     const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
-    const hashInput = opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full;
+    const base = opts.baseFingerprint ?? opts.baseImageUrl;
+    const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return { index, prompt: full, stem };
   });
@@ -43166,12 +43167,15 @@ async function boardFilm(input2, deps) {
       error: "No shots with a prompt or action were supplied."
     };
   }
+  const heroRefsForStem = deps.baseImageUrl ? deps.referenceImageUrls ?? [] : [];
+  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash2("sha1").update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}`).digest("hex").slice(0, 16)}` : void 0;
   const planned = planBoardFrames({
     shots: usable,
     aspectRatio,
     look: input2.look,
     cast: input2.cast,
-    baseImageUrl: deps.baseImageUrl
+    baseImageUrl: deps.baseImageUrl,
+    baseFingerprint: heroStem
   });
   const existing = await Promise.all(
     planned.map(async (frame) => ({
@@ -43190,7 +43194,7 @@ async function boardFilm(input2, deps) {
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Each frame is checked against the picture's outer garment and re-rolled once if it changed, so a bad board can cost up to one extra still per frame.` : ""),
+    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43227,7 +43231,7 @@ async function boardFilm(input2, deps) {
         baseImageUrl: setting,
         referenceImageUrls: [subject]
       },
-      { outputDir: deps.outputDir, filename: `board-hero-${createHash2("sha1").update(`officeFirst|${heroRefs.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}`).digest("hex").slice(0, 16)}` }
+      { outputDir: deps.outputDir, filename: heroStem }
     );
     if (heroResult.localPath) {
       boardBase = heroResult.localPath;

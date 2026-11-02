@@ -142,6 +142,19 @@ export function planBoardFrames(opts: {
    * the previous one.
    */
   baseImageUrl?: string;
+  /**
+   * What the frames will actually be edited from, when that is not the same file
+   * the caller passed.
+   *
+   * The hero frame is built from the location photo plus a portrait, and it is
+   * the hero - not the location - that every shot frame is edited from. Folding
+   * only the location into the stem means an inherited board reuses stills that
+   * were bought against a DIFFERENT hero: change the hero's wording, re-run the
+   * board, and it reports "already on disk and free" while handing back the old
+   * pictures. Measured, that is exactly what happened on a proof board whose
+   * hero had been rebuilt twice.
+   */
+  baseFingerprint?: string;
 }): BoardFrame[] {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
@@ -215,7 +228,8 @@ export function planBoardFrames(opts: {
           "picture shows them, and never restyle them.";
 
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
-    const hashInput = opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full;
+    const base = opts.baseFingerprint ?? opts.baseImageUrl;
+    const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return { index, prompt: full, stem };
   });
@@ -299,12 +313,23 @@ export async function boardFilm(
     };
   }
 
+  // The hero frame's file name is deterministic, so it can be folded into every
+  // shot frame's stem before anything is rendered.
+  const heroRefsForStem = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
+  const heroStem = heroRefsForStem.length > 0
+    ? `board-hero-${createHash("sha1")
+        .update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`)
+        .digest("hex")
+        .slice(0, 16)}`
+    : undefined;
+
   const planned = planBoardFrames({
     shots: usable,
     aspectRatio,
     look: input.look,
     cast: input.cast,
     baseImageUrl: deps.baseImageUrl,
+    baseFingerprint: heroStem,
   });
 
   // Look before pricing: a frame already on disk is free, and a re-run of a
@@ -335,8 +360,9 @@ export async function boardFilm(
       `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.` +
       (deps.baseImageUrl
-        ? ` Each frame is checked against the picture's outer garment and re-rolled ` +
-          `once if it changed, so a bad board can cost up to one extra still per frame.`
+        ? ` Every frame is edited from the same picture, so look at the board before ` +
+          `rendering the video: a still that came back wrong is two cents, and the clip that ` +
+          `inherits it is a lot more.`
         : ""),
     isEstimate: true,
   };
@@ -420,7 +446,7 @@ export async function boardFilm(
         baseImageUrl: setting,
         referenceImageUrls: [subject],
       },
-      { outputDir: deps.outputDir, filename: `board-hero-${createHash("sha1").update(`officeFirst|${heroRefs.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`).digest("hex").slice(0, 16)}` },
+      { outputDir: deps.outputDir, filename: heroStem },
     );
     if (heroResult.localPath) {
       boardBase = heroResult.localPath;

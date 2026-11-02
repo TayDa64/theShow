@@ -439,7 +439,9 @@ describe('the board keeps its own money limits', () => {
     // in so a changed base cannot reuse frames bought against the old one. The
     // prompt still has to be in there: that is what makes a re-run free.
     expect(storyboardSource).toContain('createHash("sha1").update(hashInput)');
-    expect(storyboardSource).toContain('opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full');
+    // The stem must be derived from what the frame is EDITED FROM, which is the
+    // hero frame when one exists, not the location photo the caller passed.
+    expect(storyboardSource).toContain('opts.baseFingerprint ?? opts.baseImageUrl');
   });
 });
 

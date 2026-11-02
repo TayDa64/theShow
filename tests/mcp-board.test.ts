@@ -507,3 +507,37 @@ describe('the outer garment survives the board', () => {
     }
   });
 });
+
+describe('a changed hero frame invalidates the shots bought from it', () => {
+  /**
+   * Found by running a proof board twice. Every shot frame is edited from the
+   * HERO frame, not from the location photo the caller passed - so folding only
+   * the location into the frame's file name lets a second run find the first
+   * run's pictures and report them as "already on disk and free" while handing
+   * back stills built against a hero that no longer exists.
+   */
+  it('names the frames after the hero, not the location photo', () => {
+    const location = '/refs/office.jpg';
+    const withHero = planBoardFrames({
+      shots: SHOTS,
+      aspectRatio: '16:9',
+      baseImageUrl: location,
+      baseFingerprint: 'board-hero-aaaa',
+    });
+    const otherHero = planBoardFrames({
+      shots: SHOTS,
+      aspectRatio: '16:9',
+      baseImageUrl: location,
+      baseFingerprint: 'board-hero-bbbb',
+    });
+    expect(withHero.map((f) => f.stem)).not.toEqual(otherHero.map((f) => f.stem));
+    // Same hero, same stems: a genuine re-run must still be free.
+    const again = planBoardFrames({
+      shots: SHOTS,
+      aspectRatio: '16:9',
+      baseImageUrl: location,
+      baseFingerprint: 'board-hero-aaaa',
+    });
+    expect(again.map((f) => f.stem)).toEqual(withHero.map((f) => f.stem));
+  });
+});
