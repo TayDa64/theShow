@@ -42752,13 +42752,18 @@ function describeHttpFailure(status, body) {
   return `HTTP ${status}: the Grok proxy returned ${label}. This is usually transient; retry in a few seconds.`;
 }
 var INLINE_IMAGE_BUDGET_BYTES = 220 * 1024;
-async function shrinkLocalImage(file2) {
+var BOOKEND_IMAGE_BUDGET_BYTES = 75 * 1024;
+var BOOKEND_PAIR_BUDGET_BASE64_BYTES = 200 * 1024;
+async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) {
   const { ffmpeg } = await resolveTools();
   const attempts = [
     { width: 1280, quality: 4 },
     { width: 1024, quality: 6 },
     { width: 768, quality: 8 },
-    { width: 512, quality: 10 }
+    { width: 512, quality: 10 },
+    // Last resort. Only reached when nothing above fit: a bookend pair has to
+    // share one body limit, and a softer still still beats a rejected render.
+    { width: 384, quality: 14 }
   ];
   let lastUrl = "";
   for (const attempt of attempts) {
@@ -42781,25 +42786,45 @@ async function shrinkLocalImage(file2) {
     const shrunk = await readFile2(target);
     await rm(target, { force: true });
     lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
-    if (shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
+    if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
   }
   return lastUrl;
 }
-async function toApiImageRef(ref) {
+async function toApiImageRef(ref, opts = {}) {
+  const budget = opts.budgetBytes ?? INLINE_IMAGE_BUDGET_BYTES;
   const trimmed = ref.trim();
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
   const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
   const buffer = await readFile2(path);
-  if (buffer.byteLength > INLINE_IMAGE_BUDGET_BYTES) {
-    return shrinkLocalImage(path);
+  if (buffer.byteLength > budget) {
+    return shrinkLocalImage(path, budget);
   }
   const ext = path.toLowerCase().match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
   if (!ext || ext === "heic" || ext === "heif") {
-    return shrinkLocalImage(path);
+    return shrinkLocalImage(path, budget);
   }
   const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
   return `data:${mime};base64,${buffer.toString("base64")}`;
+}
+function dataUriBytes(ref) {
+  const comma = ref.indexOf(",");
+  if (!ref.startsWith("data:") || comma === -1) return 0;
+  return Math.ceil((ref.length - comma - 1) * 0.75);
+}
+async function toBookendPair(first, last) {
+  let firstRef = await toApiImageRef(first, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+  let lastRef = await toApiImageRef(last, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES });
+  const total = dataUriBytes(firstRef) + dataUriBytes(lastRef);
+  if (total <= BOOKEND_PAIR_BUDGET_BASE64_BYTES) return { first: firstRef, last: lastRef };
+  const tighter = Math.max(24 * 1024, Math.floor(BOOKEND_IMAGE_BUDGET_BYTES / 2));
+  if (!/^https:\/\//i.test(first.trim()) && !/^data:/i.test(first.trim())) {
+    firstRef = await toApiImageRef(first, { budgetBytes: tighter });
+  }
+  if (!/^https:\/\//i.test(last.trim()) && !/^data:/i.test(last.trim())) {
+    lastRef = await toApiImageRef(last, { budgetBytes: tighter });
+  }
+  return { first: firstRef, last: lastRef };
 }
 async function generateGrokClip(job, opts) {
   const resolved = resolveVideoCredential();
@@ -42819,8 +42844,14 @@ async function generateGrokClip(job, opts) {
     aspect_ratio: job.aspectRatio || "16:9"
   };
   if (job.resolution) body.resolution = job.resolution;
-  if (job.firstFrameUrl) {
+  if (job.firstFrameUrl && job.lastFrameUrl) {
+    const pair = await toBookendPair(job.firstFrameUrl, job.lastFrameUrl);
+    body.image = { url: pair.first };
+    body.last_frame = { url: pair.last };
+  } else if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
+  } else if (job.lastFrameUrl) {
+    body.last_frame = { url: await toApiImageRef(job.lastFrameUrl) };
   }
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
     body.reference_images = await Promise.all(
@@ -42918,12 +42949,497 @@ async function generateGrokClip(job, opts) {
     detail: `Still rendering after ${opts.timeoutSeconds}s. Poll statusUrl for the result.`
   };
 }
+async function inlineReferenceSet(urls) {
+  const perImage = urls.length > 1 ? Math.max(16 * 1024, Math.floor(INLINE_IMAGE_BUDGET_BYTES / urls.length)) : INLINE_IMAGE_BUDGET_BYTES;
+  return Promise.all(urls.map((url2) => toApiImageRef(url2, { budgetBytes: perImage })));
+}
+async function generateGrokStill(job, opts) {
+  const resolved = resolveVideoCredential();
+  if (resolved.ok === false) {
+    return {
+      error: "No credential",
+      code: resolved.code === "expired" ? "expired-credential" : "no-credential",
+      detail: resolved.reason
+    };
+  }
+  const credential = resolved.credential;
+  const base = {
+    model: job.model || "grok-imagine-image",
+    prompt: job.prompt,
+    n: 1
+  };
+  if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
+    base.reference_images = (await inlineReferenceSet(job.referenceImageUrls)).map((url2) => ({ url: url2 }));
+  }
+  const headers = {
+    Authorization: `Bearer ${credential.token}`,
+    "Content-Type": "application/json"
+  };
+  const variants = [];
+  if (job.aspectRatio) {
+    variants.push({ param: "aspect_ratio", body: { ...base, aspect_ratio: job.aspectRatio } });
+    variants.push({ param: "aspectRatio", body: { ...base, aspectRatio: job.aspectRatio } });
+  }
+  variants.push({ param: "none", body: { ...base } });
+  let lastFailure;
+  for (const variant of variants) {
+    let response;
+    try {
+      response = await fetch(`${credential.baseUrl}/v1/images/generations`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(variant.body)
+      });
+    } catch (err) {
+      return {
+        error: "Image request failed",
+        code: "submit-failed",
+        detail: err instanceof Error ? err.message : String(err),
+        auth: credential.source
+      };
+    }
+    if (response.ok) {
+      const payload = await response.json();
+      const image = payload.data?.[0];
+      if (!image?.url) {
+        return {
+          error: "The image route returned no image URL",
+          code: "failed",
+          raw: payload,
+          auth: credential.source
+        };
+      }
+      const localPath = await downloadGrokStill(
+        image.url,
+        opts.outputDir,
+        image.mime_type,
+        opts.filename
+      );
+      return {
+        imageUrl: image.url,
+        localPath,
+        mimeType: image.mime_type,
+        model: payload.model ?? String(variant.body.model),
+        usage: payload.usage,
+        costUsd: costUsdFromUsage(payload.usage),
+        aspectRatioParam: variant.param,
+        auth: credential.source,
+        billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
+      };
+    }
+    const text = await response.text();
+    lastFailure = { status: response.status, text };
+    if (response.status === 401 || response.status === 403) {
+      return {
+        error: `Image generation was rejected (HTTP ${response.status})`,
+        code: "rejected",
+        detail: describeHttpFailure(response.status, text),
+        auth: credential.source,
+        hint: "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json."
+      };
+    }
+    if (response.status !== 400 && response.status !== 422) break;
+  }
+  return {
+    error: lastFailure ? `Image generation answered ${lastFailure.status}` : "Image generation failed",
+    code: "submit-failed",
+    detail: lastFailure ? describeHttpFailure(lastFailure.status, lastFailure.text) : void 0,
+    auth: credential.source
+  };
+}
+async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
+  await mkdir2(outputDir, { recursive: true });
+  const ext = mimeType?.includes("jpeg") || mimeType?.includes("jpg") ? "jpg" : mimeType?.includes("webp") ? "webp" : "png";
+  const digest = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const named = filename && !/\.[a-z0-9]{2,5}$/i.test(filename) ? `${filename}.${ext}` : filename;
+  const destination = join3(outputDir, named ?? `still-${digest}.${ext}`);
+  if (imageUrl.startsWith("data:")) {
+    const comma = imageUrl.indexOf(",");
+    if (comma === -1) throw new Error("Malformed data URI for generated still.");
+    await writeFile2(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
+    return destination;
+  }
+  const response = await fetch(imageUrl, { redirect: "follow" });
+  if (!response.ok) throw new Error(`Still download failed: HTTP ${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength === 0) throw new Error("Still download returned no data.");
+  await writeFile2(destination, bytes);
+  return destination;
+}
+
+// mcp/storyboard.ts
+import { createHash as createHash2 } from "node:crypto";
+import { stat as stat2 } from "node:fs/promises";
+import { join as join4 } from "node:path";
+var STILL_USD = 0.02;
+var STILL_EXTENSIONS = ["png", "jpg", "webp"];
+function shotPrompt(shot) {
+  return (shot.prompt ?? shot.action ?? "").trim();
+}
+function planBoardFrames(opts) {
+  const { shots, aspectRatio, look } = opts;
+  const prompts = shots.map(shotPrompt);
+  const prefix = look?.trim() ? `${look.trim()} ` : "";
+  const shape = ` Composition matches a ${aspectRatio} frame.`;
+  const still = " Single held frame, no motion blur, no text, no watermark.";
+  return Array.from({ length: prompts.length + 1 }, (_, index) => {
+    let prompt;
+    if (index === 0) {
+      prompt = `Opening frame of shot 1. ${prompts[0]}`;
+    } else if (index === prompts.length) {
+      prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
+    } else {
+      prompt = `Boundary frame: the last frame of shot ${index} and the first frame of shot ${index + 1}. The action of shot ${index} has just resolved \u2014 ${prompts[index - 1]} This is where shot ${index + 1} begins \u2014 ${prompts[index]} Hold the same framing, light and wardrobe across the boundary.`;
+    }
+    const full = `${prefix}${prompt}${shape}${still}`;
+    const stem = `board-${createHash2("sha1").update(full).digest("hex").slice(0, 16)}`;
+    return { index, prompt: full, stem };
+  });
+}
+async function findExistingStill(dir, stem) {
+  for (const ext of STILL_EXTENSIONS) {
+    const candidate = join4(dir, `${stem}.${ext}`);
+    try {
+      const info = await stat2(candidate);
+      if (info.size > 0) return candidate;
+    } catch {
+    }
+  }
+  return void 0;
+}
+async function boardFilm(input2, deps) {
+  const aspectRatio = input2.aspectRatio ?? "16:9";
+  const usable = input2.shots.filter((shot) => shotPrompt(shot).length > 0);
+  if (usable.length === 0) {
+    return {
+      action: "estimate-only",
+      willSpend: false,
+      aspectRatio,
+      shots: [],
+      frames: [],
+      estimate: {
+        totalStills: 0,
+        newStills: 0,
+        reusedStills: 0,
+        estimatedUsd: 0,
+        spentUsd: 0,
+        perStillUsd: STILL_USD,
+        basis: "No shots, nothing to board.",
+        isEstimate: true
+      },
+      error: "No shots with a prompt or action were supplied."
+    };
+  }
+  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input2.look });
+  const existing = await Promise.all(
+    planned.map(async (frame) => ({
+      frame,
+      path: await findExistingStill(deps.outputDir, frame.stem)
+    }))
+  );
+  const missing = existing.filter((entry) => !entry.path);
+  const estimatedUsd = Math.round(missing.length * STILL_USD * 100) / 100;
+  const baseEstimate = {
+    totalStills: planned.length,
+    newStills: missing.length,
+    reusedStills: existing.length - missing.length,
+    estimatedUsd,
+    spentUsd: 0,
+    perStillUsd: STILL_USD,
+    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries), ${missing.length} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.`,
+    isEstimate: true
+  };
+  const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
+  if (!input2.confirm || overBudget) {
+    return {
+      action: overBudget ? "over-budget" : "estimate-only",
+      willSpend: false,
+      aspectRatio,
+      shots: [],
+      frames: existing.map((entry) => ({
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        path: entry.path,
+        reused: Boolean(entry.path)
+      })),
+      estimate: baseEstimate,
+      maxCostUsd: input2.maxCostUsd,
+      error: overBudget ? `The board would cost $${estimatedUsd.toFixed(2)}, over the $${input2.maxCostUsd?.toFixed(2)} limit. Nothing was spent. Raise maxCostUsd or board fewer shots.` : void 0,
+      next: overBudget ? "Tell the user the board is over budget and what it would cost. Do not retry with a higher limit unless they ask for one." : "Show the frame count and the estimate. Call again with confirm: true only after the user approves the board. Nothing is rendered until then."
+    };
+  }
+  const paths = /* @__PURE__ */ new Map();
+  const frames = [];
+  let spentUsd = 0;
+  for (const entry of existing) {
+    if (entry.path) {
+      paths.set(entry.frame.index, entry.path);
+      frames.push({
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        path: entry.path,
+        reused: true
+      });
+      continue;
+    }
+    const result = await deps.generateStill(
+      {
+        prompt: entry.frame.prompt,
+        aspectRatio,
+        referenceImageUrls: deps.referenceImageUrls
+      },
+      { outputDir: deps.outputDir, filename: entry.frame.stem }
+    );
+    if (result.localPath) {
+      paths.set(entry.frame.index, result.localPath);
+      spentUsd += result.costUsd ?? STILL_USD;
+      frames.push({
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        path: result.localPath,
+        reused: false,
+        costUsd: result.costUsd
+      });
+    } else {
+      frames.push({
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        reused: false,
+        error: result.error ?? "no image returned"
+      });
+    }
+  }
+  const shots = [];
+  const gaps = [];
+  usable.forEach((shot, i) => {
+    const first = paths.get(i);
+    const last = paths.get(i + 1);
+    if (!first || !last) {
+      gaps.push(i + 1);
+      return;
+    }
+    shots.push({
+      prompt: shotPrompt(shot),
+      title: shot.title ?? `Shot ${i + 1}`,
+      durationSeconds: shot.durationSeconds ?? 8,
+      firstFrameUrl: first,
+      lastFrameUrl: last,
+      firstFrameIndex: i,
+      lastFrameIndex: i + 1
+    });
+  });
+  const complete = gaps.length === 0;
+  return {
+    action: complete ? "boarded" : "partial",
+    willSpend: true,
+    aspectRatio,
+    // A partial board hands back no shots at all, not the ones it managed.
+    // Returning a truncated list would be pasted into render_sequence and render
+    // a film that silently stops early — which is the failure this whole board
+    // exists to prevent. The frames it did buy are still on disk and are reused
+    // free when the board is re-run.
+    shots: complete ? shots : [],
+    frames,
+    estimate: {
+      ...baseEstimate,
+      spentUsd: Math.round(spentUsd * 100) / 100
+    },
+    maxCostUsd: input2.maxCostUsd,
+    error: complete ? void 0 : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were returned. Re-run board_film: frames already on disk are reused and cost nothing.`,
+    next: complete ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. Consecutive shots share a boundary frame, so every cut lands on identical pixels. Each shot is still one paid video render." : "Report which frames failed and re-run board_film. Do not render video from a partial board."
+  };
+}
+function toRenderShots(board) {
+  return board.shots.map((shot) => ({
+    prompt: shot.prompt,
+    title: shot.title,
+    durationSeconds: shot.durationSeconds,
+    firstFrameUrl: shot.firstFrameUrl,
+    lastFrameUrl: shot.lastFrameUrl
+  }));
+}
+
+// mcp/characters.ts
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
+import { homedir as homedir3 } from "node:os";
+import { basename, join as join5, sep } from "node:path";
+var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join5(homedir3(), ".theshow", "characters");
+function charactersRoot() {
+  return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
+}
+function shortHash(value) {
+  return createHash3("sha1").update(value).digest("hex").slice(0, 8);
+}
+function slugFor(name) {
+  const slug = name.trim().toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/g, "");
+  return slug || "character";
+}
+function sameName(a, b) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+function candidateFolders(root, name) {
+  const slug = slugFor(name);
+  return [join5(root, slug), join5(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
+}
+function parseRecord(folder, raw) {
+  const file2 = join5(folder, "character.json");
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.name !== "string" || !parsed.name.trim()) {
+      throw new Error("the record has no name");
+    }
+    return {
+      id: typeof parsed.id === "string" && parsed.id ? parsed.id : `char_${shortHash(parsed.name)}`,
+      name: parsed.name.trim(),
+      role: typeof parsed.role === "string" ? parsed.role : void 0,
+      description: typeof parsed.description === "string" ? parsed.description : void 0,
+      referenceImageUrls: Array.isArray(parsed.referenceImageUrls) ? parsed.referenceImageUrls.filter((ref) => typeof ref === "string") : [],
+      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+      folder
+    };
+  } catch (err) {
+    console.error(`theShow: skipping character record ${file2}:`, err);
+    return void 0;
+  }
+}
+async function readRecord(folder, options = {}) {
+  const file2 = join5(folder, "character.json");
+  try {
+    return parseRecord(folder, await readFile3(file2, "utf8"));
+  } catch (err) {
+    if (!options.quiet) {
+      console.error(`theShow: skipping character folder ${folder}:`, err);
+    }
+    return void 0;
+  }
+}
+async function folderForWrite(root, name) {
+  const [plain, hashed] = candidateFolders(root, name);
+  if (!existsSync(plain)) return plain;
+  const record2 = await readRecord(plain, { quiet: true });
+  return record2 && sameName(record2.name, name) ? plain : hashed;
+}
+function copyNameFor(source) {
+  const file2 = basename(source);
+  const extension = file2.match(/(\.[a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? "";
+  const stem = slugFor(file2.replace(/\.[^.]*$/, "")).slice(0, 40) || "ref";
+  return `${stem}-${shortHash(source)}${extension}`;
+}
+async function keepReferences(input2) {
+  const refsDir = join5(input2.folder, "refs");
+  const kept = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const ref of input2.refs) {
+    const trimmed = ref.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    if (/^(https?:|data:)/i.test(trimmed)) {
+      kept.push(trimmed);
+      continue;
+    }
+    const source = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+    if (source === refsDir || source.startsWith(refsDir + sep)) {
+      kept.push(source);
+      continue;
+    }
+    const target = join5(refsDir, copyNameFor(source));
+    try {
+      const bytes = await readFile3(source);
+      await mkdir3(refsDir, { recursive: true });
+      await writeFile3(target, bytes);
+      kept.push(target);
+    } catch (err) {
+      input2.warnings.push(
+        `Could not keep reference image ${source}: ${err instanceof Error ? err.message : "unreadable"}. The character was saved without it.`
+      );
+    }
+  }
+  return kept;
+}
+async function saveCharacter(input2) {
+  const name = input2.name.trim();
+  if (!name) throw new Error("A character needs a name.");
+  const root = charactersRoot();
+  const folder = await folderForWrite(root, name);
+  const existing = await readRecord(folder, { quiet: true });
+  const warnings = [];
+  const referenceImageUrls = await keepReferences({
+    folder,
+    refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
+    warnings
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const record2 = {
+    id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+    name,
+    role: input2.role ?? existing?.role,
+    description: input2.description ?? existing?.description,
+    referenceImageUrls,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    folder
+  };
+  const onDisk = {
+    id: record2.id,
+    name: record2.name,
+    role: record2.role,
+    description: record2.description,
+    referenceImageUrls: record2.referenceImageUrls,
+    createdAt: record2.createdAt,
+    updatedAt: record2.updatedAt
+  };
+  try {
+    await mkdir3(folder, { recursive: true });
+    await writeFile3(join5(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warnings.push(`Could not write ${join5(folder, "character.json")}: ${message}`);
+    console.error(`theShow: could not save character ${name}:`, err);
+  }
+  if (warnings.length > 0) record2.warnings = warnings;
+  return record2;
+}
+function loadCharacterSync(name) {
+  const root = charactersRoot();
+  for (const folder of candidateFolders(root, name)) {
+    let raw;
+    try {
+      raw = readFileSync2(join5(folder, "character.json"), "utf8");
+    } catch {
+      continue;
+    }
+    const record2 = parseRecord(folder, raw);
+    if (record2 && sameName(record2.name, name)) return record2;
+  }
+  return void 0;
+}
+async function loadAllCharacters() {
+  const root = charactersRoot();
+  let folders;
+  try {
+    folders = await readdir(root);
+  } catch {
+    return [];
+  }
+  const newest = /* @__PURE__ */ new Map();
+  for (const entry of folders) {
+    const record2 = await readRecord(join5(root, entry));
+    if (!record2) continue;
+    const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
+    const previous = newest.get(key);
+    if (!previous || record2.updatedAt > previous.updatedAt) newest.set(key, record2);
+  }
+  return [...newest.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 // mcp/server.ts
-import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join6 } from "node:path";
 import { tmpdir as tmpdir2 } from "node:os";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 var server = new McpServer({
   name: "theshow",
   version: "0.1.0"
@@ -42941,21 +43457,68 @@ var CharacterSchema = external_exports.object({
   )
 });
 var characterStore = /* @__PURE__ */ new Map();
-function rememberCharacter(args) {
+async function rememberCharacter(args) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key);
-  const entry = {
-    id: existing?.id ?? `char_${Date.now()}_${characterStore.size}`,
-    name: args.name.trim(),
+  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
+  const saved = await saveCharacter({
+    name: args.name,
     role: args.role ?? existing?.role,
     description: args.description ?? existing?.description,
     referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls
+  });
+  const entry = {
+    id: saved.id,
+    name: saved.name,
+    role: saved.role,
+    description: saved.description,
+    referenceImageUrls: saved.referenceImageUrls
   };
   characterStore.set(key, entry);
-  return entry;
+  return { entry, folder: saved.folder, warnings: saved.warnings };
 }
 function lookupCharacter(name) {
-  return characterStore.get(name.trim().toLowerCase());
+  const key = name.trim().toLowerCase();
+  const cached2 = characterStore.get(key);
+  if (cached2) return cached2;
+  const fromDisk = loadCharacterSync(name);
+  if (!fromDisk) return void 0;
+  characterStore.set(key, {
+    id: fromDisk.id,
+    name: fromDisk.name,
+    role: fromDisk.role,
+    description: fromDisk.description,
+    referenceImageUrls: fromDisk.referenceImageUrls
+  });
+  return characterStore.get(key);
+}
+async function loadCharactersFromDisk() {
+  try {
+    for (const character of await loadAllCharacters()) {
+      characterStore.set(character.name.trim().toLowerCase(), {
+        id: character.id,
+        name: character.name,
+        role: character.role,
+        description: character.description,
+        referenceImageUrls: character.referenceImageUrls
+      });
+    }
+  } catch (err) {
+    console.error("theShow: could not load saved characters:", err);
+  }
+}
+function mergeCharacterReferences(characters, referenceImageUrls) {
+  const fromCharacters = [];
+  const missing = [];
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) {
+      missing.push(name);
+      continue;
+    }
+    fromCharacters.push(...known.referenceImageUrls ?? []);
+  }
+  const merged = [...referenceImageUrls ?? [], ...fromCharacters];
+  return { urls: Array.from(new Set(merged)), missing };
 }
 var BEAT_LADDER = [
   {
@@ -43063,7 +43626,7 @@ function planShots(opts) {
     }
     if (i > 0) {
       shot.firstFrameFrom = `last frame of shot ${i}`;
-      shot.continuityNotes = `${beat.note} Uses the last frame of shot ${i} as first_frame.`;
+      shot.continuityNotes = `${beat.note} Uses the last frame of shot ${i} as lastFrameUrl.`;
     }
     return shot;
   });
@@ -43264,13 +43827,30 @@ server.registerTool(
     inputSchema: CharacterSchema
   },
   async (args) => {
-    const stored = rememberCharacter(args);
+    let stored;
+    try {
+      stored = await rememberCharacter(args);
+    } catch (err) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: err instanceof Error ? err.message : "Could not save the character."
+          }, null, 2)
+        }],
+        isError: true
+      };
+    }
+    const { entry, folder, warnings } = stored;
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          ...stored,
-          message: "Character created and held in this session's store; plan_storyboard can now use it for continuity."
+          ...entry,
+          storage: folder,
+          referenceImages: entry.referenceImageUrls.length,
+          ...warnings ? { warnings } : {},
+          message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
         }, null, 2)
       }]
     };
@@ -43330,6 +43910,12 @@ function composeShotPrompt(continuity, prompt) {
 
 Shot: ${prompt.trim()}`;
 }
+function localImagePath(ref) {
+  if (!ref) return void 0;
+  const trimmed = ref.trim();
+  if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
+  return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+}
 var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 server.registerTool(
   "generate_controlled_clip",
@@ -43346,6 +43932,9 @@ server.registerTool(
       firstFrameUrl: external_exports.string().optional().describe(
         "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
       ),
+      lastFrameUrl: external_exports.string().optional().describe(
+        "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture."
+      ),
       durationSeconds: external_exports.number().min(1).max(15).default(8),
       aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
       resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
@@ -43359,18 +43948,8 @@ server.registerTool(
   async (args) => {
     const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
     const job = { ...rest };
-    const fromCharacters = [];
-    const missing = [];
-    for (const name of characters ?? []) {
-      const known = lookupCharacter(name);
-      if (!known) {
-        missing.push(name);
-        continue;
-      }
-      fromCharacters.push(...known.referenceImageUrls ?? []);
-    }
-    const merged = [...rest.referenceImageUrls ?? [], ...fromCharacters];
-    job.referenceImageUrls = merged.length > 0 ? Array.from(new Set(merged)) : void 0;
+    const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
+    job.referenceImageUrls = urls.length > 0 ? urls : void 0;
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
       content: [{
@@ -43473,20 +44052,20 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
   }
 );
-var DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join4(tmpdir2(), "theshow-output");
+var DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join6(tmpdir2(), "theshow-output");
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
-    await mkdir3(DOWNLOAD_DIR, { recursive: true });
-    const digest = createHash2("sha1").update(input2).digest("hex").slice(0, 16);
+    await mkdir4(DOWNLOAD_DIR, { recursive: true });
+    const digest = createHash4("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
-    const target = join4(DOWNLOAD_DIR, `src-${digest}.${ext}`);
+    const target = join6(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
     if (existing !== void 0) return target;
     const res = await fetch(input2, { redirect: "follow" });
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} for ${input2}`);
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.byteLength === 0) throw new Error(`Download produced no data for ${input2}`);
-    await writeFile3(target, bytes);
+    await writeFile4(target, bytes);
     return target;
   }
   const path = input2.startsWith("file://") ? new URL(input2).pathname : input2;
@@ -43497,7 +44076,7 @@ async function resolveToLocalFile(input2) {
 server.registerTool(
   "extract_last_frame",
   {
-    description: "Extract the last frame of a video as a PNG for use as first_frame on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
+    description: "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
     inputSchema: external_exports.object({
       videoUrl: external_exports.string().describe("Public https URL, file:// path, or a local path from a previous run."),
       includeDataUri: external_exports.boolean().default(true)
@@ -43520,6 +44099,73 @@ server.registerTool(
       payload.dataUri = await pathToDataUrl(frame.path);
     }
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+);
+server.registerTool(
+  "generate_still",
+  {
+    description: "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
+    inputSchema: external_exports.object({
+      prompt: external_exports.string().describe(
+        "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
+        "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
+      ),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
+      )
+    })
+  },
+  async (args) => {
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const result = await generateGrokStill(
+      {
+        prompt: args.prompt,
+        aspectRatio: args.aspectRatio,
+        referenceImageUrls: urls.length > 0 ? urls : void 0
+      },
+      { outputDir: OUTPUT_DIR }
+    );
+    if (!result.localPath) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: result.error ?? "Still generation failed",
+            detail: result.detail,
+            hint: result.hint,
+            costUsd: result.costUsd,
+            referenceImagesUsed: urls.length,
+            unknownCharacters: missing.length > 0 ? missing : void 0
+          }, null, 2)
+        }]
+      };
+    }
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          imageUrl: result.imageUrl,
+          imagePath: result.localPath,
+          fileUrl: `file://${result.localPath}`,
+          mimeType: result.mimeType,
+          aspectRatio: args.aspectRatio,
+          aspectRatioParam: result.aspectRatioParam,
+          costUsd: result.costUsd,
+          usage: result.usage,
+          billedTo: result.billedTo,
+          auth: result.auth,
+          referenceImagesUsed: urls.length,
+          unknownCharacters: missing.length > 0 ? missing : void 0,
+          message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
+        }, null, 2)
+      }]
+    };
   }
 );
 server.registerTool(
@@ -43582,6 +44228,7 @@ server.registerTool(
 );
 async function main() {
   await loadJobsFromDisk();
+  await loadCharactersFromDisk();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
@@ -43597,19 +44244,19 @@ function ratePerSecond(resolution) {
 var sequenceJobs = /* @__PURE__ */ new Map();
 async function persistJob(job) {
   try {
-    await mkdir3(JOBS_DIR, { recursive: true });
-    await writeFile3(join4(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
+    await mkdir4(JOBS_DIR, { recursive: true });
+    await writeFile4(join6(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
   } catch (err) {
     console.error(`theShow: could not persist job ${job.id}:`, err);
   }
 }
 async function loadJobsFromDisk() {
   try {
-    const files = await readdir(JOBS_DIR);
+    const files = await readdir2(JOBS_DIR);
     for (const name of files) {
       if (!name.endsWith(".json")) continue;
       try {
-        const raw = await readFile3(join4(JOBS_DIR, name), "utf8");
+        const raw = await readFile4(join6(JOBS_DIR, name), "utf8");
         const job = JSON.parse(raw);
         if (!job?.id) continue;
         if (job.state === "running") {
@@ -43688,13 +44335,15 @@ async function runSequenceJob(job, args) {
   try {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
+      const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
       const result = await generateGrokClip({
         prompt: composeShotPrompt(args.continuity, shot.prompt),
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio,
         resolution: args.resolution,
         model: args.model,
-        firstFrameUrl: previousFrame,
+        firstFrameUrl: shotFirstFrame,
+        lastFrameUrl: shot.lastFrameUrl,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       const shotNumber = carried.length + i + 1;
@@ -43707,6 +44356,8 @@ async function runSequenceJob(job, args) {
         error: result.error,
         localPath: void 0,
         framePath: void 0,
+        lastFrameUrl: shot.lastFrameUrl,
+        lastFramePath: localImagePath(shot.lastFrameUrl),
         prompt: shot.prompt,
         durationSeconds: shot.durationSeconds
       };
@@ -43774,7 +44425,13 @@ server.registerTool(
           "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
         ),
         durationSeconds: external_exports.number().min(1).max(15).default(8),
-        title: external_exports.string().optional()
+        title: external_exports.string().optional(),
+        firstFrameUrl: external_exports.string().optional().describe(
+          "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
+        ),
+        lastFrameUrl: external_exports.string().optional().describe(
+          "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
+        )
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot."
@@ -43857,6 +44514,11 @@ server.registerTool(
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
     ) / 100;
+    const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
+    const sharedBoundaries = args.shots.reduce((count, shot, i) => {
+      const next = args.shots[i + 1];
+      return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
+    }, 0);
     if (!args.confirm) {
       return {
         content: [{
@@ -43870,7 +44532,9 @@ server.registerTool(
               aspectRatio: args.aspectRatio,
               resolution: args.resolution,
               fadeSeconds: args.fadeDuration,
-              continuity: "Each shot starts from the previous shot's last frame.",
+              continuity: bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and last frames; the rest chain from the previous shot's last frame.` : "Each shot starts from the previous shot's last frame.",
+              bookendedShots,
+              sharedBoundaryFrames: sharedBoundaries,
               rendersAsOneJob: true,
               ...resumeJob ? {
                 continuingJob: resumeJob.id,
@@ -43953,6 +44617,64 @@ server.registerTool(
         ...jobPayload(job)
       }, null, 2) }]
     };
+  }
+);
+server.registerTool(
+  "board_film",
+  {
+    description: "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
+    inputSchema: external_exports.object({
+      shots: external_exports.array(external_exports.object({
+        prompt: external_exports.string().optional().describe("What happens in the shot."),
+        action: external_exports.string().optional().describe(
+          "Alias for prompt, so plan_storyboard output pastes in unchanged."
+        ),
+        title: external_exports.string().optional(),
+        durationSeconds: external_exports.number().min(1).max(15).default(8)
+      })).min(1).max(12).describe(
+        "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+      ),
+      look: external_exports.string().optional().describe(
+        "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Extra reference stills for the board: https URLs, data URIs, or local paths."
+      ),
+      maxCostUsd: external_exports.number().min(0).optional().describe(
+        "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
+      ),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+      )
+    })
+  },
+  async (args) => {
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const board = await boardFilm(
+      {
+        shots: args.shots,
+        aspectRatio: args.aspectRatio,
+        look: args.look,
+        maxCostUsd: args.maxCostUsd,
+        confirm: args.confirm
+      },
+      {
+        outputDir: OUTPUT_DIR,
+        referenceImageUrls: urls.length > 0 ? urls : void 0,
+        // Injected so tests can board a whole film without reaching the network.
+        generateStill: async (job, opts) => generateGrokStill(job, opts)
+      }
+    );
+    const payload = {
+      ...board,
+      ...missing.length > 0 ? { unknownCharacters: missing } : {},
+      ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {}
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
 server.registerTool(

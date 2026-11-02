@@ -42,12 +42,16 @@ The bundled skill sequences the tools for you:
 | `configure_film` | Collects the whole brief as one interactive form card, with a cost estimate |
 | `render_sequence` | Renders a whole shot sequence with automatic frame-to-frame continuity, then assembles it |
 | `check_sequence` | Reports progress and real cost on a running sequence (free) |
-| `create_character` | Stores a named character with reference images |
-| `plan_storyboard` | Turns a scene into numbered shots |
-| `generate_controlled_clip` | Renders one shot, optionally seeded by the previous clip's last frame |
-| `extract_last_frame` | Produces the bridge frame for the next shot |
+| `create_character` | Stores a named character on disk, with its reference photos copied into its own folder |
+| `plan_storyboard` | Turns a scene into numbered shots (free) |
+| `board_film` | Boards a film as stills first, one per shot boundary, so every cut lands on identical pixels |
+| `generate_still` | Generates one image, about $0.02, for board frames |
+| `generate_controlled_clip` | Renders one shot, optionally bookended by a first and a last frame |
+| `extract_last_frame` | Pulls the bridge frame out of a rendered clip |
+| `retry_shot` | Re-renders one bad shot and splices it back, reusing every other shot free |
+| `list_films` | Lists the films on disk with their job ids, costs and paths (free) |
 | `extend_clip` | Continues an existing take (API-key backends only) |
-| `assemble_film` | Cross-fades the ordered clips into one film with FFmpeg |
+| `assemble_film` | Joins ordered clips into one film with FFmpeg, as hard cuts by default |
 
 ## Authentication
 

@@ -117,7 +117,12 @@ describe('render_sequence and check_sequence', () => {
       src.indexOf('async function runSequenceJob'),
       src.indexOf('server.registerTool(\n  "render_sequence"'),
     );
-    expect(jobFn).toContain('firstFrameUrl: previousFrame');
+    // Chaining is the fallback, not the rule: a shot that carries its own first
+    // frame keeps it, because that frame is the one the user approved on the
+    // board. With no explicit frames anywhere this resolves to exactly the old
+    // previousFrame behaviour.
+    expect(jobFn).toContain('const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;');
+    expect(jobFn).toContain('firstFrameUrl: shotFirstFrame');
     expect(jobFn).toContain('previousFrame = frame.path');
   });
 

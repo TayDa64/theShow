@@ -229,13 +229,15 @@ describe('retry_shot', () => {
 });
 
 describe('the skill names every tool that exists', () => {
-  it('covers all ten registered tools', () => {
+  it('covers every registered tool, including the stills-first pair', () => {
     const skill = readFileSync(
       path.join(__dirname, '..', 'skills', 'theshow', 'SKILL.md'),
       'utf8',
     );
     const registered = [...serverSource.matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]);
-    expect(registered.length).toBe(11);
+    // 11 before bookending and stills-first boarding: generate_still and
+    // board_film are the two additions.
+    expect(registered.length).toBe(13);
     for (const name of registered) {
       expect(skill, `${name} is registered but the skill never mentions it`).toContain(name);
     }

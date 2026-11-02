@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These eleven tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These thirteen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -75,6 +75,32 @@ Estimated:    ~$2.24 (2 renders · 8s at 720p ≈ $1.12 each)
 Only after they approve, proceed. If the user gave enough detail up front to fill every field, show
 the block and ask for a single yes instead of re-asking everything.
 
+### Step 0.5 — Board the film as stills before rendering it
+
+Between the approved config and the first paid render there is a much cheaper checkpoint:
+**`board_film`**. It generates one still per shot boundary, so the user sees the film as pictures
+before any video is bought.
+
+A still is **$0.02**. A second of 720p video is $0.14. A three-shot film boards as four stills for
+eight cents and renders for roughly $3.36, so the board is about 2% of the cost and catches the
+things that are expensive to fix later: wrong wardrobe, wrong light, a face that is not the user's
+character, a location that reads nothing like what they described.
+
+- N shots produce **N+1 stills**, not 2N. The boundary between two shots is one picture used as both
+  the first shot's last frame and the second's first frame, which is what makes the cut exact.
+- It is **two-step**, like every other spending tool: call without `confirm` for the estimate, show
+  it, then call again with `confirm: true`.
+- Pass `maxCostUsd` when you want a hard ceiling. Over it, the tool spends **nothing** and reports
+  the figure.
+- A re-run is free for anything already on disk, so an interrupted board resumes instead of
+  re-buying. Stills are named from their own prompt for exactly this reason.
+- It returns `shots`, already carrying `firstFrameUrl` and `lastFrameUrl`. Paste that straight into
+  `render_sequence`.
+
+Offer the board. Do not force it: a user who just wants one 8-second clip should not be walked
+through a storyboard. But for anything over about three shots, the arithmetic is worth saying out
+loud once, plainly, and letting them choose.
+
 **Never invent a character detail the user did not give.** If it matters to continuity, it goes in
 the config block. If they don't care, say so explicitly instead of filling the gap silently.
 
@@ -113,7 +139,33 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    Show the storyboard to the user and get approval. This call is free and instant; a render is not.
 
-3. **Sequential clips — use `render_sequence`**
+3. **Board it — `board_film`**
+
+   Optional but strongly preferred past three shots. Pass the storyboard's shots (its `action` field
+   is accepted directly), plus `look` set to `configure_film`'s `continuityBlock`, and `characters`.
+
+   ```
+   board_film({
+     shots: [{ prompt, title, durationSeconds }, ...],  // or plan_storyboard's shots as-is
+     look: "<configure_film's continuityBlock>",
+     characters: ["Ada"],
+     aspectRatio: "16:9",
+     maxCostUsd: 0.50,      // optional hard ceiling
+     confirm: false,        // estimate first, always
+   })
+   ```
+
+   Show the stills and the cost. On approval, call again with `confirm: true`. The returned `shots`
+   have both frames filled in and consecutive shots share a boundary frame.
+
+   **What bookending buys you.** A clip pinned only at its start drifts: two unpinned clips of the
+   same scene sit around **0.20 correlation**, which is why a cut between them pops. Pinning both ends
+   changes the deal. Measured on real renders, a shot sent with a first and last frame landed its
+   opening frame at **0.998** against the supplied image and its closing frame at **0.87** (lower only
+   because the last rendered frame carries motion blur). So a cut between shot N's last frame and shot
+   N+1's first frame — the same file — is the same picture, and there is nothing to hide with a fade.
+
+4. **Sequential clips — use `render_sequence`**
 
    **Prefer `render_sequence` for anything longer than one shot.** It renders every shot in order,
    chains each one from the previous shot's final frame automatically, and assembles the film. That
@@ -121,7 +173,7 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    ```
    render_sequence({
-     shots: [{ prompt, durationSeconds, title }, ...],   // 1 to 12
+     shots: [{ prompt, durationSeconds, title, firstFrameUrl, lastFrameUrl }, ...], // 1 to 12
      characters: ["Ada"],                                 // reference images auto-applied
      continuity: "<configure_film's continuityBlock>",    // prepended to every shot
      firstFrameUrl: "<optional anchor for shot one>",
@@ -129,6 +181,12 @@ calls, so a shot without the reference will drift even if the previous shot had 
      assemble: true,
    })
    ```
+
+   **A shot may carry its own `firstFrameUrl` and `lastFrameUrl`.** That is how a boarded film
+   renders: paste `board_film`'s `shots` in unchanged. An explicit frame beats chaining, because the
+   frame on the board is the one the user actually approved; chaining over it would quietly swap in a
+   near-miss. With no per-shot frames anywhere the behaviour is exactly as before — every shot chains
+   from the previous shot's extracted last frame.
 
    **Pass `continuity`.** `configure_film` returns a `continuityBlock` built from the confirmed
    config: style, cast, audio, and the never-show constraints, phrased as one sentence. It is
@@ -177,7 +235,7 @@ calls, so a shot without the reference will drift even if the previous shot had 
    character description, then thread `firstFrameUrl` from `extract_last_frame` yourself. Report
    `costUsd` before starting the next shot.
 
-4. **Assembly**
+5. **Assembly**
    `render_sequence` assembles automatically when `assemble` is true. Call `assemble_film` yourself
    only when stitching existing clips, with `clips` as an array of **objects**, not strings:
    `[{ "url": "<clip path>", "title": "<shot title>" }]`, plus optional `fadeDuration` (default 0.5).
@@ -265,7 +323,10 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 |---|---|---|
 | Reference portraits | `referenceImageUrls` | array of https URL, data URI, or local path |
 | Continuity frame | `firstFrameUrl` | **image only**; a video here returns `invalid_image` |
-| Length | `durationSeconds` | 1–15, default 8 |
+| Bookend closing frame | `lastFrameUrl` | pins the last rendered frame; with `firstFrameUrl` the shot is bookended |
+| Board a film | `board_film` | `shots`, `look`, `characters`, `maxCostUsd`; $0.02 a still, reusable |
+| One still | `generate_still` | `prompt`, `aspectRatio`, `referenceImageUrls`, `characters`; $0.02 |
+| Length | `durationSeconds` | 1–15, default 8. **15s is the real ceiling per shot** (measured: a 15s render billed $1.20 at 480p) |
 | Shape | `aspectRatio` | `16:9`, `9:16`, `1:1` |
 | Model | `model` | default `grok-imagine-video-1.5` |
 | Assembly clips | `clips[].url` | objects with `url`, `title`, `trimStart`, `trimEnd` |
@@ -276,9 +337,23 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Find an old film | `list_films` | free; returns job ids, costs and paths from earlier sessions |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
-parameter. Do not call them.
+parameter. Do not call them. `first_frame` deserves a note: it is silently **ignored** by the API.
+A shot sent with it landed at 0.14 correlation against the supplied image, the same as an unpinned
+render, which means it fails without ever saying so. The first frame is `image` on the wire, which is
+what `firstFrameUrl` sends for you. The last frame is `last_frame`, which works.
 
 ## Continuity chain
+
+**Boarded (preferred for anything past three shots):**
+
+1. `plan_storyboard` → shots with framing and continuity notes.
+2. `board_film` → one still per shot boundary. Approve the pictures.
+3. `render_sequence` with the returned `shots`, which already carry both frames.
+
+Every cut is between two uses of the same file, so the seams are exact by construction rather than
+by hope.
+
+**Manual, one clip at a time:**
 
 1. `plan_storyboard` → shots with framing and continuity notes.
 2. `generate_controlled_clip` for shot 1.
@@ -334,6 +409,15 @@ Every render returns `costUsd`. **Price depends on resolution**, measured on rea
 | `480p` | 848×480 | $0.08 | $0.64 |
 | `720p` | 1280×720 | $0.14 | $1.12 |
 | `1080p` | 1920×1088 | $0.25 | $2.00 |
+
+**A still is $0.02**, measured, and it is the cheapest thing here by an order of magnitude. Board
+first when the look matters: four stills for a three-shot film is eight cents against roughly $3.36
+of 720p footage.
+
+**A single shot runs to 15 seconds.** Verified: a 15-second render came back at 15 seconds and billed
+$1.20 at 480p. The old 16-second ceiling was never the model's limit, it was how the calls were being
+made. Nothing caps a film except patience and budget — 12 shots at 8 seconds is 96 seconds, and two
+continued runs pass three minutes.
 
 The default is `720p`. Leaving resolution unset does **not** mean 480p pricing — the API returns a
 soft 848×480 image for it, so the old "eight cents a second" figure was the cheapest, worst-looking

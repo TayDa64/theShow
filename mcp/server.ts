@@ -10,8 +10,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { resolveVideoCredential } from "./grok-auth.ts";
-import { JOBS_DIR, assembleClips, extractLastFrame, pathToDataUrl, probeDuration } from "./media.ts";
-import { generateGrokClip, type GrokClipResult } from "./grokVideo.ts";
+import { JOBS_DIR, OUTPUT_DIR, assembleClips, extractLastFrame, pathToDataUrl, probeDuration } from "./media.ts";
+import {
+  generateGrokClip,
+  generateGrokStill,
+  type GrokClipResult,
+} from "./grokVideo.ts";
+import { boardFilm, toRenderShots } from "./storyboard.ts";
+import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -36,7 +42,15 @@ const CharacterSchema = z.object({
   ),
 });
 
-/** Characters created in this process, so storyboards can use their real context. */
+/**
+ * Characters, in memory for speed and on disk for survival.
+ *
+ * This used to be memory alone, which meant a character — including the
+ * reference photos the user chose and the wardrobe they described — vanished
+ * when the session ended. On a phone, where the whole flow is "drop a photo
+ * into chat and use it later", that made the feature useless by the time the
+ * later came. The map is now a cache in front of mcp/characters.ts.
+ */
 const characterStore = new Map<string, {
   id: string;
   name: string;
@@ -45,22 +59,93 @@ const characterStore = new Map<string, {
   referenceImageUrls?: string[];
 }>();
 
-function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
+async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key);
-  const entry = {
-    id: existing?.id ?? `char_${Date.now()}_${characterStore.size}`,
-    name: args.name.trim(),
+  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
+
+  // Save first: the record that comes back carries the copied reference paths,
+  // which is what later renders need. Cache what was written, not what was asked
+  // for, so the cache never claims a photo the disk does not have.
+  const saved = await saveCharacter({
+    name: args.name,
     role: args.role ?? existing?.role,
     description: args.description ?? existing?.description,
     referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls,
+  });
+
+  const entry = {
+    id: saved.id,
+    name: saved.name,
+    role: saved.role,
+    description: saved.description,
+    referenceImageUrls: saved.referenceImageUrls,
   };
   characterStore.set(key, entry);
-  return entry;
+  return { entry, folder: saved.folder, warnings: saved.warnings };
 }
 
 function lookupCharacter(name: string) {
-  return characterStore.get(name.trim().toLowerCase());
+  const key = name.trim().toLowerCase();
+  const cached = characterStore.get(key);
+  if (cached) return cached;
+
+  // Lazy fallback so a character made in an earlier session is usable now,
+  // whether or not the startup load ran. Synchronous because plan_storyboard and
+  // mergeCharacterReferences are: one small JSON file on a cache miss is cheaper
+  // than making every caller async.
+  const fromDisk = loadCharacterSync(name);
+  if (!fromDisk) return undefined;
+  characterStore.set(key, {
+    id: fromDisk.id,
+    name: fromDisk.name,
+    role: fromDisk.role,
+    description: fromDisk.description,
+    referenceImageUrls: fromDisk.referenceImageUrls,
+  });
+  return characterStore.get(key);
+}
+
+/** Pull every saved character into the cache so lookups start warm. */
+async function loadCharactersFromDisk() {
+  try {
+    for (const character of await loadAllCharacters()) {
+      characterStore.set(character.name.trim().toLowerCase(), {
+        id: character.id,
+        name: character.name,
+        role: character.role,
+        description: character.description,
+        referenceImageUrls: character.referenceImageUrls,
+      });
+    }
+  } catch (err) {
+    // A missing or unreadable characters directory is a first run, not a reason
+    // to refuse to start. Lookups still fall back to disk one name at a time.
+    console.error("theShow: could not load saved characters:", err);
+  }
+}
+
+/**
+ * Fold registered character portraits into a reference-image list.
+ *
+ * Shared by generate_controlled_clip, generate_still and board_film so all three
+ * resolve a name the same way. Without it the references sit in the store while
+ * the render runs blind, which is exactly how a film drifts off the character
+ * the user supplied. Unknown names are reported back rather than dropped
+ * silently.
+ */
+function mergeCharacterReferences(
+  characters: string[] | undefined,
+  referenceImageUrls: string[] | undefined,
+): { urls: string[]; missing: string[] } {
+  const fromCharacters: string[] = [];
+  const missing: string[] = [];
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) { missing.push(name); continue; }
+    fromCharacters.push(...(known.referenceImageUrls ?? []));
+  }
+  const merged = [...(referenceImageUrls ?? []), ...fromCharacters];
+  return { urls: Array.from(new Set(merged)), missing };
 }
 
 /**
@@ -201,7 +286,7 @@ function planShots(opts: {
 
     if (i > 0) {
       shot.firstFrameFrom = `last frame of shot ${i}`;
-      shot.continuityNotes = `${beat.note} Uses the last frame of shot ${i} as first_frame.`;
+      shot.continuityNotes = `${beat.note} Uses the last frame of shot ${i} as lastFrameUrl.`;
     }
     return shot;
   });
@@ -458,13 +543,35 @@ server.registerTool(
     inputSchema: CharacterSchema,
   },
   async (args) => {
-    const stored = rememberCharacter(args);
+    let stored: Awaited<ReturnType<typeof rememberCharacter>>;
+    try {
+      stored = await rememberCharacter(args);
+    } catch (err) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: err instanceof Error ? err.message : "Could not save the character.",
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+
+    const { entry, folder, warnings } = stored;
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          ...stored,
-          message: "Character created and held in this session's store; plan_storyboard can now use it for continuity."
+          ...entry,
+          storage: folder,
+          referenceImages: entry.referenceImageUrls.length,
+          ...(warnings ? { warnings } : {}),
+          message:
+            `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by ` +
+            "name in any later session without supplying the reference images again. " +
+            "plan_storyboard can now use it for continuity." +
+            (warnings ? " Some reference images could not be kept; see warnings." : ""),
         }, null, 2)
       }]
     };
@@ -540,6 +647,18 @@ function composeShotPrompt(continuity: string | undefined, prompt: string) {
 Shot: ${prompt.trim()}`;
 }
 
+/**
+ * A local path for an image reference, or undefined when it is remote or
+ * already inlined. Used to record where a pinned frame lives on this machine, so
+ * a resume or a repair can point at the same file the board produced.
+ */
+function localImagePath(ref: string | undefined): string | undefined {
+  if (!ref) return undefined;
+  const trimmed = ref.trim();
+  if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return undefined;
+  return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+}
+
 type VideoJob = {
   prompt: string;
   durationSeconds?: number;
@@ -547,6 +666,8 @@ type VideoJob = {
   model?: string;
   referenceImageUrls?: string[];
   firstFrameUrl?: string;
+  /** Pinned final frame. With firstFrameUrl as well, the shot is bookended. */
+  lastFrameUrl?: string;
 };
 
 /** Uniform shape so callers can read optional fields without narrowing gymnastics. */
@@ -579,6 +700,15 @@ server.registerTool(
           "Image to pin as the first frame: public https URL, data URI, or a local path from " +
           "extract_last_frame. This is what carries continuity across a cut.",
         ),
+      lastFrameUrl: z
+        .string()
+        .optional()
+        .describe(
+          "Image to pin as the last rendered frame: public https URL, a data URI, or a local path " +
+          "from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to " +
+          "the next shot lands on identical pixels instead of two near-misses. Use the next shot's " +
+          "firstFrameUrl as this frame and the join is the same picture.",
+        ),
       durationSeconds: z.number().min(1).max(15).default(8),
       aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
       resolution: z.enum(["480p", "720p", "1080p"]).default("720p").describe(
@@ -594,18 +724,8 @@ server.registerTool(
     const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
     const job: VideoJob = { ...rest };
 
-    // Fold registered character portraits into the reference list. Without this
-    // the references sit in the store while the render runs blind, which is
-    // exactly how a film drifts off the character the user supplied.
-    const fromCharacters: string[] = [];
-    const missing: string[] = [];
-    for (const name of characters ?? []) {
-      const known = lookupCharacter(name);
-      if (!known) { missing.push(name); continue; }
-      fromCharacters.push(...(known.referenceImageUrls ?? []));
-    }
-    const merged = [...(rest.referenceImageUrls ?? []), ...fromCharacters];
-    job.referenceImageUrls = merged.length > 0 ? Array.from(new Set(merged)) : undefined;
+    const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
+    job.referenceImageUrls = urls.length > 0 ? urls : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
@@ -763,7 +883,8 @@ server.registerTool(
   "extract_last_frame",
   {
     description:
-      "Extract the last frame of a video as a PNG for use as first_frame on the next shot. " +
+      "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the " +
+      "next shot. " +
       "Returns a local file path plus a data URI, either of which can be passed straight to " +
       "generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
     inputSchema: z.object({
@@ -791,6 +912,95 @@ server.registerTool(
       payload.dataUri = await pathToDataUrl(frame.path);
     }
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+);
+
+/**
+ * Generate one still image. This is the cheap half of the pipeline and the thing
+ * that makes a stills-first workflow possible: at two cents a still, boarding an
+ * eight-shot film is about eighteen cents against roughly nine dollars of 720p
+ * footage, so the pictures can be reviewed before the expensive half runs.
+ */
+server.registerTool(
+  "generate_still",
+  {
+    description:
+      "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per " +
+      "still, against $0.14 a second for video, which is what makes it worth boarding a film as " +
+      "pictures first. Returns the image URL, a local path, and the cost actually billed. Use it " +
+      "for storyboard frames, or call board_film to do a whole film at once. Character references " +
+      "are merged exactly as on a clip, so a portrait registered with create_character keeps the " +
+      "face consistent from the board through to the render.",
+    inputSchema: z.object({
+      prompt: z.string().describe(
+        "What the still shows. Describe the frame, not the motion: subject, framing, light, mood.",
+      ),
+      aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
+        "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the " +
+        "image route rejects it the call falls back automatically and reports which key worked.",
+      ),
+      referenceImageUrls: z.array(z.string()).optional().describe(
+        "Portrait or location references: public https URLs, data URIs, or local paths. Inlined " +
+        "for the API, and shrunk harder as the list grows so the request body stays within limits.",
+      ),
+      characters: z.array(z.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged " +
+        "into referenceImageUrls automatically.",
+      ),
+    }),
+  },
+  async (args) => {
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const result = await generateGrokStill(
+      {
+        prompt: args.prompt,
+        aspectRatio: args.aspectRatio,
+        referenceImageUrls: urls.length > 0 ? urls : undefined,
+      },
+      { outputDir: OUTPUT_DIR },
+    );
+
+    if (!result.localPath) {
+      // Never a fabricated URL: a board built on an invented path is worse than
+      // no board, because the failure only shows up when the video is rendered.
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: result.error ?? "Still generation failed",
+            detail: result.detail,
+            hint: result.hint,
+            costUsd: result.costUsd,
+            referenceImagesUsed: urls.length,
+            unknownCharacters: missing.length > 0 ? missing : undefined,
+          }, null, 2),
+        }],
+      };
+    }
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          imageUrl: result.imageUrl,
+          imagePath: result.localPath,
+          fileUrl: `file://${result.localPath}`,
+          mimeType: result.mimeType,
+          aspectRatio: args.aspectRatio,
+          aspectRatioParam: result.aspectRatioParam,
+          costUsd: result.costUsd,
+          usage: result.usage,
+          billedTo: result.billedTo,
+          auth: result.auth,
+          referenceImagesUsed: urls.length,
+          unknownCharacters: missing.length > 0 ? missing : undefined,
+          message:
+            "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a " +
+            "reference. board_film does a whole film's frames in one call.",
+        }, null, 2),
+      }],
+    };
   }
 );
 
@@ -870,6 +1080,9 @@ async function main() {
   // Load films saved by earlier sessions before taking requests, so a user who
   // comes back tomorrow can still continue or repair what they paid for.
   await loadJobsFromDisk();
+  // Same reason for the cast: a character created last week, with the photos
+  // that make it that character, has to be here for today's film.
+  await loadCharactersFromDisk();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
@@ -930,6 +1143,14 @@ type SequenceJob = {
     localPath?: string;
     /** That shot's extracted last frame: the anchor for whatever comes next. */
     framePath?: string;
+    /**
+     * The last frame this shot was pinned to, when it was bookended. Kept so a
+     * resumed or repaired film renders the same frames it was boarded with
+     * instead of quietly chaining from an extracted frame instead.
+     */
+    lastFrameUrl?: string;
+    /** Local copy of that pinned frame, when it was a file on this machine. */
+    lastFramePath?: string;
     /** The prompt that produced it, so a repair can re-render the same beat. */
     prompt?: string;
     durationSeconds?: number;
@@ -1082,7 +1303,15 @@ function jobPayload(job: SequenceJob) {
 async function runSequenceJob(
   job: SequenceJob,
   args: {
-    shots: Array<{ prompt: string; durationSeconds: number; title?: string }>;
+    shots: Array<{
+      prompt: string;
+      durationSeconds: number;
+      title?: string;
+      /** Explicit opening frame for this shot. Overrides chaining. */
+      firstFrameUrl?: string;
+      /** Pinned closing frame, which makes this shot a bookend. */
+      lastFrameUrl?: string;
+    }>;
     characters?: string[];
     continuity?: string;
     firstFrameUrl?: string;
@@ -1132,13 +1361,19 @@ async function runSequenceJob(
   try {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
+      // Explicit frames beat chaining. A boarded shot already knows both of its
+      // ends; chaining it from the previous render would quietly replace the
+      // frame the user approved with a slightly different picture, and the join
+      // that was supposed to land on identical pixels would drift instead.
+      const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
       const result = await generateGrokClip({
         prompt: composeShotPrompt(args.continuity, shot.prompt),
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio as "16:9" | "9:16" | "1:1",
         resolution: args.resolution,
         model: args.model,
-        firstFrameUrl: previousFrame,
+        firstFrameUrl: shotFirstFrame,
+        lastFrameUrl: shot.lastFrameUrl,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
 
@@ -1152,6 +1387,8 @@ async function runSequenceJob(
         error: result.error,
         localPath: undefined as string | undefined,
         framePath: undefined as string | undefined,
+        lastFrameUrl: shot.lastFrameUrl,
+        lastFramePath: localImagePath(shot.lastFrameUrl),
         prompt: shot.prompt,
         durationSeconds: shot.durationSeconds,
       };
@@ -1238,6 +1475,16 @@ server.registerTool(
         ),
         durationSeconds: z.number().min(1).max(15).default(8),
         title: z.string().optional(),
+        firstFrameUrl: z.string().optional().describe(
+          "Explicit opening frame for this shot: an https URL, a data URI, or a local path such " +
+          "as a still from board_film. Overrides chaining from the previous shot, so a boarded " +
+          "shot renders from the frame the user actually approved.",
+        ),
+        lastFrameUrl: z.string().optional().describe(
+          "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if " +
+          "it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. " +
+          "board_film fills this in for a whole film.",
+        ),
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot.",
@@ -1341,6 +1588,17 @@ server.registerTool(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100,
     ) / 100;
 
+    const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
+    // A boarded film's boundary frame is one picture used twice. Counting how
+    // many joins are pinned is the honest way to say whether the cuts will land
+    // on identical pixels, and it is what makes a board reportable before render.
+    const sharedBoundaries = args.shots.reduce((count, shot, i) => {
+      const next = args.shots[i + 1];
+      return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl
+        ? count + 1
+        : count;
+    }, 0);
+
     if (!args.confirm) {
       return {
         content: [{
@@ -1354,7 +1612,12 @@ server.registerTool(
               aspectRatio: args.aspectRatio,
               resolution: args.resolution,
               fadeSeconds: args.fadeDuration,
-              continuity: "Each shot starts from the previous shot's last frame.",
+              continuity: bookendedShots > 0
+                ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and ` +
+                  "last frames; the rest chain from the previous shot's last frame."
+                : "Each shot starts from the previous shot's last frame.",
+              bookendedShots,
+              sharedBoundaryFrames: sharedBoundaries,
               rendersAsOneJob: true,
               ...(resumeJob ? {
                 continuingJob: resumeJob.id,
@@ -1451,6 +1714,101 @@ server.registerTool(
         ...jobPayload(job),
       }, null, 2) }],
     };
+  }
+);
+
+/**
+ * Board a film: render the stills each shot is pinned to, before any video.
+ *
+ * Chosen over extending plan_storyboard with a `boardStills` flag for two
+ * reasons. plan_storyboard is free and instant and several callers rely on that;
+ * making it spend money when a flag is set turns one tool into two tools with
+ * different failure modes, and a caller that forgets the flag gets a plan with
+ * no frames while one that sets it by accident gets a bill. A separate tool also
+ * gets its own confirm/estimate gate, which is the shape the rest of this server
+ * already uses for spending (render_sequence, retry_shot). It reads a shot list
+ * or a finished plan either way, so nothing is duplicated.
+ *
+ * The flow this enables: configure_film → board_film (pennies) → show the stills
+ * → render_sequence with the returned shots (dollars).
+ */
+server.registerTool(
+  "board_film",
+  {
+    description:
+      "Board a film as stills before rendering it: generate one image per shot boundary, so " +
+      "consecutive shots share a frame and every cut lands on identical pixels. Two cents a still " +
+      "against fourteen a second of video, so an eight-shot board costs about eighteen cents and " +
+      "lets the user approve the look before the expensive half runs. Call without confirm for a " +
+      "cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on " +
+      "disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready " +
+      "to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. " +
+      "Renders no video.",
+    inputSchema: z.object({
+      shots: z.array(z.object({
+        prompt: z.string().optional().describe("What happens in the shot."),
+        action: z.string().optional().describe(
+          "Alias for prompt, so plan_storyboard output pastes in unchanged.",
+        ),
+        title: z.string().optional(),
+        durationSeconds: z.number().min(1).max(15).default(8),
+      })).min(1).max(12).describe(
+        "Shots in order. N shots produce N+1 stills, because the boundary between two shots is " +
+        "one picture shared by both.",
+      ),
+      look: z.string().optional().describe(
+        "Style and continuity wording folded into every still prompt: configure_film's " +
+        "continuityBlock, or the style line from the confirmed config. Without it the stills " +
+        "are boarded in whatever look each prompt implies.",
+      ),
+      aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      characters: z.array(z.string()).optional().describe(
+        "Character names from create_character. Their portraits go on every still, so the face is " +
+        "settled before the first video render.",
+      ),
+      referenceImageUrls: z.array(z.string()).optional().describe(
+        "Extra reference stills for the board: https URLs, data URIs, or local paths.",
+      ),
+      maxCostUsd: z.number().min(0).optional().describe(
+        "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool " +
+        "reports the figure. Still costs are small, so this is mostly a guard against a big board.",
+      ),
+      confirm: z.boolean().default(false).describe(
+        "Must be true to render stills. Call once without it to get the estimate, show it to the " +
+        "user, and call again with true only after they approve.",
+      ),
+    }),
+  },
+  async (args) => {
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+
+    const board = await boardFilm(
+      {
+        shots: args.shots,
+        aspectRatio: args.aspectRatio,
+        look: args.look,
+        maxCostUsd: args.maxCostUsd,
+        confirm: args.confirm,
+      },
+      {
+        outputDir: OUTPUT_DIR,
+        referenceImageUrls: urls.length > 0 ? urls : undefined,
+        // Injected so tests can board a whole film without reaching the network.
+        generateStill: async (job, opts) => generateGrokStill(job, opts),
+      },
+    );
+
+    // A gate that reports what it refused to spend has to say so plainly: the
+    // one thing this tool must never do is spend past the caller's ceiling.
+    const payload = {
+      ...board,
+      ...(missing.length > 0 ? { unknownCharacters: missing } : {}),
+      ...(board.action === "boarded" || board.action === "partial"
+        ? { renderShots: toRenderShots(board) }
+        : {}),
+    };
+
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
 
