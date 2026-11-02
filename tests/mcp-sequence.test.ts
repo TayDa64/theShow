@@ -27,7 +27,7 @@ function codeOnly(source: string) {
 describe('hard cuts', () => {
   it('defaults both render_sequence and assemble_film to a zero fade', () => {
     const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));
-    expect(renderSeq.slice(0, 2500)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
+    expect(renderSeq.slice(0, 5000)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
 
     const assemble = serverSource.slice(serverSource.indexOf('"assemble_film"'));
     expect(assemble.slice(0, 1200)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
@@ -55,7 +55,7 @@ describe('hard cuts', () => {
 describe('continuing a film', () => {
   it('exposes resumeFromJobId on render_sequence', () => {
     const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));
-    expect(renderSeq.slice(0, 3000)).toContain('resumeFromJobId');
+    expect(renderSeq.slice(0, 5000)).toContain('resumeFromJobId');
   });
 
   it('refuses a running job, because continuing it would render the film twice', () => {
@@ -140,7 +140,40 @@ describe('the continuity block', () => {
 
   it('reaches the runner from render_sequence', () => {
     const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));
-    expect(renderSeq.slice(0, 3000)).toContain('continuity: z.string().optional()');
+    expect(renderSeq.slice(0, 5000)).toContain('continuity: z.string().optional()');
     expect(codeOnly(serverSource)).toContain('continuity: args.continuity');
+  });
+});
+
+describe('the music bed', () => {
+  const media = codeOnly(mediaSource);
+
+  it('loops a short track so it covers any film length', () => {
+    // A 30-second cue under a three-minute film is the normal case.
+    expect(media).toContain('-stream_loop');
+  });
+
+  it('trims the bed to the film and fades it out rather than cutting mid-note', () => {
+    expect(media).toContain('atrim=0:${totalDuration.toFixed(3)}');
+    expect(media).toContain('afade=t=out');
+  });
+
+  it('mixes under the clips instead of replacing their audio', () => {
+    expect(media).toContain('amix=inputs=2:duration=first');
+    expect(media).toContain('[aout][bed]');
+  });
+
+  it('keeps the film length authoritative', () => {
+    // duration=first: a long bed must not stretch the picture.
+    expect(media).toContain('duration=first');
+  });
+
+  it('is optional on both assembly tools and resolved before any render', () => {
+    const assemble = serverSource.slice(serverSource.indexOf('"assemble_film"'));
+    expect(assemble.slice(0, 2000)).toContain('audioTrackUrl');
+    const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));
+    expect(renderSeq.slice(0, 5000)).toContain('audioTrackUrl');
+    // In render_sequence the path resolves on the confirm path, ahead of the job.
+    expect(codeOnly(serverSource)).toContain('audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile');
   });
 });

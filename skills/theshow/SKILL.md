@@ -203,6 +203,20 @@ calls, so a shot without the reference will drift even if the previous shot had 
    not rendered, and it cannot remove drift that the generations introduced. Continuity comes from
    the frame chain; the join only decides how the seam is presented.
 
+   **Music and narration.** `render_sequence` and `assemble_film` both take `audioTrackUrl`, which
+   mixes a music bed or voiceover under the whole film. It is looped if shorter than the film,
+   trimmed to its exact length, and faded out at the end, so a 30-second cue works under a
+   three-minute film. It is mixed *under* the clips' own audio rather than replacing it.
+
+   - Ask for the track and have the user attach it in chat, exactly like a reference photo; the
+     attachment path goes in as-is. A public https link works too.
+   - `audioTrackVolume` defaults to `0.25`, which sits under dialogue. Raise it for a music-led
+     piece, lower it under a quiet scene.
+   - Clips already carry their own ambient audio. Check with the user before drowning it: for a
+     dialogue shot the bed should usually be much lower or absent.
+
+   The film's length always wins. A long bed does not stretch the picture.
+
 ## Exact parameter names
 
 These were wrong in earlier versions of this skill and caused silent failures. Use these:
@@ -217,6 +231,7 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Assembly clips | `clips[].url` | objects with `url`, `title`, `trimStart`, `trimEnd` |
 | Join style | `fadeDuration` | `0` = hard cut (default). `0.15`–`0.3` only for a continued camera move |
 | Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
+| Music / narration | `audioTrackUrl` | mixed under the film; `audioTrackVolume` defaults to 0.25 |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
 parameter. Do not call them.

@@ -805,6 +805,15 @@ server.registerTool(
         "changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the " +
         "same framing, where a cut would visibly pop.",
       ),
+      audioTrackUrl: z.string().optional().describe(
+        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, " +
+        "or a local path such as a chat attachment. Looped if shorter than the film, trimmed to " +
+        "its length, and faded out at the end. Mixed under the clips' own audio, never replacing it.",
+      ),
+      audioTrackVolume: z.number().min(0.01).max(4).default(0.25).describe(
+        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video.",
+      ),
+      audioTrackFadeOutSeconds: z.number().min(0).max(30).default(1.5),
     }),
   },
   async (args) => {
@@ -814,7 +823,13 @@ server.registerTool(
       localFiles.push({ file, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
     }
 
-    const result = await assembleClips({ clips: localFiles, fadeDuration: args.fadeDuration });
+    const result = await assembleClips({
+      clips: localFiles,
+      fadeDuration: args.fadeDuration,
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+      audioTrackVolume: args.audioTrackVolume,
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+    });
     const durationSeconds = await probeDuration(result.path);
     const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
     const payload = {
@@ -827,6 +842,11 @@ server.registerTool(
       crossFades: result.mode === "xfade",
       mode: result.mode,
       fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : undefined,
+      audioBed: result.audioBed ? {
+        source: args.audioTrackUrl,
+        volume: args.audioTrackVolume,
+        note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio.",
+      } : undefined,
       message:
         result.mode === "xfade"
           ? "Film assembled with cross-fades."
@@ -971,6 +991,9 @@ async function runSequenceJob(
     model: string;
     assemble: boolean;
     fadeDuration: number;
+    audioTrackFile?: string;
+    audioTrackVolume?: number;
+    audioTrackFadeOutSeconds?: number;
     timeoutSecondsPerShot: number;
     /**
      * Shots already rendered by an earlier job, in order, kept on the front of
@@ -1053,7 +1076,13 @@ async function runSequenceJob(
         .map((shot) => shot.localPath)
         .filter((p): p is string => Boolean(p))
         .map((file) => ({ file: file as string, trimStart: undefined, trimEnd: undefined }));
-      const assembled = await assembleClips({ clips: files, fadeDuration: args.fadeDuration });
+      const assembled = await assembleClips({
+        clips: files,
+        fadeDuration: args.fadeDuration,
+        audioTrackFile: args.audioTrackFile,
+        audioTrackVolume: args.audioTrackVolume,
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      });
       job.filmPath = assembled.path;
       job.fileUrl = `file://${assembled.path}`;
       job.filmDurationSeconds = await probeDuration(assembled.path);
@@ -1106,6 +1135,12 @@ server.registerTool(
       ),
       model: z.string().default("grok-imagine-video-1.5"),
       assemble: z.boolean().default(true).describe("Also assemble the clips into one film."),
+      audioTrackUrl: z.string().optional().describe(
+        "Optional music, narration or ambience for the finished film, mixed under the clips' own " +
+        "audio. https URL, file:// URL, or a local path such as a chat attachment.",
+      ),
+      audioTrackVolume: z.number().min(0.01).max(4).default(0.25),
+      audioTrackFadeOutSeconds: z.number().min(0).max(30).default(1.5),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever " +
         "the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when " +
@@ -1254,6 +1289,10 @@ server.registerTool(
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,
+      // Resolved once, up front, so a bad path fails before any shot renders.
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+      audioTrackVolume: args.audioTrackVolume,
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : undefined,
       resumeFramePath,
