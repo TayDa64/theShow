@@ -281,11 +281,23 @@ export async function boardFilm(
       continue;
     }
 
+    // Each still is generated from the one before it, as well as from any
+    // character portraits. Without this the board renders every frame in
+    // isolation and the cast drifts across a boundary: a measured three-shot
+    // board put an old bearded lamplighter in frame 0 and a different man in a
+    // flat cap in frame 1. The prompt cannot hold a face; only a reference can.
+    // The board chains for the same reason the film does.
+    const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : undefined;
+    const refs = [
+      ...(deps.referenceImageUrls ?? []),
+      ...(previousFrame ? [previousFrame] : []),
+    ];
+
     const result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
-        referenceImageUrls: deps.referenceImageUrls,
+        referenceImageUrls: refs.length > 0 ? refs : undefined,
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem },
     );

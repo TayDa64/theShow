@@ -282,3 +282,46 @@ describe('the boarded film cuts on shared frames', () => {
     expect(board.shots[0].lastFrameUrl).toBe(board.shots[1].firstFrameUrl);
   });
 });
+
+describe('the board holds the cast', () => {
+  it('seeds each still with the frame before it, so a face cannot change across a boundary', async () => {
+    const generateStill = fakeStill();
+    const board = await boardFilm(
+      { shots: SHOTS, confirm: true },
+      { generateStill, outputDir: dir, referenceImageUrls: ['/portraits/lamplighter.jpg'] },
+    );
+
+    expect(board.action).toBe('boarded');
+    const calls = generateStill.mock.calls as unknown as [
+      { referenceImageUrls?: string[] },
+      { outputDir: string; filename?: string },
+    ][];
+    expect(calls).toHaveLength(SHOTS.length + 1);
+
+    // Frame 0 has nothing before it, so only the portrait seeds it.
+    expect(calls[0][0].referenceImageUrls).toEqual(['/portraits/lamplighter.jpg']);
+
+    // Every later frame carries the portrait AND the frame it follows. This is
+    // the fix for a measured failure: an unchained three-shot board opened on an
+    // old bearded lamplighter and cut to a different man in a flat cap.
+    for (let i = 1; i < calls.length; i += 1) {
+      const refs = calls[i][0].referenceImageUrls ?? [];
+      expect(refs[0]).toBe('/portraits/lamplighter.jpg');
+      expect(refs).toHaveLength(2);
+      expect(refs[1]).toBe(board.frames[i - 1].path);
+    }
+  });
+
+  it('still chains when no portraits were supplied', async () => {
+    const generateStill = fakeStill();
+    const board = await boardFilm(
+      { shots: SHOTS, confirm: true },
+      { generateStill, outputDir: dir },
+    );
+    const calls = generateStill.mock.calls as unknown as [{ referenceImageUrls?: string[] }][];
+
+    // The opening frame is unseeded, which is correct: there is nothing yet.
+    expect(calls[0][0].referenceImageUrls).toBeUndefined();
+    expect(calls[1][0].referenceImageUrls).toEqual([board.frames[0].path]);
+  });
+});

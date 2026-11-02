@@ -43182,11 +43182,16 @@ async function boardFilm(input2, deps) {
       });
       continue;
     }
+    const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : void 0;
+    const refs = [
+      ...deps.referenceImageUrls ?? [],
+      ...previousFrame ? [previousFrame] : []
+    ];
     const result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
-        referenceImageUrls: deps.referenceImageUrls
+        referenceImageUrls: refs.length > 0 ? refs : void 0
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem }
     );
