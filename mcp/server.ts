@@ -1476,14 +1476,16 @@ async function runSequenceJob(
       //
       // A render with `last_frame` pinned fails intermittently with "Video
       // generation failed due to an internal error. Please try again." - and
-      // means it: measured on one shot's frames, first-frame-only completed 4 of
-      // 4, last-frame-only 2 of 4, and the bookend both at once 1 of 4. It is
-      // the closing frame the proxy is unhappy about, not our picture: the same
-      // request succeeds on a later attempt.
+      // it means it. Measured on one shot's frames in one bad window:
+      // first-frame-only completed 4 of 4, last-frame-only 2 of 4, and the
+      // bookend both at once 1 of 4. An hour later the same three shapes each
+      // completed first time, so this is a bad window on the proxy rather than
+      // a broken request: the rate is not a fixed property of the API and
+      // should never be quoted as one.
       //
-      // A failed render is not billed, so retrying costs nothing but time. At
-      // that failure rate one retry still leaves roughly one shot in six
-      // stopping a film, which is why there are three.
+      // A failed render is not billed, so retrying costs nothing but time. In
+      // that bad window three retries took one shot of four from a stopped film
+      // to a hard cut, and every shot rendered in the good windows needed none.
       //
       // If it still will not take the closing frame, the shot renders from its
       // first frame alone and says so. That trades a chained join for a hard cut
