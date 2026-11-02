@@ -218,6 +218,28 @@ function planShots(opts: {
  * Falls back to a text description of the same fields when the client has no
  * elicitation capability, so a caller is never worse off than before.
  */
+/**
+ * Turn the form answers into the sentence every shot prompt carries.
+ *
+ * Only fields the user actually filled in go in. A blank field stays blank: the
+ * whole point of the form is that an unanswered question means "I don't care",
+ * not "make something up".
+ */
+function buildContinuityBlock(v: Record<string, unknown>) {
+  const parts: string[] = [];
+  const style = String(v.style ?? "").trim();
+  const characters = String(v.characters ?? "").trim();
+  const audio = String(v.audio ?? "").trim();
+  const never = String(v.neverShow ?? "").trim();
+
+  parts.push(`Maintain exactly across every shot: ${style ? `${style} look` : "the same look"}.`);
+  if (characters) parts.push(`Cast, unchanged in every shot: ${characters}.`);
+  if (audio) parts.push(`Audio: ${audio.toLowerCase()}. No music unless asked for.`);
+  if (never) parts.push(`Never show: ${never}.`);
+  parts.push("Keep the same light source, palette and set dressing as the previous shot.");
+  return parts.join(" ");
+}
+
 const FILM_FORM_SCHEMA = {
   type: "object" as const,
   properties: {
@@ -407,10 +429,12 @@ server.registerTool(
               `480p runs near $0.08/s and 1080p near $0.25/s.`,
             isEstimate: true,
           },
+          continuityBlock: buildContinuityBlock(v),
           next:
             "Show this back for a yes, then call plan_storyboard, and create_character with " +
-            "referenceImageUrls if a reference image was given. Never invent a character detail " +
-            "the user left blank.",
+            "referenceImageUrls if a reference image was given. Pass continuityBlock as " +
+            "render_sequence's `continuity` so every shot carries the same set, wardrobe and " +
+            "constraints. Never invent a character detail the user left blank.",
         }, null, 2),
       }],
     };
@@ -489,6 +513,22 @@ server.registerTool(
     };
   }
 );
+
+/**
+ * Build the prompt actually sent for a shot.
+ *
+ * The renderer has no memory between calls, so anything that has to stay the
+ * same across the film has to be in every single prompt. Relying on the model
+ * to copy wardrobe and set details forward is how half a film ends up with the
+ * wrong coat. `continuity` is written once and prepended here.
+ */
+function composeShotPrompt(continuity: string | undefined, prompt: string) {
+  const anchor = continuity?.trim();
+  if (!anchor) return prompt;
+  return `${anchor}
+
+Shot: ${prompt.trim()}`;
+}
 
 type VideoJob = {
   prompt: string;
@@ -750,8 +790,9 @@ server.registerTool(
     description:
       "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate " +
       "and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, " +
-      "or local paths from earlier tool calls. Joins are hard cuts by default: measured on real " +
-      "chained clips, a cross-fade double-exposes drifting textures and reads as the set melting.",
+      "or local paths from earlier tool calls. Joins are hard cuts by default: on real chained " +
+      "clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short " +
+      "fade only when two shots continue one camera move with the same framing.",
     inputSchema: z.object({
       clips: z.array(z.object({
         url: z.string(),
@@ -760,7 +801,9 @@ server.registerTool(
         trimEnd: z.number().min(0).optional(),
       })).min(1),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 is a hard cut, which is the default for a reason.",
+        "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot " +
+        "changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the " +
+        "same framing, where a cut would visibly pop.",
       ),
     }),
   },
@@ -921,6 +964,7 @@ async function runSequenceJob(
   args: {
     shots: Array<{ prompt: string; durationSeconds: number; title?: string }>;
     characters?: string[];
+    continuity?: string;
     firstFrameUrl?: string;
     aspectRatio: string;
     resolution: string;
@@ -959,7 +1003,7 @@ async function runSequenceJob(
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
       const result = await generateGrokClip({
-        prompt: shot.prompt,
+        prompt: composeShotPrompt(args.continuity, shot.prompt),
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio as "16:9" | "9:16" | "1:1",
         resolution: args.resolution,
@@ -1047,6 +1091,12 @@ server.registerTool(
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot.",
       ),
+      continuity: z.string().optional().describe(
+        "Everything that must stay identical across the film, written once: set, wardrobe, light " +
+        "source, palette, and the negative constraints. It is prepended to every shot prompt, so " +
+        "you never have to repeat it and the model cannot forget it. configure_film returns a " +
+        "ready-made block for this.",
+      ),
       firstFrameUrl: z.string().optional().describe(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
       ),
@@ -1057,10 +1107,10 @@ server.registerTool(
       model: z.string().default("grok-imagine-video-1.5"),
       assemble: z.boolean().default(true).describe("Also assemble the clips into one film."),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 (the default) is a hard cut. Measured on real " +
-        "chained clips, a dissolve ghosts the cobblestones and sharpens-then-blurs at the seam, " +
-        "which reads as the set melting; a cut reads as a cut. Only raise this for a montage " +
-        "where a visible dissolve is the point.",
+        "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever " +
+        "the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when " +
+        "consecutive shots continue one camera move with the same framing, where a cut would pop. " +
+        "A dissolve between drifted textures double-exposes and softens the image for its length.",
       ),
       resumeFromJobId: z.string().optional().describe(
         "Continue an earlier render_sequence job instead of starting a new film. Shots it " +
@@ -1197,6 +1247,7 @@ server.registerTool(
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
+      continuity: args.continuity,
       firstFrameUrl: args.firstFrameUrl,
       aspectRatio: args.aspectRatio,
       resolution: args.resolution,

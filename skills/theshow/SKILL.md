@@ -123,11 +123,18 @@ calls, so a shot without the reference will drift even if the previous shot had 
    render_sequence({
      shots: [{ prompt, durationSeconds, title }, ...],   // 1 to 12
      characters: ["Ada"],                                 // reference images auto-applied
+     continuity: "<configure_film's continuityBlock>",    // prepended to every shot
      firstFrameUrl: "<optional anchor for shot one>",
      aspectRatio: "16:9",
      assemble: true,
    })
    ```
+
+   **Pass `continuity`.** `configure_film` returns a `continuityBlock` built from the confirmed
+   config: style, cast, audio, and the never-show constraints, phrased as one sentence. It is
+   prepended to every shot prompt inside `render_sequence`, so set, wardrobe and light survive the
+   whole film without you repeating them in twelve prompts and without the model forgetting one.
+   The per-shot `prompt` then only has to say what happens and how it is framed.
 
    Two-step, always:
 
@@ -171,15 +178,30 @@ calls, so a shot without the reference will drift even if the previous shot had 
    only when stitching existing clips, with `clips` as an array of **objects**, not strings:
    `[{ "url": "<clip path>", "title": "<shot title>" }]`, plus optional `fadeDuration` (default 0.5).
 
-   **Joins are hard cuts by default, and that is deliberate.** Chained shots drift slightly in fine
-   texture, so a cross-fade blends two different cobblestone patterns through each other: reviewed
-   frame by frame, the ground visibly ghosts and sharpness dips for the length of the fade, which
-   reads as the set melting. A cut keeps every texture sharp and reads as a cut. Leave `fadeDuration`
-   at `0` unless the user explicitly wants a dissolve as a stylistic choice.
+   **Joins default to hard cuts, and the real answer is to plan cuts, not to hide them.**
+
+   Both join styles were reviewed frame by frame on three chained clips of the same scene, assembled
+   both ways from identical footage. A cross-fade ghosts: the incoming and outgoing cobblestones do
+   not align, so they double-expose and sharpness dips for the whole length of the fade. A hard cut
+   keeps every texture sharp but "pops" where the texture drift is visible. The reviewer called
+   neither acceptable and named the real cause: the generations drift in fine texture, so any join
+   between near-identical framings shows it.
+
+   So:
+   - **Change the framing between shots.** A cut from a wide to a close-up, or a new angle, reads as
+     an edit and the drift is invisible. A cut between two shots of the same subject from the same
+     angle, in the same camera move, reads as a jump cut no matter how you join it. This is a
+     planning rule, not an assembly setting, and it is why the storyboard varies `shotType` and
+     `cameraMove` per shot. Do not write two consecutive prompts that only differ in texture.
+   - **Leave `fadeDuration` at `0`** when the shot changes framing. Sharp, and the edit reads.
+   - **Use a short dissolve (`0.15` to `0.3`) only** when two consecutive shots genuinely continue one
+     camera move with the same framing, where a cut would pop. Accept that the fade will soften the
+     image briefly; that trade is usually better than a visible jump, and it is the user's call.
 
    **What assembly does and does not do.** It normalises mismatched sizes, frame rates and audio, so
    clips that came back at different dimensions still join cleanly. It cannot invent motion that was
-   not rendered. Continuity comes from the frame chain, not from the join.
+   not rendered, and it cannot remove drift that the generations introduced. Continuity comes from
+   the frame chain; the join only decides how the seam is presented.
 
 ## Exact parameter names
 
@@ -193,7 +215,7 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Shape | `aspectRatio` | `16:9`, `9:16`, `1:1` |
 | Model | `model` | default `grok-imagine-video-1.5` |
 | Assembly clips | `clips[].url` | objects with `url`, `title`, `trimStart`, `trimEnd` |
-| Join style | `fadeDuration` | `0` = hard cut (default). Only raise it for a deliberate dissolve |
+| Join style | `fadeDuration` | `0` = hard cut (default). `0.15`–`0.3` only for a continued camera move |
 | Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`

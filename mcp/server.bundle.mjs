@@ -43050,6 +43050,19 @@ function planShots(opts) {
     return shot;
   });
 }
+function buildContinuityBlock(v) {
+  const parts = [];
+  const style = String(v.style ?? "").trim();
+  const characters = String(v.characters ?? "").trim();
+  const audio = String(v.audio ?? "").trim();
+  const never2 = String(v.neverShow ?? "").trim();
+  parts.push(`Maintain exactly across every shot: ${style ? `${style} look` : "the same look"}.`);
+  if (characters) parts.push(`Cast, unchanged in every shot: ${characters}.`);
+  if (audio) parts.push(`Audio: ${audio.toLowerCase()}. No music unless asked for.`);
+  if (never2) parts.push(`Never show: ${never2}.`);
+  parts.push("Keep the same light source, palette and set dressing as the previous shot.");
+  return parts.join(" ");
+}
 var FILM_FORM_SCHEMA = {
   type: "object",
   properties: {
@@ -43212,7 +43225,8 @@ server.registerTool(
             basis: `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. 480p runs near $0.08/s and 1080p near $0.25/s.`,
             isEstimate: true
           },
-          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Never invent a character detail the user left blank."
+          continuityBlock: buildContinuityBlock(v),
+          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints. Never invent a character detail the user left blank."
         }, null, 2)
       }]
     };
@@ -43284,6 +43298,13 @@ server.registerTool(
     };
   }
 );
+function composeShotPrompt(continuity, prompt) {
+  const anchor2 = continuity?.trim();
+  if (!anchor2) return prompt;
+  return `${anchor2}
+
+Shot: ${prompt.trim()}`;
+}
 var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 server.registerTool(
   "generate_controlled_clip",
@@ -43479,7 +43500,7 @@ server.registerTool(
 server.registerTool(
   "assemble_film",
   {
-    description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: measured on real chained clips, a cross-fade double-exposes drifting textures and reads as the set melting.",
+    description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
     inputSchema: external_exports.object({
       clips: external_exports.array(external_exports.object({
         url: external_exports.string(),
@@ -43488,7 +43509,7 @@ server.registerTool(
         trimEnd: external_exports.number().min(0).optional()
       })).min(1),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 is a hard cut, which is the default for a reason."
+        "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
       )
     })
   },
@@ -43584,7 +43605,7 @@ async function runSequenceJob(job, args) {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
       const result = await generateGrokClip({
-        prompt: shot.prompt,
+        prompt: composeShotPrompt(args.continuity, shot.prompt),
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio,
         resolution: args.resolution,
@@ -43656,6 +43677,9 @@ server.registerTool(
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot."
       ),
+      continuity: external_exports.string().optional().describe(
+        "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this."
+      ),
       firstFrameUrl: external_exports.string().optional().describe(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
       ),
@@ -43666,7 +43690,7 @@ server.registerTool(
       model: external_exports.string().default("grok-imagine-video-1.5"),
       assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 (the default) is a hard cut. Measured on real chained clips, a dissolve ghosts the cobblestones and sharpens-then-blurs at the seam, which reads as the set melting; a cut reads as a cut. Only raise this for a montage where a visible dissolve is the point."
+        "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
       ),
       resumeFromJobId: external_exports.string().optional().describe(
         "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
@@ -43778,6 +43802,7 @@ server.registerTool(
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
+      continuity: args.continuity,
       firstFrameUrl: args.firstFrameUrl,
       aspectRatio: args.aspectRatio,
       resolution: args.resolution,
