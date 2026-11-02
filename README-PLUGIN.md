@@ -6,7 +6,7 @@ This turns theShow (StoryForge) into a Grok Build plugin and MCP server for cont
 
 | Path | What it is |
 |---|---|
-| `plugin.json` | Grok Build plugin manifest |
+| `.grok-plugin/plugin.json` | Grok Build plugin manifest — the path the marketplace index reads |
 | `.mcp.json` | MCP server declaration |
 | `mcp/launch.mjs` | Launcher. Runs the pre-bundled server from its own directory |
 | `mcp/server.bundle.mjs` | The server, bundled so startup installs nothing |
@@ -116,6 +116,10 @@ The bundle is committed on purpose. After changing anything under `mcp/`, rebuil
 
 ## Where this goes next
 
-Still open: a catalog entry in [xai-org/plugin-marketplace](https://github.com/xai-org/plugin-marketplace) pinned to a SHA, and a public write-up beyond these docs.
+Still open: a public write-up beyond these docs.
 
-See the [main README](README.md) for running the full StoryForge Studio UI.
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+See the [main README](README.md) for the proof film, the network and file access list, and running the full StoryForge Studio UI.

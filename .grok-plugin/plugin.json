@@ -1,0 +1,21 @@
+{
+  "name": "theshow",
+  "version": "0.1.0",
+  "description": "Continuity-first AI film generation. Thirteen MCP tools plan a cast, board a film as stills before you pay for footage, render multi-shot sequences that meet on identical frames, and assemble an MP4.",
+  "author": {
+    "name": "TayDa64"
+  },
+  "homepage": "https://github.com/TayDa64/theShow",
+  "repository": "https://github.com/TayDa64/theShow",
+  "license": "MIT",
+  "keywords": [
+    "theshow",
+    "the show plugin",
+    "storyforge",
+    "storyforge studio",
+    "continuity film",
+    "ai film pipeline"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

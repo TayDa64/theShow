@@ -184,7 +184,26 @@ An unset MCP environment variable can arrive as a literal `${XAI_API_KEY}` strin
 
 ---
 
+## Network, files and credentials
+
+Everything theShow touches, so you can check it rather than trust it:
+
+| What | Where |
+|---|---|
+| Video and image generation | `https://cli-chat-proxy.grok.com` on a Grok subscription, `https://api.x.ai` with `XAI_API_KEY` |
+| Subscription credential | Reads `~/.grok/auth.json`, written by `grok login`. Read-only |
+| Your films | Writes `~/.theshow/jobs` and `~/.theshow/media` |
+| Your cast | Writes `~/.theshow/characters`, with your reference photos copied in |
+| FFmpeg | Runs the local `ffmpeg` and `ffprobe` on your `PATH` |
+
+That is the whole list. No telemetry, no analytics, no third-party services, and nothing is sent anywhere you did not ask a film about. Reference photos you attach are uploaded to the generation endpoint as part of the request that uses them, and are not sent anywhere else.
+
+The MCP server ships as `mcp/server.bundle.mjs`, a committed esbuild bundle, because an install must never run `npm install`. It is **not minified and has no postinstall step** — `mcp/server.ts` and every module it imports are in this repo, and `npm run build:mcp` regenerates the bundle from them.
+
+---
+
 ## Limits and known edges
+
 
 - **`firstFrameUrl` must be an image.** A clip there returns `invalid_image`.
 - **`first_frame` is silently ignored** by the underlying API — a shot sent with it landed at 0.14 correlation against the supplied image, same as an unpinned render. It fails without saying so. theShow sends `image` on the wire, which is what `firstFrameUrl` does for you. `last_frame` works.
@@ -245,5 +264,7 @@ tests/          vitest
 The interesting problems left are continuity problems: holding a location, a light source, or a prop across a cut, and doing it without charging for the same shot twice.
 
 If you build something with it, that is where the tool earns its keep.
+
+MIT licensed, so you can fork it, ship it inside something else, or sell what you make with it. See [LICENSE](LICENSE).
 
 Built by [@TayDa64](https://github.com/TayDa64).
