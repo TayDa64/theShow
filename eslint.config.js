@@ -2,7 +2,7 @@ import tsParser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'uploads/**', 'coverage/**'],
+    ignores: ['dist/**', 'node_modules/**', 'uploads/**', 'coverage/**', 'mcp/server.bundle.mjs'],
   },
   {
     files: ['**/*.{ts,tsx}'],

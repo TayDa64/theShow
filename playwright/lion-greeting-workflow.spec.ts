@@ -75,7 +75,6 @@ async function pollOperation(request: APIRequestContext, csrfToken: string, oper
       return body;
     }
 
-    // eslint-disable-next-line no-await-in-loop
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 

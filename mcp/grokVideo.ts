@@ -67,6 +67,12 @@ export type GrokClipResult = {
   progress?: number;
   /** Exact amount billed for this request, converted from usage.cost_in_usd_ticks. */
   costUsd?: number;
+  /**
+   * The render failed in a way that succeeded on the next identical attempt, so
+   * the caller may re-chain rather than give up on the film. Retrying is left to
+   * the caller because it is the one holding the film's budget and shot chain.
+   */
+  retryable?: boolean;
 };
 
 /** xAI reports cost in ticks where 1 USD = 10^10 ticks. */
