@@ -34,6 +34,9 @@ back as a config block for confirmation. Offer defaults so they can just say "ye
 6. **Audio** — dialogue, diegetic sound only, or silent.
 7. **Hard constraints** — what must never appear: no on-screen text, no subtitles, no logos, no
    extra people, no modern objects in a period piece.
+8. **Reference images** — ask directly: "Do you have a photo of the character, or a still of the
+   location, I should match?" A real reference beats any amount of description and is the single
+   biggest drop in unwanted invention. Ask once, take no for an answer.
 
 Then render the confirmed block back to them like this before spending anything:
 
@@ -53,11 +56,33 @@ the block and ask for a single yes instead of re-asking everything.
 **Never invent a character detail the user did not give.** If it matters to continuity, it goes in
 the config block. If they don't care, say so explicitly instead of filling the gap silently.
 
+## Reference images
+
+The pipeline accepts three forms in `referenceImageUrls` and `firstFrameUrl`, and all three work:
+
+- a **local file path** such as `/workspace/theshow/f1.png`, including a chat attachment or a frame
+  from `extract_last_frame`
+- a **public https URL**
+- a **data URI** (`data:image/png;base64,...`)
+
+Local files are read and inlined automatically, and anything over about 220 KB is re-encoded to a
+smaller JPEG first, so a full-size phone photo is fine — do not downscale or convert by hand.
+
+**Register the portrait once, then reference it by name.** Call `create_character` with
+`referenceImageUrls`, and from then on pass `characters: ["Ada"]` to `generate_controlled_clip`.
+The tool merges that character's images into every render, so the face stays consistent across
+shots without you copying paths around. Passing an unknown name is reported back in
+`unknownCharacters` rather than failing silently — check that field.
+
+Put reference images on **every** shot, not just the first. The model does not carry memory between
+calls, so a shot without the reference will drift even if the previous shot had it.
+
 ## Core Workflow
 
 1. **Characters**
    Call `create_character` with `name`, `role`, `description`, and `referenceImageUrls` if the user
-   supplied portraits. Store the returned character ID.
+   supplied portraits or a look you both settled on. Store the returned character ID. Ask for a
+   reference photo here if you have not already — it is worth one question.
 
 2. **Storyboard**
    Call `plan_storyboard` with `sceneDescription`, `characters` (the names from step 1),
