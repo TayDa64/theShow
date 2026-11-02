@@ -27,7 +27,7 @@ The server ships pre-bundled, so there is no `npm install` step and startup need
 grok mcp doctor
 ```
 
-You should see `theshow` healthy with seven tools discovered.
+You should see `theshow` healthy with nine tools discovered.
 
 ## Use
 
@@ -40,6 +40,8 @@ The bundled skill sequences the tools for you:
 | Tool | Role |
 |---|---|
 | `configure_film` | Collects the whole brief as one interactive form card, with a cost estimate |
+| `render_sequence` | Renders a whole shot sequence with automatic frame-to-frame continuity, then assembles it |
+| `check_sequence` | Reports progress and real cost on a running sequence (free) |
 | `create_character` | Stores a named character with reference images |
 | `plan_storyboard` | Turns a scene into numbered shots |
 | `generate_controlled_clip` | Renders one shot, optionally seeded by the previous clip's last frame |

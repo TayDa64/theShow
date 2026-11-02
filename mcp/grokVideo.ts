@@ -106,19 +106,40 @@ const INLINE_IMAGE_BUDGET_BYTES = 220 * 1024;
  */
 async function shrinkLocalImage(file: string) {
   const { ffmpeg } = await resolveTools();
-  const target = join(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-  await exec(ffmpeg, [
-    "-y", "-hide_banner", "-loglevel", "error",
-    "-i", file,
-    "-vf", "scale='min(1280,iw)':-2",
-    "-frames:v", "1",
-    "-q:v", "4",
-    target,
-  ], { maxBuffer: 16 * 1024 * 1024 });
 
-  const shrunk = await readFile(target);
-  await rm(target, { force: true });
-  return `data:image/jpeg;base64,${shrunk.toString("base64")}`;
+  // Step down until the base64 payload actually fits the budget. A fixed scale
+  // and quality was not enough: a 12-megapixel phone photo still came out around
+  // 1.5 MB of base64 and the proxy rejected the request for its length. Each
+  // step reduces both dimensions and quality, and gives up at a small image
+  // rather than looping forever on something pathological.
+  const attempts = [
+    { width: 1280, quality: 4 },
+    { width: 1024, quality: 6 },
+    { width: 768, quality: 8 },
+    { width: 512, quality: 10 },
+  ];
+
+  let lastUrl = "";
+  for (const attempt of attempts) {
+    const target = join(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+    await exec(ffmpeg, [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-i", file,
+      "-vf", `scale='min(${attempt.width},iw)':-2`,
+      "-frames:v", "1",
+      "-q:v", String(attempt.quality),
+      target,
+    ], { maxBuffer: 16 * 1024 * 1024 });
+
+    const shrunk = await readFile(target);
+    await rm(target, { force: true });
+    lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
+
+    // Base64 is 4/3 of the byte size; keep the encoded payload under the budget.
+    if (shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
+  }
+
+  return lastUrl;
 }
 
 /**
@@ -138,7 +159,16 @@ export async function toApiImageRef(ref: string): Promise<string> {
     return shrinkLocalImage(path);
   }
 
-  const ext = path.toLowerCase().match(/\.(png|jpe?g|webp)$/)?.[1] ?? "png";
+  const ext = path.toLowerCase().match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
+
+  // Anything the API will not read as-is is transcoded rather than mislabelled.
+  // A phone photo is often HEIC, and the old fallback here called every unknown
+  // extension "image/png", which sends HEIC bytes under a PNG label: the request
+  // fails or, worse, is accepted and the model sees garbage.
+  if (!ext || ext === "heic" || ext === "heif") {
+    return shrinkLocalImage(path);
+  }
+
   const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }

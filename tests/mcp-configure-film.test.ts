@@ -90,3 +90,71 @@ describe('skill and docs', () => {
     expect(skill.toLowerCase()).toContain('no file');
   });
 });
+
+describe('render_sequence and check_sequence', () => {
+  const src = serverSource;
+
+  it('refuses to spend anything without confirm', () => {
+    // The estimate-only path must return before any render call.
+    const gate = src.slice(
+      src.indexOf('if (!args.confirm)'),
+      src.indexOf('const job: SequenceJob'),
+    );
+    expect(gate).toContain('estimate-only');
+    expect(gate).not.toContain('generateGrokClip');
+    expect(gate).not.toContain('runSequenceJob');
+  });
+
+  it('runs the chain in the background instead of blocking the request', () => {
+    // Awaiting a multi-shot chain outlived the client timeout and lost the film.
+    expect(src).toContain('void runSequenceJob(job');
+    expect(src).not.toContain('await runSequenceJob(job');
+  });
+
+  it('chains each shot from the previous frame inside the job', () => {
+    const jobFn = src.slice(
+      src.indexOf('async function runSequenceJob'),
+      src.indexOf('server.registerTool(\n  "render_sequence"'),
+    );
+    expect(jobFn).toContain('firstFrameUrl: previousFrame');
+    expect(jobFn).toContain('previousFrame = frame.path');
+  });
+
+  it('stops the chain on a failed shot rather than rendering the rest', () => {
+    const jobFn = src.slice(
+      src.indexOf('async function runSequenceJob'),
+      src.indexOf('server.registerTool(\n  "render_sequence"'),
+    );
+    expect(jobFn).toContain('job.state = "stopped"');
+  });
+
+  it('ships a free polling tool', () => {
+    // Bound to the handler: an unbounded slice would run into the next tool.
+    const start = src.indexOf('"check_sequence"');
+    const poll = src.slice(start, src.indexOf('sequenceJobs.get(args.jobId)', start) + 400);
+    expect(poll).toContain('renders nothing and spends');
+    expect(poll).not.toContain('generateGrokClip');
+  });
+
+  it('lets the caller supply their own story beats', () => {
+    expect(src).toContain('beats: args.beats');
+    expect(src).toContain('A supplied beat list wins');
+  });
+});
+
+describe('phone photos', () => {
+  const video = readFileSync(
+    path.join(__dirname, '..', 'mcp', 'grokVideo.ts'),
+    'utf8',
+  );
+
+  it('transcodes heic rather than labelling it png', () => {
+    expect(video).toContain('heic');
+    expect(video).toContain('heif');
+  });
+
+  it('steps down until the payload fits the budget', () => {
+    expect(video).toContain('for (const attempt of attempts)');
+    expect(video).toContain('INLINE_IMAGE_BUDGET_BYTES) return lastUrl');
+  });
+});

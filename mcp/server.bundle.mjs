@@ -42718,25 +42718,36 @@ function describeHttpFailure(status, body) {
 var INLINE_IMAGE_BUDGET_BYTES = 220 * 1024;
 async function shrinkLocalImage(file2) {
   const { ffmpeg } = await resolveTools();
-  const target = join3(tmpdir2(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-  await exec2(ffmpeg, [
-    "-y",
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-i",
-    file2,
-    "-vf",
-    "scale='min(1280,iw)':-2",
-    "-frames:v",
-    "1",
-    "-q:v",
-    "4",
-    target
-  ], { maxBuffer: 16 * 1024 * 1024 });
-  const shrunk = await readFile2(target);
-  await rm(target, { force: true });
-  return `data:image/jpeg;base64,${shrunk.toString("base64")}`;
+  const attempts = [
+    { width: 1280, quality: 4 },
+    { width: 1024, quality: 6 },
+    { width: 768, quality: 8 },
+    { width: 512, quality: 10 }
+  ];
+  let lastUrl = "";
+  for (const attempt of attempts) {
+    const target = join3(tmpdir2(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+    await exec2(ffmpeg, [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      file2,
+      "-vf",
+      `scale='min(${attempt.width},iw)':-2`,
+      "-frames:v",
+      "1",
+      "-q:v",
+      String(attempt.quality),
+      target
+    ], { maxBuffer: 16 * 1024 * 1024 });
+    const shrunk = await readFile2(target);
+    await rm(target, { force: true });
+    lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
+    if (shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
+  }
+  return lastUrl;
 }
 async function toApiImageRef(ref) {
   const trimmed = ref.trim();
@@ -42747,7 +42758,10 @@ async function toApiImageRef(ref) {
   if (buffer.byteLength > INLINE_IMAGE_BUDGET_BYTES) {
     return shrinkLocalImage(path);
   }
-  const ext = path.toLowerCase().match(/\.(png|jpe?g|webp)$/)?.[1] ?? "png";
+  const ext = path.toLowerCase().match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
+  if (!ext || ext === "heic" || ext === "heif") {
+    return shrinkLocalImage(path);
+  }
   const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }
@@ -42957,7 +42971,23 @@ var BEAT_LADDER = [
   }
 ];
 function planShots(opts) {
-  const { sceneDescription, characterNames, shotCount, totalDurationSeconds } = opts;
+  const { sceneDescription, characterNames, shotCount, totalDurationSeconds, beats } = opts;
+  if (beats && beats.length > 0) {
+    const cast2 = characterNames.length > 0 ? characterNames : ["the main character"];
+    const scene2 = sceneDescription.trim().replace(/\.$/, "");
+    const per = Math.max(1, Math.floor(totalDurationSeconds / beats.length));
+    return beats.map((beat, i) => ({
+      shotNumber: i + 1,
+      title: beat.title,
+      shotType: i === 0 ? "wide" : "medium",
+      durationSeconds: per,
+      action: beat.action.replace(/\{scene\}/g, scene2).replace(/\{character\}/g, cast2[0]),
+      continuityNotes: beat.note ?? "",
+      characters: cast2.filter(() => true),
+      focusCharacter: cast2[0],
+      firstFrameFrom: i > 0 ? `last frame of shot ${i}` : void 0
+    }));
+  }
   const scene = sceneDescription.trim().replace(/\.$/, "");
   const cast = characterNames.length > 0 ? characterNames : ["the main character"];
   const titleCounts = /* @__PURE__ */ new Map();
@@ -43194,6 +43224,13 @@ server.registerTool(
     description: "Plan multi-shot storyboard for a scene.",
     inputSchema: external_exports.object({
       sceneDescription: external_exports.string(),
+      beats: external_exports.array(external_exports.object({
+        title: external_exports.string(),
+        action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
+        note: external_exports.string().optional().describe("Continuity requirement carried into the prompt.")
+      })).optional().describe(
+        "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
+      ),
       characters: external_exports.array(external_exports.string()),
       targetDurationSeconds: external_exports.number().optional(),
       shotCount: external_exports.number().optional()
@@ -43210,7 +43247,8 @@ server.registerTool(
       sceneDescription: args.sceneDescription,
       characterNames: args.characters ?? [],
       shotCount,
-      totalDurationSeconds
+      totalDurationSeconds,
+      beats: args.beats
     });
     const unknown2 = (args.characters ?? []).filter((name) => !lookupCharacter(name));
     const payload = {
@@ -43463,3 +43501,216 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+var sequenceJobs = /* @__PURE__ */ new Map();
+function sequenceJobId() {
+  return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+function jobPayload(job) {
+  const done = job.state !== "running";
+  return {
+    jobId: job.id,
+    state: job.state,
+    progress: `${job.completed}/${job.shotCount} shots`,
+    done,
+    ...done ? {
+      spentUsd: Math.round(job.spentUsd * 100) / 100,
+      estimatedUsd: job.estimateUsd,
+      shots: job.shots,
+      filmPath: job.filmPath,
+      fileUrl: job.fileUrl,
+      filmDurationSeconds: job.filmDurationSeconds,
+      filmBytes: job.filmBytes,
+      lastFramePath: job.lastFramePath,
+      unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : void 0,
+      error: job.error
+    } : {
+      spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
+      message: "Still rendering. Poll check_sequence with this jobId."
+    },
+    next: job.state === "completed" ? "Report the filmPath and spentUsd to the user. lastFramePath continues this film as firstFrameUrl." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed."
+  };
+}
+async function runSequenceJob(job, args) {
+  const characterRefs = [];
+  for (const name of args.characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) {
+      (job.unknownCharacters ??= []).push(name);
+      continue;
+    }
+    characterRefs.push(...known.referenceImageUrls ?? []);
+  }
+  let previousFrame = args.firstFrameUrl;
+  try {
+    for (let i = 0; i < args.shots.length; i++) {
+      const shot = args.shots[i];
+      const result = await generateGrokClip({
+        prompt: shot.prompt,
+        durationSeconds: shot.durationSeconds,
+        aspectRatio: args.aspectRatio,
+        model: args.model,
+        firstFrameUrl: previousFrame,
+        referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+      }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+      const entry = {
+        index: i + 1,
+        title: shot.title ?? `Shot ${i + 1}`,
+        status: result.status ?? "failed",
+        videoUrl: result.videoUrl,
+        costUsd: result.costUsd,
+        error: result.error,
+        localPath: void 0
+      };
+      job.spentUsd += result.costUsd ?? 0;
+      job.shots.push(entry);
+      if (result.status !== "completed" || !result.videoUrl) {
+        job.state = "stopped";
+        job.error = `Shot ${i + 1} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
+        job.finishedAt = Date.now();
+        return;
+      }
+      const clipPath = await resolveToLocalFile(result.videoUrl);
+      entry.localPath = clipPath;
+      const frame = await extractLastFrame({ file: clipPath });
+      if (!frame.path) {
+        job.state = "stopped";
+        job.error = `Shot ${i + 1} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
+        job.finishedAt = Date.now();
+        return;
+      }
+      previousFrame = frame.path;
+      job.lastFramePath = frame.path;
+      job.completed = i + 1;
+    }
+    if (args.assemble) {
+      const files = job.shots.map((shot) => shot.localPath).filter((p) => Boolean(p)).map((file2) => ({ file: file2, trimStart: void 0, trimEnd: void 0 }));
+      const assembled = await assembleClips({ clips: files, fadeDuration: args.fadeDuration });
+      job.filmPath = assembled.path;
+      job.fileUrl = `file://${assembled.path}`;
+      job.filmDurationSeconds = await probeDuration(assembled.path);
+      job.filmBytes = (await (await import("node:fs/promises")).stat(assembled.path)).size;
+    }
+    job.state = "completed";
+    job.finishedAt = Date.now();
+  } catch (err) {
+    job.state = "failed";
+    job.error = err instanceof Error ? err.message : String(err);
+    job.finishedAt = Date.now();
+  }
+}
+server.registerTool(
+  "render_sequence",
+  {
+    description: "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+    inputSchema: external_exports.object({
+      shots: external_exports.array(external_exports.object({
+        prompt: external_exports.string().describe(
+          "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
+        ),
+        durationSeconds: external_exports.number().min(1).max(15).default(8),
+        title: external_exports.string().optional()
+      })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Character names from create_character. Their reference images go on every shot."
+      ),
+      firstFrameUrl: external_exports.string().optional().describe(
+        "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      model: external_exports.string().default("grok-imagine-video-1.5"),
+      assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
+      fadeDuration: external_exports.number().min(0).max(5).default(0.25),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+      ),
+      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+    })
+  },
+  async (args) => {
+    const shotCount = args.shots.length;
+    const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
+    const estimate = Math.round(args.shots.reduce((sum, s) => sum + s.durationSeconds * 0.08, 0) * 100) / 100;
+    if (!args.confirm) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willRender: false,
+            plan: {
+              shots: shotCount,
+              totalSeconds,
+              aspectRatio: args.aspectRatio,
+              continuity: "Each shot starts from the previous shot's last frame.",
+              rendersAsOneJob: true
+            },
+            estimate: {
+              totalUsd: estimate,
+              basis: `${shotCount} renders totalling ${totalSeconds}s at roughly $0.08/s, from measured runs`,
+              isEstimate: true
+            },
+            next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
+          }, null, 2)
+        }]
+      };
+    }
+    const job = {
+      id: sequenceJobId(),
+      startedAt: Date.now(),
+      state: "running",
+      shotCount,
+      completed: 0,
+      estimateUsd: estimate,
+      spentUsd: 0,
+      shots: []
+    };
+    sequenceJobs.set(job.id, job);
+    void runSequenceJob(job, {
+      shots: args.shots,
+      characters: args.characters,
+      firstFrameUrl: args.firstFrameUrl,
+      aspectRatio: args.aspectRatio,
+      model: args.model,
+      assemble: args.assemble,
+      fadeDuration: args.fadeDuration,
+      timeoutSecondsPerShot: args.timeoutSecondsPerShot
+    });
+    const inlineDeadline = Date.now() + 25e3;
+    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+      await sleep2(500);
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        action: job.state === "running" ? "started" : job.state,
+        ...jobPayload(job)
+      }, null, 2) }]
+    };
+  }
+);
+server.registerTool(
+  "check_sequence",
+  {
+    description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+    inputSchema: external_exports.object({
+      jobId: external_exports.string().describe("The jobId render_sequence returned.")
+    })
+  },
+  async (args) => {
+    const job = sequenceJobs.get(args.jobId);
+    if (!job) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "Unknown jobId",
+            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            known: Array.from(sequenceJobs.keys()).slice(-5)
+          }, null, 2)
+        }]
+      };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
+    };
+  }
+);
