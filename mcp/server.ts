@@ -10,7 +10,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { resolveVideoCredential } from "./grok-auth.ts";
-import { JOBS_DIR, OUTPUT_DIR, assembleClips, extractLastFrame, pathToDataUrl, probeDuration } from "./media.ts";
+import {
+  CLOSING_FRAME_MATCH_THRESHOLD,
+  JOBS_DIR,
+  OUTPUT_DIR,
+  assembleClips,
+  closingFrameAgreement,
+  extractLastFrame,
+  pathToDataUrl,
+  probeDuration,
+} from "./media.ts";
 import {
   generateGrokClip,
   generateGrokStill,
@@ -1231,6 +1240,12 @@ type SequenceJob = {
     lastFrameUrl?: string;
     /** Local copy of that pinned frame, when it was a file on this machine. */
     lastFramePath?: string;
+    /**
+     * How well this clip's real last frame matched the frame it was pinned to,
+     * 1 being identical. Undefined when the shot was not pinned at its close, or
+     * when the comparison could not be taken.
+     */
+    closingFrameAgreement?: number;
     /** The prompt that produced it, so a repair can re-render the same beat. */
     prompt?: string;
     durationSeconds?: number;
@@ -1544,6 +1559,27 @@ async function runSequenceJob(
 
       const clipPath = await resolveToLocalFile(result.videoUrl);
       entry.localPath = clipPath;
+
+      // Did it actually arrive where it was pinned? A `completed` poll only says
+      // the proxy made a video, not that it honoured the closing frame, and the
+      // one case where it did not was billed like any other. Measure, because
+      // the next shot chains from whatever this clip really ended on and a
+      // silent miss shows up later as the cast having changed.
+      const pinnedClose = localImagePath(shot.lastFrameUrl);
+      if (pinnedClose) {
+        const agreement = await closingFrameAgreement({ clip: clipPath, frame: pinnedClose });
+        if (agreement !== undefined) {
+          entry.closingFrameAgreement = agreement;
+          if (agreement < CLOSING_FRAME_MATCH_THRESHOLD) {
+            degradations.push(
+              `Shot ${shotNumber} was given a closing frame and ended somewhere else ` +
+                `(match ${agreement.toFixed(2)} of 1.00), so the next shot opens on the boarded ` +
+                "frame while this one closes elsewhere: that seam is a jump, not a chained join.",
+            );
+          }
+        }
+      }
+
       const frame = await extractLastFrame({ file: clipPath });
       if (!frame.path) {
         job.state = "stopped";

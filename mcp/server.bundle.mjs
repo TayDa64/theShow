@@ -42546,8 +42546,8 @@ async function extractLastFrame(input2) {
   const attempts = [
     // Preferred: seek near the end, decode one frame.
     ["-y", "-hide_banner", "-loglevel", "error", "-sseof", `-${seek}`, "-i", input2.file, "-vframes", "1", "-q:v", "2", outPath],
-    // Fallback: decode from the start and take the last frame (slower, exact).
-    ["-y", "-hide_banner", "-loglevel", "error", "-i", input2.file, "-vf", "select=eq(n\\,0)", "-vframes", "1", outPath]
+    // Fallback: decode from the start and keep the genuinely last frame.
+    ["-y", "-hide_banner", "-loglevel", "error", "-i", input2.file, "-update", "1", "-vf", "reverse", "-vframes", "1", outPath]
   ];
   let lastError;
   for (const args of attempts) {
@@ -42565,6 +42565,54 @@ async function extractLastFrame(input2) {
     `Could not extract a frame from ${input2.file}: ${lastError instanceof Error ? lastError.message : "unknown error"}`
   );
 }
+async function closingFrameAgreement(input2) {
+  const { ffmpeg } = await resolveTools();
+  const thumb = async (args) => {
+    const { stdout } = await exec(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
+    const buf = stdout;
+    return buf.subarray(0, 32 * 32);
+  };
+  try {
+    const a = await thumb([
+      "-v",
+      "error",
+      "-sseof",
+      "-0.12",
+      "-i",
+      input2.clip,
+      "-update",
+      "1",
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=32:32,format=gray",
+      "-f",
+      "rawvideo",
+      "-"
+    ]);
+    const b = await thumb(["-v", "error", "-i", input2.frame, "-vf", "scale=32:32,format=gray", "-f", "rawvideo", "-"]);
+    if (a.length < 1024 || b.length < 1024) return void 0;
+    let ma = 0, mb = 0;
+    for (let i = 0; i < 1024; i++) {
+      ma += a[i];
+      mb += b[i];
+    }
+    ma /= 1024;
+    mb /= 1024;
+    let num = 0, da = 0, db = 0;
+    for (let i = 0; i < 1024; i++) {
+      const x = a[i] - ma, y = b[i] - mb;
+      num += x * y;
+      da += x * x;
+      db += y * y;
+    }
+    if (da === 0 || db === 0) return void 0;
+    return Math.round(num / Math.sqrt(da * db) * 1e3) / 1e3;
+  } catch {
+    return void 0;
+  }
+}
+var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
 async function assembleClips(input2) {
   const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
@@ -44516,6 +44564,18 @@ async function runSequenceJob(job, args) {
       }
       const clipPath = await resolveToLocalFile(result.videoUrl);
       entry.localPath = clipPath;
+      const pinnedClose = localImagePath(shot.lastFrameUrl);
+      if (pinnedClose) {
+        const agreement = await closingFrameAgreement({ clip: clipPath, frame: pinnedClose });
+        if (agreement !== void 0) {
+          entry.closingFrameAgreement = agreement;
+          if (agreement < CLOSING_FRAME_MATCH_THRESHOLD) {
+            degradations.push(
+              `Shot ${shotNumber} was given a closing frame and ended somewhere else (match ${agreement.toFixed(2)} of 1.00), so the next shot opens on the boarded frame while this one closes elsewhere: that seam is a jump, not a chained join.`
+            );
+          }
+        }
+      }
       const frame = await extractLastFrame({ file: clipPath });
       if (!frame.path) {
         job.state = "stopped";

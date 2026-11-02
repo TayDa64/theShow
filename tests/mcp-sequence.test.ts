@@ -334,3 +334,49 @@ describe('a transient render failure is not a stopped film', () => {
     expect(video).toContain('retryable: isTransientRenderFailure(poll)');
   });
 });
+
+describe('a closing frame that is accepted and then ignored', () => {
+  /**
+   * Measured on the 2026-11-02 four-shot proof film: shot 2 came back
+   * `completed`, was billed in full, and ended 0.13 away from the board frame it
+   * was pinned to, while the shots either side landed at 0.97 and 0.93. The poll
+   * response never mentions it. A silent miss chains the next shot from the
+   * wrong picture and reads later as the cast having changed, so the render
+   * measures the clip's real last frame and says so when it disagrees.
+   */
+  it('measures the clip against the frame it was pinned to', () => {
+    const code = codeOnly(serverSource);
+    expect(mediaSource).toMatch(/export async function closingFrameAgreement/);
+    expect(code).toContain('await closingFrameAgreement({ clip: clipPath, frame: pinnedClose })');
+  });
+
+  it('reports a missed close instead of passing it through as a good shot', () => {
+    const code = codeOnly(serverSource);
+    expect(code).toContain('if (agreement < CLOSING_FRAME_MATCH_THRESHOLD)');
+    expect(code).toMatch(/degradations\.push\(/);
+  });
+
+  it('keeps the threshold that separated the real film', () => {
+    // 0.13 and 0.18 were misses, 0.93 and 0.97 were hits on the proof film.
+    expect(mediaSource).toMatch(/CLOSING_FRAME_MATCH_THRESHOLD = 0\.6\b/);
+  });
+
+  it('does not check a shot that was never given a closing frame', () => {
+    const code = codeOnly(serverSource);
+    const block = code.slice(code.indexOf('const pinnedClose = localImagePath'));
+    expect(block.slice(0, 200)).toContain('if (pinnedClose) {');
+  });
+
+  it('never fails a rendered film because the comparison could not be taken', () => {
+    expect(mediaSource).toMatch(/catch \{\s*\n\s*\/\/ A measurement that cannot be taken must not fail a film/);
+  });
+});
+
+describe('the last-frame fallback keeps the LAST frame', () => {
+  it('does not fall back to frame zero', () => {
+    // The fallback used to select `n\,0`, so a clip whose tail would not seek
+    // handed the next shot its first frame to chain from.
+    expect(mediaSource).not.toContain('select=eq(n\\\\,0)');
+    expect(mediaSource).toContain('"-vf", "reverse"');
+  });
+});

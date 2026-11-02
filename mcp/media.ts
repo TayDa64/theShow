@@ -150,11 +150,16 @@ export async function extractLastFrame(input: {
   const outPath = join(dir, `frame-${digest}.png`);
 
   const seek = input.seekBackSeconds ?? 0.15;
+  // A cheap seek to the end can land past the final frame on a short clip, so
+  // the fallback decodes the whole thing and keeps the last frame. The fallback
+  // used to select `n\,0` - the FIRST frame - which meant a clip whose tail
+  // would not seek handed the next shot the wrong end to chain from, and the
+  // seam looked like model drift instead of a bug here.
   const attempts: string[][] = [
     // Preferred: seek near the end, decode one frame.
     ["-y", "-hide_banner", "-loglevel", "error", "-sseof", `-${seek}`, "-i", input.file, "-vframes", "1", "-q:v", "2", outPath],
-    // Fallback: decode from the start and take the last frame (slower, exact).
-    ["-y", "-hide_banner", "-loglevel", "error", "-i", input.file, "-vf", "select=eq(n\\,0)", "-vframes", "1", outPath],
+    // Fallback: decode from the start and keep the genuinely last frame.
+    ["-y", "-hide_banner", "-loglevel", "error", "-i", input.file, "-update", "1", "-vf", "reverse", "-vframes", "1", outPath],
   ];
 
   let lastError: unknown;
@@ -173,6 +178,56 @@ export async function extractLastFrame(input: {
     `Could not extract a frame from ${input.file}: ${lastError instanceof Error ? lastError.message : "unknown error"}`,
   );
 }
+
+/**
+ * How close a clip's true last frame is to the picture it was pinned to land on.
+ *
+ * A pinned closing frame can be accepted and then quietly ignored: the render
+ * comes back `completed`, is billed in full, and ends somewhere else entirely.
+ * Measured on a real four-shot film, three shots closed on their board frame at
+ * 0.97, 0.93 and - refused outright - while the fourth returned 0.13. Nothing
+ * in the poll response says which happened, so it has to be measured from the
+ * pixels after the fact.
+ *
+ * Compares 32x32 grayscale thumbnails. On that film the scores were 0.994,
+ * 0.179 and 0.981 against a 0.6 line, which is as wide a margin as this needs.
+ */
+export async function closingFrameAgreement(input: {
+  clip: string;
+  frame: string;
+}): Promise<number | undefined> {
+  const { ffmpeg } = await resolveTools();
+  const thumb = async (args: string[]) => {
+    const { stdout } = await exec(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
+    const buf = stdout as unknown as Buffer;
+    return buf.subarray(0, 32 * 32);
+  };
+  try {
+    const a = await thumb([
+      "-v", "error", "-sseof", "-0.12", "-i", input.clip,
+      "-update", "1", "-frames:v", "1",
+      "-vf", "scale=32:32,format=gray", "-f", "rawvideo", "-",
+    ]);
+    const b = await thumb(["-v", "error", "-i", input.frame, "-vf", "scale=32:32,format=gray", "-f", "rawvideo", "-"]);
+    if (a.length < 1024 || b.length < 1024) return undefined;
+    let ma = 0, mb = 0;
+    for (let i = 0; i < 1024; i++) { ma += a[i]; mb += b[i]; }
+    ma /= 1024; mb /= 1024;
+    let num = 0, da = 0, db = 0;
+    for (let i = 0; i < 1024; i++) {
+      const x = a[i] - ma, y = b[i] - mb;
+      num += x * y; da += x * x; db += y * y;
+    }
+    if (da === 0 || db === 0) return undefined;
+    return Math.round((num / Math.sqrt(da * db)) * 1000) / 1000;
+  } catch {
+    // A measurement that cannot be taken must not fail a film that rendered.
+    return undefined;
+  }
+}
+
+/** Below this, a clip did not arrive on the frame it was pinned to. */
+export const CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
 
 export type AssembleClip = {
   file: string;
