@@ -104,6 +104,26 @@ loud once, plainly, and letting them choose.
 **Never invent a character detail the user did not give.** If it matters to continuity, it goes in
 the config block. If they don't care, say so explicitly instead of filling the gap silently.
 
+## Slash commands
+
+The plugin ships nine commands, and each one is this same workflow started partway in. When a user
+types one, honour what it names and skip the step they already took.
+
+| Command | What it does |
+|---|---|
+| `/film <idea>` | Opens the configuration card, then boards and renders the film |
+| `/scene <scene> [shots]` | Plans a storyboard only. Free, renders nothing |
+| `/character <name> [look] [photo]` | Creates or updates a character with reference photos |
+| `/board <scene or jobId>` | Boards a film as stills, about two cents a frame |
+| `/render <shots.json>` | Renders a planned shot list |
+| `/check [jobId]` | Progress and real cost on a render, or recent films |
+| `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
+| `/films [count]` | Lists films on disk. Free |
+| `/resume <jobId> <what next>` | Continues an existing film with more shots |
+
+None of them skips the estimate. A command that spends money still calls its tool without `confirm`,
+shows the figure, and waits.
+
 ## Reference images
 
 The pipeline accepts three forms in `referenceImageUrls` and `firstFrameUrl`, and all three work:
@@ -179,14 +199,13 @@ calls, so a shot without the reference will drift even if the previous shot had 
    that is actually visible and stop there; the blazer underneath is in the picture whether or not the
    sentence mentions it.
 
-   **The board now checks the garment for you.** Every still edited from a picture is compared back to
-   that picture: it learns the outer garment's colour from the arms of the reference, then measures how
-   much of each new still's arm band still carries it. A frame that lost the sleeves scores far below
-   one that kept them — 0.125 and 0.181 for the two bad frames against 0.329 and up for thirty good
-   ones — and the board buys one re-roll rather than let that frame anchor two shots. It costs at most
-   one extra still per frame, which is two cents against the eighty-odd cents of the clip that would
-   otherwise inherit the mistake. `frames[].wardrobe` says `kept` or `substituted`, and `rerolled` marks
-   the frames that needed a second try. Look at those first when a film goes wrong.
+   **Look at the stills yourself; nothing measures the garment for you.** A colour check was built
+   and removed. It learned the coat's colour from the hero frame's arms, the hero is cropped at the
+   chest, so it had no sleeves to learn from and quietly abstained on all five frames of a real
+   board. Detecting a face to anchor the measurement works, but needs OpenCV and model files, and
+   this plugin ships neither. What actually holds the wardrobe is `mcp/cast.ts` refusing to let the
+   prompt name a garment the picture contradicts, plus your own eyes on a board that costs pennies
+   against a render that costs dollars.
 
    `cast` is a physical description, not a name — a name means nothing to the image model.
 

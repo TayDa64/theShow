@@ -20,7 +20,7 @@ Confirm it worked:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with eleven tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, `retry_shot`, `list_films`, and `check_sequence`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
+You want `theshow` reported healthy with thirteen tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `board_film`, `generate_still`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, `retry_shot`, `list_films`, and `check_sequence`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
 
 An early build died during initialize for one of two reasons, both fixed in the launcher. Startup used to install dependencies, about 13 seconds of work, which overran the client's initialize window, or the client resolved the script from the home directory instead of the plugin folder. The launcher now runs the bundle and resolves paths from its own file. Update with:
 
@@ -36,7 +36,7 @@ Ask in plain language. You never call the tools yourself.
 
 Here is what happens behind that sentence.
 
-**Brief.** `configure_film` runs first. It puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, aspect ratio, audio, hard constraints, an optional reference image, and an optional music or voiceover path (`audioTrack`). The card returns those answers as JSON, plus a cost estimate marked `isEstimate: true`. It renders nothing and spends nothing. Only the scene is required. The other fields default to two shots, eight seconds each, 16:9, diegetic audio, and Photoreal cinematic. Shot count on the card runs from 1 to 8. `audio` is dialogue, diegetic sound, or silence. `audioTrack` is a separate file, passed later as `audioTrackUrl`.
+**Brief.** `configure_film` runs first. It puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, resolution with its price, aspect ratio, audio, hard constraints, an optional reference image, and an optional music or voiceover path (`audioTrack`). The card returns those answers as JSON, plus a cost estimate marked `isEstimate: true`. It renders nothing and spends nothing. Only the scene is required. The other fields default to two shots, eight seconds each, 16:9, diegetic audio, and Photoreal cinematic. Shot count on the card runs from 1 to 8. `audio` is dialogue, diegetic sound, or silence. `audioTrack` is a separate file, passed later as `audioTrackUrl`.
 
 A blank stays blank. The form says anything you leave out is left out of the film, and the tool tells the caller never to invent a character detail you left empty. That invented detail is a second paid render. One card is one model turn; asking the same questions one at a time spends a turn on each of them before a frame exists. If the client cannot draw a form, the tool returns `elicitationSupported: false` and the same fields as text. Decline and cancel both come back as instructions not to render.
 
@@ -64,7 +64,7 @@ A zero fade used to take the xfade path anyway. FFmpeg treats a zero-length tran
 
 Every clip is a real charge, and the rate is the resolution you name. Measured on real eight-second renders: 480p (848×480) is $0.64, or $0.08 a second; 720p (1280×720) is $1.12, or $0.14 a second; 1080p (1920×1088) is $2.00, or $0.25 a second. Both render tools default to 720p, so an eight-second shot is $1.12, a three-shot film is $3.36 before assembly, and ten shots are $11.20.
 
-Omitting `resolution` on the API request lets the API pick a soft 848×480 frame. That measured default is the soft picture, and it is what the old flat eight-cents-a-second line was quoting. A tool call that leaves the argument off is filled in as 720p and billed at $0.14 a second. Name the resolution beside any price. The configure card has no resolution field, so its estimate uses the 720p rate and labels it `isEstimate: true`.
+Omitting `resolution` on the API request lets the API pick a soft 848×480 frame. That measured default is the soft picture, and it is what the old flat eight-cents-a-second line was quoting. A tool call that leaves the argument off is filled in as 720p and billed at $0.14 a second. Name the resolution beside any price. The configure card has its own resolution field, showing the per-second rate and the eight-second shot price on each option, so the choice is made with the numbers in view. Its estimate uses whichever resolution was picked and labels the figure `isEstimate: true`.
 
 `plan_storyboard`, an unconfirmed `render_sequence`, and an unconfirmed `retry_shot` spend nothing. Re-planning after the board was wrong is the expensive mistake. A single bad roll is `retry_shot`, priced as one shot.
 
@@ -97,6 +97,6 @@ StoryForge Studio is the other. Clone the repository, run `npm install` and `npm
 
 The plugin is at 0.1.0, and a film can go from the card to a polled job to a file. This document is the write-up, so publishing the install path is the page you are reading.
 
-Still open, and absent from the tree: a marketplace catalog entry pinned to a SHA, and slash commands under `commands/`.
+Slash commands now ship with the plugin: `/film`, `/scene`, `/character`, `/board`, `/render`, `/check`, `/retry`, `/films`, and `/resume`. Each one is the same workflow started partway in, and none of them skips the estimate. Still open: a marketplace catalog entry pinned to a SHA.
 
 If you build something with it, the interesting problems left are continuity problems: how to hold a location, a light source, or a prop across a cut. That is where the tool earns its keep.
