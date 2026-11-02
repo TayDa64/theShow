@@ -69,7 +69,7 @@ Style:        <look and colour>
 Shots:        2 × 8s = 16s, 16:9
 Audio:        <dialogue | diegetic | silent>
 Never show:   <constraints>
-Estimated:    ~$1.28 (2 renders · 8s ≈ $0.64 each)
+Estimated:    ~$2.24 (2 renders · 8s at 720p ≈ $1.12 each)
 ```
 
 Only after they approve, proceed. If the user gave enough detail up front to fill every field, show
@@ -226,8 +226,18 @@ rather than retrying.
 
 ## Reporting cost
 
-Every render returns `costUsd`. Real measured figures: 3s ≈ $0.24, 4s ≈ $0.32, 6s ≈ $0.49,
-8s ≈ $0.64 — about 8 cents per second.
+Every render returns `costUsd`. **Price depends on resolution**, measured on real 8-second renders:
+
+| Resolution | Output size | Per second | 8-second shot |
+|---|---|---|---|
+| `480p` | 848×480 | $0.08 | $0.64 |
+| `720p` | 1280×720 | $0.14 | $1.12 |
+| `1080p` | 1920×1088 | $0.25 | $2.00 |
+
+The default is `720p`. Leaving resolution unset does **not** mean 480p pricing — the API returns a
+soft 848×480 image for it, so the old "eight cents a second" figure was the cheapest, worst-looking
+setting and quoting it made every estimate a third too low. Always name the resolution alongside a
+price, and never quote a per-second rate without it.
 
 - Quote the **actual** returned figure, never an estimate stated as fact.
 - Before the first render, give the estimate from the config block and say it is an estimate.

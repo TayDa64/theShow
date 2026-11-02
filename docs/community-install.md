@@ -54,7 +54,9 @@ Here is what happens behind that sentence.
 
 ## What it costs
 
-Every clip is a real charge against your subscription. In measured runs, an eight-second Grok Imagine clip came to roughly $0.64. A three-shot film is therefore around $2 before assembly, and a ten-shot film around $6.40.
+Every clip is a real charge against your subscription, and the price depends on the resolution you ask for. Measured on real eight-second renders: $0.64 at 480p (848x480), $1.12 at 720p (1280x720), and $2.00 at 1080p (1920x1088). Per second that is 8, 14, and 25 cents.
+
+The plugin defaults to 720p, so budget about $1.12 per eight-second shot: a three-shot film is roughly $3.40 before assembly, and ten shots about $11.20. On a tight budget, 480p roughly halves the cost and is visibly softer.
 
 Plan the storyboard before you generate, not after. Re-rendering a shot because the framing was wrong in the plan is the expensive mistake.
 

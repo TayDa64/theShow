@@ -73,7 +73,7 @@ Subscription sessions cannot use `extend_clip`; the proxy rejects extensions. Co
 
 ## Cost
 
-Every clip is a real charge. In measured runs an eight-second Grok Imagine clip cost roughly $0.64, so a three-shot film is about $2 before assembly. Check the sidecar metadata written alongside each render for exact figures.
+Every clip is a real charge, and resolution sets the price. Measured on eight-second renders: $0.64 at 480p, $1.12 at 720p, $2.00 at 1080p. The default is 720p, so a three-shot film runs about $3.40 before assembly. Every render returns its exact `costUsd` in the tool result, which is the number to trust.
 
 ## Next Steps
 
