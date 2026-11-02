@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These nine tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These ten tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -217,6 +217,33 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    The film's length always wins. A long bed does not stretch the picture.
 
+## Fixing one bad shot
+
+A film is not all-or-nothing. When one shot comes back wrong, do not re-render the film.
+
+`retry_shot({ jobId, shotIndex })` re-renders exactly that shot and splices it back in. Every other
+shot is reused at no cost, and the film is re-assembled with its original resolution, joins and
+audio. It is two-step like everything else: call without `confirm` for the price of the one render,
+show it, then call again with `confirm: true`.
+
+```
+retry_shot({ jobId: "seq_...", shotIndex: 3 })                  // same prompt, a better roll
+retry_shot({ jobId: "seq_...", shotIndex: 3, prompt: "<new>" }) // the prompt was wrong
+```
+
+**Tell the user the caveat, every time, in your own words.** The shots after a repaired one were
+chained from the *original* shot's last frame, so that next join becomes a cut rather than a
+continuation. The tool reports this in `warnings`; repeat it rather than burying it. If the user
+cares about that seam, repair the following shots too.
+
+The tool also reports `filmSpentIncludingReplacedUsd` beside `filmTotalUsd`. The difference is money
+already spent and thrown away, which is worth saying out loud once, plainly, without apologising for
+it repeatedly.
+
+Re-render a shot when: the action did not happen, a face drifted off the reference, an unwanted
+object or extra person appeared, or the framing ignores the storyboard. Do not re-render for taste;
+say what is wrong and what another roll would cost, and let the user decide.
+
 ## Exact parameter names
 
 These were wrong in earlier versions of this skill and caused silent failures. Use these:
@@ -232,6 +259,7 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Join style | `fadeDuration` | `0` = hard cut (default). `0.15`–`0.3` only for a continued camera move |
 | Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
 | Music / narration | `audioTrackUrl` | mixed under the film; `audioTrackVolume` defaults to 0.25 |
+| Repair one shot | `retry_shot` | `jobId` + `shotIndex`; every other shot reused free |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
 parameter. Do not call them.
