@@ -116,10 +116,24 @@ export function planBoardFrames(opts: {
   aspectRatio: string;
   /** Style and continuity wording folded into every still prompt. */
   look?: string;
+  /**
+   * The cast, in words, repeated verbatim at the head of every still prompt.
+   *
+   * This is the fix for cast drift, and it is not decorative. A measured
+   * three-shot board chained each still from the one before it and still put a
+   * bare-headed man in frame 0, a flat cap in frame 1, and a top hat in frame 3.
+   * The reference image is treated as a loose hint by the stills endpoint — a
+   * night reference once produced a daylight scene — so pictures cannot hold a
+   * face on their own. Words at the head of the prompt can, because they are
+   * what the model reads first.
+   */
+  cast?: string;
 }): BoardFrame[] {
-  const { shots, aspectRatio, look } = opts;
+  const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
-  const prefix = look?.trim() ? `${look.trim()} ` : "";
+  // The cast comes before the look so it wins against scene description.
+  const castLock = cast?.trim() ? `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
+  const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
 
@@ -180,6 +194,8 @@ export async function boardFilm(
     shots: BoardShotInput[];
     aspectRatio?: string;
     look?: string;
+    /** Who is in the film, in words. Repeated into every still prompt. */
+    cast?: string;
     maxCostUsd?: number;
     confirm?: boolean;
   },
@@ -209,7 +225,7 @@ export async function boardFilm(
     };
   }
 
-  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input.look });
+  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input.look, cast: input.cast });
 
   // Look before pricing: a frame already on disk is free, and a re-run of a
   // half-finished board must not charge for what it already bought.

@@ -325,3 +325,41 @@ describe('the board holds the cast', () => {
     expect(calls[1][0].referenceImageUrls).toEqual([board.frames[0].path]);
   });
 });
+
+describe('holding the cast', () => {
+  it('repeats the cast verbatim at the head of every still prompt', () => {
+    // A measured three-shot board put a bare-headed man in frame 0, a flat cap
+    // in frame 1 and a top hat in frame 3, even with each still chained from
+    // the one before it, because a reference image is a loose hint to the
+    // stills endpoint. Repeating the cast in words is what actually holds a
+    // face, so it must be in every prompt, not just the first.
+    const cast = 'One man only: grey beard, dark flat cap, black double-breasted coat, brass-tipped pole';
+    const frames = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', cast });
+    expect(frames).toHaveLength(SHOTS.length + 1);
+    for (const frame of frames) {
+      expect(frame.prompt).toContain(cast);
+    }
+  });
+
+  it('puts the cast ahead of the look so the scene cannot overrule it', () => {
+    const cast = 'One man only: grey beard, dark flat cap';
+    const look = 'Victorian London at night, wet cobblestones';
+    const frames = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', cast, look });
+    for (const frame of frames) {
+      expect(frame.prompt.indexOf(cast)).toBeLessThan(frame.prompt.indexOf(look));
+    }
+  });
+
+  it('gives every frame a distinct stem once a cast is set', () => {
+    const frames = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', cast: 'One man, grey beard' });
+    const stems = new Set(frames.map((frame) => frame.stem));
+    expect(stems.size).toBe(frames.length);
+  });
+
+  it('leaves prompts unchanged when no cast is supplied', () => {
+    const without = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9' });
+    for (const frame of without) {
+      expect(frame.prompt).not.toContain('THE CAST');
+    }
+  });
+});

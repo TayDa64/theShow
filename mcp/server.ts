@@ -1768,6 +1768,15 @@ server.registerTool(
         "continuityBlock, or the style line from the confirmed config. Without it the stills " +
         "are boarded in whatever look each prompt implies.",
       ),
+      cast: z.string().optional().describe(
+        "Who is in the film, in plain words, repeated verbatim into every still prompt. This is " +
+        "the only thing that reliably holds a face across a board: a measured three-shot board " +
+        "chained each still from the previous one and still drifted from a bare-headed man to a " +
+        "flat cap to a top hat, because the stills endpoint treats a reference image as a loose " +
+        "hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat " +
+        "cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's " +
+        "characters.",
+      ),
       aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their portraits go on every still, so the face is " +
@@ -1794,6 +1803,7 @@ server.registerTool(
         shots: args.shots,
         aspectRatio: args.aspectRatio,
         look: args.look,
+        cast: args.cast,
         maxCostUsd: args.maxCostUsd,
         confirm: args.confirm,
       },

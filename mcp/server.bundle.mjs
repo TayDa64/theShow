@@ -43077,9 +43077,10 @@ function shotPrompt(shot) {
   return (shot.prompt ?? shot.action ?? "").trim();
 }
 function planBoardFrames(opts) {
-  const { shots, aspectRatio, look } = opts;
+  const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
-  const prefix = look?.trim() ? `${look.trim()} ` : "";
+  const castLock = cast?.trim() ? `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
+  const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
   return Array.from({ length: prompts.length + 1 }, (_, index) => {
@@ -43130,7 +43131,7 @@ async function boardFilm(input2, deps) {
       error: "No shots with a prompt or action were supplied."
     };
   }
-  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input2.look });
+  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input2.look, cast: input2.cast });
   const existing = await Promise.all(
     planned.map(async (frame) => ({
       frame,
@@ -44641,6 +44642,9 @@ server.registerTool(
       look: external_exports.string().optional().describe(
         "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
       ),
+      cast: external_exports.string().optional().describe(
+        "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters."
+      ),
       aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
@@ -44663,6 +44667,7 @@ server.registerTool(
         shots: args.shots,
         aspectRatio: args.aspectRatio,
         look: args.look,
+        cast: args.cast,
         maxCostUsd: args.maxCostUsd,
         confirm: args.confirm
       },

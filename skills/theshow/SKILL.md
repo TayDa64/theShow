@@ -142,11 +142,13 @@ calls, so a shot without the reference will drift even if the previous shot had 
 3. **Board it — `board_film`**
 
    Optional but strongly preferred past three shots. Pass the storyboard's shots (its `action` field
-   is accepted directly), plus `look` set to `configure_film`'s `continuityBlock`, and `characters`.
+   is accepted directly), plus `cast`, `look` set to `configure_film`'s `continuityBlock`, and
+   `characters`.
 
    ```
    board_film({
      shots: [{ prompt, title, durationSeconds }, ...],  // or plan_storyboard's shots as-is
+     cast: "one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole",
      look: "<configure_film's continuityBlock>",
      characters: ["Ada"],
      aspectRatio: "16:9",
@@ -154,6 +156,13 @@ calls, so a shot without the reference will drift even if the previous shot had 
      confirm: false,        // estimate first, always
    })
    ```
+
+   **Always pass `cast`, and always look at the stills before approving.** This is the one step where
+   a bad board is cheap to catch and expensive to miss. The stills endpoint treats a reference image
+   as a loose hint; it does not hold a face. A measured three-shot board chained every still from the
+   one before it and still drifted from a bare-headed man in frame 0 to a flat cap in frame 1 to a top
+   hat in frame 3. Written into every prompt, the cast survives. `cast` is a physical description, not
+   a name — a name means nothing to the image model.
 
    Show the stills and the cost. On approval, call again with `confirm: true`. The returned `shots`
    have both frames filled in and consecutive shots share a boundary frame.
@@ -324,7 +333,7 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Reference portraits | `referenceImageUrls` | array of https URL, data URI, or local path |
 | Continuity frame | `firstFrameUrl` | **image only**; a video here returns `invalid_image` |
 | Bookend closing frame | `lastFrameUrl` | pins the last rendered frame; with `firstFrameUrl` the shot is bookended |
-| Board a film | `board_film` | `shots`, `look`, `characters`, `maxCostUsd`; $0.02 a still, reusable |
+| Board a film | `board_film` | `shots`, `cast`, `look`, `characters`, `maxCostUsd`; $0.02 a still, reusable |
 | One still | `generate_still` | `prompt`, `aspectRatio`, `referenceImageUrls`, `characters`; $0.02 |
 | Length | `durationSeconds` | 1–15, default 8. **15s is the real ceiling per shot** (measured: a 15s render billed $1.20 at 480p) |
 | Shape | `aspectRatio` | `16:9`, `9:16`, `1:1` |
