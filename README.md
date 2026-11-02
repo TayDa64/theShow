@@ -204,7 +204,6 @@ The MCP server ships as `mcp/server.bundle.mjs`, a committed esbuild bundle, bec
 
 ## Limits and known edges
 
-
 - **`firstFrameUrl` must be an image.** A clip there returns `invalid_image`.
 - **`first_frame` is silently ignored** by the underlying API — a shot sent with it landed at 0.14 correlation against the supplied image, same as an unpinned render. It fails without saying so. theShow sends `image` on the wire, which is what `firstFrameUrl` does for you. `last_frame` works.
 - **A shot is at most 15 seconds.** For longer, chain shots or resume a job.
