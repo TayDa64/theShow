@@ -177,3 +177,67 @@ describe('the music bed', () => {
     expect(codeOnly(serverSource)).toContain('audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile');
   });
 });
+
+describe('retry_shot', () => {
+  const tool = serverSource.slice(
+    serverSource.indexOf('"retry_shot"'),
+    serverSource.indexOf('"check_sequence"'),
+  );
+  const code = codeOnly(serverSource);
+
+  it('re-renders one shot and reuses everything else', () => {
+    expect(tool).toContain('shotIndex');
+    // Before is carried, after is reused verbatim. Neither is rendered again.
+    expect(code).toContain('carriedShots: before.length > 0 ? before : undefined');
+    expect(code).toContain('trailingShots: after.length > 0 ? after : undefined');
+  });
+
+  it('defaults to re-rendering the original prompt on a bad roll', () => {
+    expect(tool).toContain('const prompt = args.prompt ?? target.prompt;');
+  });
+
+  it('chains the replacement from the shot before it, like the original', () => {
+    expect(code).toContain('resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath');
+  });
+
+  it('re-assembles with the original film\u2019s settings, not new defaults', () => {
+    expect(code).toContain('resolution: settings?.resolution ?? "720p"');
+    expect(code).toContain('fadeDuration: settings?.fadeDuration ?? 0');
+    expect(code).toContain('audioTrackFile: settings?.audioTrackFile');
+  });
+
+  it('warns that later shots are now on the wrong frame', () => {
+    // The one thing a repair must never do is imply the film is unchanged.
+    expect(code).toContain('still begin');
+    expect(code).toContain('job.warnings!.push');
+    expect(tool).toContain('caveat');
+  });
+
+  it('says nothing downstream depends on the last shot', () => {
+    expect(tool).toContain('This is the last shot, so nothing downstream depends on it.');
+  });
+
+  it('refuses a running film, an unknown job, and an out-of-range shot', () => {
+    expect(tool).toContain('That film is still rendering');
+    expect(tool).toContain('Unknown jobId');
+    expect(tool).toContain('No shot ${index} in that film');
+  });
+
+  it('reports money wasted on the replaced shot', () => {
+    expect(code).toContain('filmSpentIncludingReplacedUsd');
+  });
+});
+
+describe('the skill names every tool that exists', () => {
+  it('covers all ten registered tools', () => {
+    const skill = readFileSync(
+      path.join(__dirname, '..', 'skills', 'theshow', 'SKILL.md'),
+      'utf8',
+    );
+    const registered = [...serverSource.matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]);
+    expect(registered.length).toBe(10);
+    for (const name of registered) {
+      expect(skill, `${name} is registered but the skill never mentions it`).toContain(name);
+    }
+  });
+});

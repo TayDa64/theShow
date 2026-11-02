@@ -43606,6 +43606,14 @@ function jobPayload(job) {
         filmTotalUsd: Math.round((job.spentUsd + job.carriedOverUsd) * 100) / 100,
         continuedFrom: job.resumedFrom
       } : {},
+      ...job.repairedFrom ? {
+        repairedShot: job.repairedFrom,
+        // What the film actually cost, counting the shot that was replaced. The
+        // difference between this and filmTotalUsd is money spent and thrown away.
+        filmSpentIncludingReplacedUsd: Math.round(
+          (job.spentUsd + (job.carriedOverUsd ?? 0) + (job.repairedFrom.originalCostUsd ?? 0)) * 100
+        ) / 100
+      } : {},
       shots: job.shots,
       filmPath: job.filmPath,
       fileUrl: job.fileUrl,
@@ -43613,12 +43621,13 @@ function jobPayload(job) {
       filmBytes: job.filmBytes,
       lastFramePath: job.lastFramePath,
       unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : void 0,
+      warnings: job.warnings?.length ? job.warnings : void 0,
       error: job.error
     } : {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId."
     },
-    next: job.state === "completed" ? "Report the filmPath and spentUsd to the user. To make the film longer, call render_sequence again with resumeFromJobId set to this jobId and only the new shots." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed. Any shots already rendered are still on disk and can be assembled or continued from."
+    next: job.state === "completed" ? "Report the filmPath and spentUsd to the user, and repeat any warnings verbatim: they say which shots are now inconsistent. To make the film longer, call render_sequence again with resumeFromJobId set to this jobId and only the new shots." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed. Any shots already rendered are still on disk and can be assembled or continued from."
   };
 }
 async function runSequenceJob(job, args) {
@@ -43632,6 +43641,7 @@ async function runSequenceJob(job, args) {
     characterRefs.push(...known.referenceImageUrls ?? []);
   }
   const carried = args.carriedShots ?? [];
+  const trailing = args.trailingShots ?? [];
   job.shots.push(...carried);
   job.completed = carried.length;
   let previousFrame = args.resumeFramePath ?? carried.at(-1)?.framePath ?? args.firstFrameUrl;
@@ -43657,7 +43667,9 @@ async function runSequenceJob(job, args) {
         costUsd: result.costUsd,
         error: result.error,
         localPath: void 0,
-        framePath: void 0
+        framePath: void 0,
+        prompt: shot.prompt,
+        durationSeconds: shot.durationSeconds
       };
       job.spentUsd += result.costUsd ?? 0;
       job.shots.push(entry);
@@ -43680,6 +43692,11 @@ async function runSequenceJob(job, args) {
       entry.framePath = frame.path;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
+    }
+    if (trailing.length > 0) {
+      job.shots.push(...trailing);
+      job.completed += trailing.length;
+      job.lastFramePath = trailing.at(-1)?.framePath ?? job.lastFramePath;
     }
     if (args.assemble) {
       const files = job.shots.map((shot) => shot.localPath).filter((p) => Boolean(p)).map((file2) => ({ file: file2, trimStart: void 0, trimEnd: void 0 }));
@@ -43839,10 +43856,28 @@ server.registerTool(
       estimateUsd: estimate,
       spentUsd: 0,
       shots: [],
+      settings: {
+        aspectRatio: args.aspectRatio,
+        resolution: args.resolution,
+        model: args.model,
+        fadeDuration: args.fadeDuration,
+        continuity: args.continuity,
+        characters: args.characters,
+        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackVolume: args.audioTrackVolume,
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        assemble: args.assemble
+      },
       ...resumeJob ? {
         resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
-        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100
-      } : {}
+        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
+        // A continued film keeps the original start anchor, so repairing shot 1
+        // of the whole film still chains from where the film actually began.
+        startFramePath: resumeJob.startFramePath,
+        warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0
+      } : {
+        startFramePath: resumeFramePath ?? args.firstFrameUrl
+      }
     };
     sequenceJobs.set(job.id, job);
     void runSequenceJob(job, {
@@ -43865,6 +43900,166 @@ server.registerTool(
     });
     const inlineDeadline = Date.now() + 25e3;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+      await sleep2(500);
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        action: job.state === "running" ? "started" : job.state,
+        ...jobPayload(job)
+      }, null, 2) }]
+    };
+  }
+);
+server.registerTool(
+  "retry_shot",
+  {
+    description: "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
+    inputSchema: external_exports.object({
+      jobId: external_exports.string().describe("The finished job whose shot needs replacing."),
+      shotIndex: external_exports.number().int().min(1).describe("1-based shot number, as reported in the job."),
+      prompt: external_exports.string().optional().describe(
+        "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong."
+      ),
+      durationSeconds: external_exports.number().min(1).max(15).optional(),
+      confirm: external_exports.boolean().default(false),
+      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+    })
+  },
+  async (args) => {
+    const original = sequenceJobs.get(args.jobId);
+    if (!original) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "Unknown jobId",
+            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            known: Array.from(sequenceJobs.keys()).slice(-5)
+          }, null, 2)
+        }]
+      };
+    }
+    if (original.state === "running") {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "That film is still rendering",
+            detail: "Wait for check_sequence to report done before repairing a shot.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
+    }
+    const index = args.shotIndex;
+    const target = original.shots.find((shot) => shot.index === index);
+    if (!target) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: `No shot ${index} in that film`,
+            shots: original.shots.map((shot) => ({ index: shot.index, title: shot.title }))
+          }, null, 2)
+        }]
+      };
+    }
+    if (!target.prompt) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "That shot has no recorded prompt to re-render",
+            detail: "It was rendered before this version, or it was carried in from another film. Pass `prompt` explicitly.",
+            shotIndex: index
+          }, null, 2)
+        }]
+      };
+    }
+    const duration3 = args.durationSeconds ?? target.durationSeconds ?? 8;
+    const prompt = args.prompt ?? target.prompt;
+    const estimateUsd = Math.round(duration3 * ratePerSecond(original.settings?.resolution ?? "720p") * 100) / 100;
+    const before = original.shots.filter((shot) => shot.index < index);
+    const after = original.shots.filter((shot) => shot.index > index);
+    if (!args.confirm) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willRender: false,
+            plan: {
+              repairing: original.id,
+              shotIndex: index,
+              shotTitle: target.title,
+              durationSeconds: duration3,
+              prompt,
+              reusedShots: before.length + after.length,
+              reRenderedShots: 1,
+              reassemblesFilm: original.settings?.assemble ?? true,
+              note: `Shot ${index} is re-rendered; the other ${before.length + after.length} are reused at no cost. The film is re-assembled with the original resolution, joins and audio.`
+            },
+            estimate: {
+              totalUsd: estimateUsd,
+              resolution: original.settings?.resolution ?? "720p",
+              basis: `1 render of ${duration3}s at the film's original resolution`,
+              isEstimate: true
+            },
+            caveat: after.length === 0 ? "This is the last shot, so nothing downstream depends on it." : after.length === 1 ? `Shot ${index + 1} was chained from the ORIGINAL shot ${index}'s last frame. It is kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair that shot too.` : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s last frame. They are kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair those shots too.`,
+            next: "Show this and the caveat to the user. Call again with confirm: true only after they approve."
+          }, null, 2)
+        }]
+      };
+    }
+    const settings = original.settings;
+    const job = {
+      id: sequenceJobId(),
+      startedAt: Date.now(),
+      state: "running",
+      shotCount: original.shots.length,
+      completed: before.length,
+      estimateUsd,
+      spentUsd: 0,
+      shots: [],
+      settings,
+      startFramePath: original.startFramePath,
+      warnings: [...original.warnings ?? []],
+      repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+      // Every reused shot was paid for by the original film. Count it, so the
+      // reported film total is the film's real cost rather than this call's.
+      carriedOverUsd: Math.round(
+        [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
+      ) / 100
+    };
+    if (after.length > 0) {
+      const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
+      job.warnings.push(
+        `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
+      );
+    }
+    sequenceJobs.set(job.id, job);
+    void runSequenceJob(job, {
+      shots: [{ prompt, durationSeconds: duration3, title: target.title }],
+      characters: settings?.characters,
+      continuity: settings?.continuity,
+      firstFrameUrl: original.startFramePath,
+      aspectRatio: settings?.aspectRatio ?? "16:9",
+      resolution: settings?.resolution ?? "720p",
+      model: settings?.model ?? "grok-imagine-video-1.5",
+      assemble: settings?.assemble ?? true,
+      fadeDuration: settings?.fadeDuration ?? 0,
+      audioTrackFile: settings?.audioTrackFile,
+      audioTrackVolume: settings?.audioTrackVolume,
+      audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
+      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+      carriedShots: before.length > 0 ? before : void 0,
+      trailingShots: after.length > 0 ? after : void 0,
+      // Chain the replacement from the shot that precedes it, exactly as the
+      // original film did, so the repaired shot fits the same join.
+      resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
+    });
+    const inlineDeadline = Date.now() + 25e3;
+    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
       await sleep2(500);
     }
     return {
