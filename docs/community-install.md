@@ -58,7 +58,7 @@ Every clip is a real charge against your subscription. In measured runs, an eigh
 
 Plan the storyboard before you generate, not after. Re-rendering a shot because the framing was wrong in the plan is the expensive mistake.
 
-Each render writes a sidecar file recording the actual cost, so you can audit a project rather than estimating it.
+Each render reports its exact cost in the tool result as `costUsd`, converted from the API's `usage.cost_in_usd_ticks`. Read it from there to audit a project rather than estimating. (The StoryForge web app additionally writes a sidecar JSON beside each clip, but that is the app's own bookkeeping and is not part of the MCP tools — do not go looking for a sidecar file after a plain plugin run.)
 
 ## Authentication
 
