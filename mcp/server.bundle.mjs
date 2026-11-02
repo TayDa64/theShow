@@ -42971,6 +42971,11 @@ async function generateGrokStill(job, opts) {
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
     base.reference_images = (await inlineReferenceSet(job.referenceImageUrls)).map((url2) => ({ url: url2 }));
   }
+  let route = "generations";
+  if (job.baseImageUrl) {
+    route = "edits";
+    base.image = { url: await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES }) };
+  }
   const headers = {
     Authorization: `Bearer ${credential.token}`,
     "Content-Type": "application/json"
@@ -42985,7 +42990,7 @@ async function generateGrokStill(job, opts) {
   for (const variant of variants) {
     let response;
     try {
-      response = await fetch(`${credential.baseUrl}/v1/images/generations`, {
+      response = await fetch(`${credential.baseUrl}/v1/images/${route}`, {
         method: "POST",
         headers,
         body: JSON.stringify(variant.body)
@@ -43023,6 +43028,7 @@ async function generateGrokStill(job, opts) {
         usage: payload.usage,
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
+        route,
         auth: credential.source,
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
       };
@@ -43093,7 +43099,8 @@ function planBoardFrames(opts) {
       prompt = `Boundary frame: the last frame of shot ${index} and the first frame of shot ${index + 1}. The action of shot ${index} has just resolved \u2014 ${prompts[index - 1]} This is where shot ${index + 1} begins \u2014 ${prompts[index]} Hold the same framing, light and wardrobe across the boundary.`;
     }
     const full = `${prefix}${prompt}${shape}${still}`;
-    const stem = `board-${createHash2("sha1").update(full).digest("hex").slice(0, 16)}`;
+    const hashInput = opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full;
+    const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return { index, prompt: full, stem };
   });
 }
@@ -43131,7 +43138,13 @@ async function boardFilm(input2, deps) {
       error: "No shots with a prompt or action were supplied."
     };
   }
-  const planned = planBoardFrames({ shots: usable, aspectRatio, look: input2.look, cast: input2.cast });
+  const planned = planBoardFrames({
+    shots: usable,
+    aspectRatio,
+    look: input2.look,
+    cast: input2.cast,
+    baseImageUrl: deps.baseImageUrl
+  });
   const existing = await Promise.all(
     planned.map(async (frame) => ({
       frame,
@@ -43186,12 +43199,13 @@ async function boardFilm(input2, deps) {
     const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : void 0;
     const refs = [
       ...deps.referenceImageUrls ?? [],
-      ...previousFrame ? [previousFrame] : []
+      ...deps.baseImageUrl ? [] : previousFrame ? [previousFrame] : []
     ];
     const result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
+        baseImageUrl: deps.baseImageUrl,
         referenceImageUrls: refs.length > 0 ? refs : void 0
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem }
@@ -43524,6 +43538,16 @@ function mergeCharacterReferences(characters, referenceImageUrls) {
   }
   const merged = [...referenceImageUrls ?? [], ...fromCharacters];
   return { urls: Array.from(new Set(merged)), missing };
+}
+function findLocationBase(characters) {
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) continue;
+    if (!/\b(location|place|set|environment|interior|exterior)\b/i.test(known.role ?? "")) continue;
+    const first = known.referenceImageUrls?.[0];
+    if (first) return first;
+  }
+  return void 0;
 }
 var BEAT_LADDER = [
   {
@@ -44683,6 +44707,9 @@ server.registerTool(
       referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
         "Extra reference stills for the board: https URLs, data URIs, or local paths."
       ),
+      baseImageUrl: external_exports.string().optional().describe(
+        "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here."
+      ),
       maxCostUsd: external_exports.number().min(0).optional().describe(
         "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
       ),
@@ -44693,6 +44720,7 @@ server.registerTool(
   },
   async (args) => {
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
     const board = await boardFilm(
       {
         shots: args.shots,
@@ -44704,7 +44732,11 @@ server.registerTool(
       },
       {
         outputDir: OUTPUT_DIR,
-        referenceImageUrls: urls.length > 0 ? urls : void 0,
+        // A base image and a reference set compete for the same body, and the
+        // base is worth more: it holds the room. Keep the portraits that are
+        // not the base itself.
+        referenceImageUrls: urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0,
+        baseImageUrl,
         // Injected so tests can board a whole film without reaching the network.
         generateStill: async (job, opts) => generateGrokStill(job, opts)
       }

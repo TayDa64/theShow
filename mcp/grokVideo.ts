@@ -434,6 +434,17 @@ export type GrokStillJob = {
   aspectRatio?: string;
   /** Portraits or location stills: https URLs, data URIs, or local paths. */
   referenceImageUrls?: string[];
+  /**
+   * The picture to EDIT, rather than a hint for a fresh one.
+   *
+   * Measured: `/v1/images/generations` treats a reference as a loose hint and
+   * lets the prompt win outright — a portrait of a bald bearded man plus a
+   * prompt describing a red-haired woman returned the woman. `/v1/images/edits`
+   * with the same picture as `image` kept the man's head, beard, shirt, blazer
+   * and even the sherpa collar, and added her beside him. Use a location photo
+   * as the base to hold a room and a skyline across every frame.
+   */
+  baseImageUrl?: string;
   model?: string;
 };
 
@@ -454,6 +465,8 @@ export type GrokStillResult = {
   costUsd?: number;
   /** Which body key the API accepted for the shape, so a caller knows what happened. */
   aspectRatioParam?: "aspect_ratio" | "aspectRatio" | "none";
+  /** Which route produced the picture: a fresh generation or an edit of a base. */
+  route?: "generations" | "edits";
 };
 
 /**
@@ -514,6 +527,17 @@ export async function generateGrokStill(
     base.reference_images = (await inlineReferenceSet(job.referenceImageUrls)).map((url) => ({ url }));
   }
 
+  // A base image switches the route, and that switch is the whole difference
+  // between a cameo and a stranger. On `generations` the reference is a hint the
+  // prompt can overrule; on `edits` the picture is the subject being changed.
+  // The two share a request shape (model, prompt, n, image), so only the path
+  // and the image key differ.
+  let route: "generations" | "edits" = "generations";
+  if (job.baseImageUrl) {
+    route = "edits";
+    base.image = { url: await toApiImageRef(job.baseImageUrl, { budgetBytes: BOOKEND_IMAGE_BUDGET_BYTES }) };
+  }
+
   const headers = {
     Authorization: `Bearer ${credential.token}`,
     "Content-Type": "application/json",
@@ -534,7 +558,7 @@ export async function generateGrokStill(
   for (const variant of variants) {
     let response: Response;
     try {
-      response = await fetch(`${credential.baseUrl}/v1/images/generations`, {
+      response = await fetch(`${credential.baseUrl}/v1/images/${route}`, {
         method: "POST",
         headers,
         body: JSON.stringify(variant.body),
@@ -580,6 +604,7 @@ export async function generateGrokStill(
         usage: payload.usage,
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
+        route,
         auth: credential.source,
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits",
       };

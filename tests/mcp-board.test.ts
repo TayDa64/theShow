@@ -363,3 +363,48 @@ describe('holding the cast', () => {
     }
   });
 });
+
+describe('editing from a location photo', () => {
+  /**
+   * The measured bug: on `/v1/images/generations` a reference is a hint the
+   * prompt can overrule, so a five-frame board of one office redrew the skyline
+   * every time. Editing from the location photo instead keeps the room. These
+   * tests hold that routing, because a silent regression here looks like good
+   * stills right up until the film is cut.
+   */
+  it('passes the base image and drops the chain when a base is given', async () => {
+    const generateStill = fakeStill();
+    await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
+      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill },
+    );
+
+    const jobs = generateStill.mock.calls.map(([job]) => job as { baseImageUrl?: string; referenceImageUrls?: string[] });
+    expect(jobs).toHaveLength(SHOTS.length + 1);
+    for (const job of jobs) {
+      expect(job.baseImageUrl).toBe('/refs/office.jpg');
+      // No chaining: chained frames agreed on the skyline at a mean 0.36 versus
+      // 0.52 for frames edited from the base, so the chain is strictly worse.
+      expect(job.referenceImageUrls ?? []).toHaveLength(0);
+    }
+  });
+
+  it('still chains when no base is given', async () => {
+    const generateStill = fakeStill();
+    await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
+      { outputDir: dir, generateStill },
+    );
+    const jobs = generateStill.mock.calls.map(([job]) => job as { baseImageUrl?: string; referenceImageUrls?: string[] });
+    expect(jobs[0].referenceImageUrls ?? []).toHaveLength(0);
+    expect(jobs[1].referenceImageUrls).toHaveLength(1);
+  });
+
+  it('changes the frame stems when the base changes, so stale frames are not reused', () => {
+    const a = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', baseImageUrl: '/refs/a.jpg' });
+    const b = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9', baseImageUrl: '/refs/b.jpg' });
+    const none = planBoardFrames({ shots: SHOTS, aspectRatio: '16:9' });
+    expect(a.map((f) => f.stem)).not.toEqual(b.map((f) => f.stem));
+    expect(a.map((f) => f.stem)).not.toEqual(none.map((f) => f.stem));
+  });
+});

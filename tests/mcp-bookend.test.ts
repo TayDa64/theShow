@@ -430,6 +430,71 @@ describe('the board keeps its own money limits', () => {
   });
 
   it('names stills from their own prompt, so a re-run finds the same file', () => {
-    expect(storyboardSource).toContain('createHash("sha1").update(full)');
+    // The hash input is the full prompt, optionally with the base picture mixed
+    // in so a changed base cannot reuse frames bought against the old one. The
+    // prompt still has to be in there: that is what makes a re-run free.
+    expect(storyboardSource).toContain('createHash("sha1").update(hashInput)');
+    expect(storyboardSource).toContain('opts.baseImageUrl ? `${full}|base:${opts.baseImageUrl}` : full');
+  });
+});
+
+describe('base image routes the still to the edit endpoint', () => {
+  it('posts to /v1/images/edits with the picture as the subject', async () => {
+    // Measured: on `/v1/images/generations` a reference is a hint the prompt
+    // overrules. A bald bearded portrait plus a prompt describing a red-haired
+    // woman returned the woman, not the man. On `/v1/images/edits` with the same
+    // picture as `image`, the man survived intact and she was added beside him.
+    // That difference is the whole face-fidelity fix, so it must not regress to
+    // a plain generation with a reference attached.
+    const { generateGrokStill } = await import('../mcp/grokVideo.ts');
+    const seen: Array<{ url: string; body: any }> = [];
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.includes('/v1/images/')) {
+        seen.push({ url, body: JSON.parse(init.body) });
+        return new Response(JSON.stringify({
+          data: [{ url: 'https://example.invalid/edited.png', mime_type: 'image/png' }],
+          usage: { cost_in_usd_ticks: 220000000 },
+        }), { status: 200 });
+      }
+      return new Response(Buffer.from('bytes'), { status: 200 });
+    }) as typeof fetch;
+
+    const base = path.join(tempDir, 'office.png');
+    writePng(base, 8, 8);
+
+    const result = await generateGrokStill(
+      { prompt: 'He stands at the desk.', aspectRatio: '16:9', baseImageUrl: base },
+      { outputDir: tempDir },
+    );
+
+    expect(result.route).toBe('edits');
+    expect(seen[0].url).toContain('/v1/images/edits');
+    expect(seen[0].body.image).toBeTruthy();
+    // 220000000 ticks: an edit billed 0.022 where a plain still bills 0.020.
+    expect(result.costUsd).toBeCloseTo(0.022, 4);
+  });
+
+  it('leaves a plain still on the generations route', async () => {
+    const { generateGrokStill } = await import('../mcp/grokVideo.ts');
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: any) => {
+      const url = String(input);
+      if (url.includes('/v1/images/')) {
+        seen.push(url);
+        return new Response(JSON.stringify({
+          data: [{ url: 'https://example.invalid/s.png', mime_type: 'image/png' }],
+          usage: { cost_in_usd_ticks: 200000000 },
+        }), { status: 200 });
+      }
+      return new Response(Buffer.from('bytes'), { status: 200 });
+    }) as typeof fetch;
+
+    const result = await generateGrokStill(
+      { prompt: 'A wide empty street.', aspectRatio: '16:9' },
+      { outputDir: tempDir },
+    );
+    expect(result.route).toBe('generations');
+    expect(seen[0]).toContain('/v1/images/generations');
   });
 });
