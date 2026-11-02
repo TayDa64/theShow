@@ -20,7 +20,7 @@ Confirm it worked:
 grok mcp doctor
 ```
 
-You want to see `theshow` reported healthy with six tools discovered. If it reports a failure, the details line names the missing piece.
+You want to see `theshow` reported healthy with seven tools discovered. If it reports a failure, the details line names the missing piece.
 
 ### Run it on your own machine, not in a cloud sandbox
 
