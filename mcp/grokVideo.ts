@@ -24,6 +24,8 @@ export type GrokClipJob = {
   model?: string;
   referenceImageUrls?: string[];
   firstFrameUrl?: string;
+  /** 480p, 720p, or 1080p. Unset let the API pick a low default (~848x480). */
+  resolution?: string;
 };
 
 /** Why a call stopped, so callers can decide between a retry, a hint and a hard error. */
@@ -201,6 +203,11 @@ export async function generateGrokClip(
     duration: job.durationSeconds || 8,
     aspect_ratio: job.aspectRatio || "16:9",
   };
+
+  // Without this the API picks a low default (measured at 848x480) and the
+  // output looks soft. It also changes the price: at 1 second, 720p billed
+  // 0.14 and 1080p billed 0.25, so it is a real quality/cost dial, not a hint.
+  if (job.resolution) body.resolution = job.resolution;
   if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
   }

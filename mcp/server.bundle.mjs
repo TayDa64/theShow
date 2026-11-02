@@ -42782,6 +42782,7 @@ async function generateGrokClip(job, opts) {
     duration: job.durationSeconds || 8,
     aspect_ratio: job.aspectRatio || "16:9"
   };
+  if (job.resolution) body.resolution = job.resolution;
   if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
   }
@@ -43169,7 +43170,7 @@ server.registerTool(
     const v = result.content ?? {};
     const shotCount = Number(v.shotCount ?? 2);
     const shotSeconds = Number(v.shotSeconds ?? 8);
-    const perShot = Math.round(shotSeconds * 0.08 * 100) / 100;
+    const perShot = Math.round(shotSeconds * 0.14 * 100) / 100;
     const total = Math.round(perShot * shotCount * 100) / 100;
     return {
       content: [{
@@ -43190,7 +43191,7 @@ server.registerTool(
           estimate: {
             perShotUsd: perShot,
             totalUsd: total,
-            basis: `${shotCount} renders x ${shotSeconds}s at roughly $0.08/s, from measured runs`,
+            basis: `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. 480p runs near $0.08/s and 1080p near $0.25/s.`,
             isEstimate: true
           },
           next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Never invent a character detail the user left blank."
@@ -43283,6 +43284,9 @@ server.registerTool(
       ),
       durationSeconds: external_exports.number().min(1).max(15).default(8),
       aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+        "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default."
+      ),
       model: external_exports.string().default("grok-imagine-video-1.5"),
       waitForCompletion: external_exports.boolean().default(true),
       timeoutSeconds: external_exports.number().min(10).max(600).default(240)
@@ -43501,6 +43505,10 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
+function ratePerSecond(resolution) {
+  return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
+}
 var sequenceJobs = /* @__PURE__ */ new Map();
 function sequenceJobId() {
   return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -43548,6 +43556,7 @@ async function runSequenceJob(job, args) {
         prompt: shot.prompt,
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio,
+        resolution: args.resolution,
         model: args.model,
         firstFrameUrl: previousFrame,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
@@ -43617,6 +43626,9 @@ server.registerTool(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
       ),
       aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+        "Output resolution. 1080p costs roughly twice 720p per second of video."
+      ),
       model: external_exports.string().default("grok-imagine-video-1.5"),
       assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
       fadeDuration: external_exports.number().min(0).max(5).default(0.25),
@@ -43629,7 +43641,9 @@ server.registerTool(
   async (args) => {
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
-    const estimate = Math.round(args.shots.reduce((sum, s) => sum + s.durationSeconds * 0.08, 0) * 100) / 100;
+    const estimate = Math.round(
+      args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
+    ) / 100;
     if (!args.confirm) {
       return {
         content: [{
@@ -43646,7 +43660,8 @@ server.registerTool(
             },
             estimate: {
               totalUsd: estimate,
-              basis: `${shotCount} renders totalling ${totalSeconds}s at roughly $0.08/s, from measured runs`,
+              resolution: args.resolution,
+              basis: `${shotCount} renders totalling ${totalSeconds}s at about $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
               isEstimate: true
             },
             next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
@@ -43670,6 +43685,7 @@ server.registerTool(
       characters: args.characters,
       firstFrameUrl: args.firstFrameUrl,
       aspectRatio: args.aspectRatio,
+      resolution: args.resolution,
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,

@@ -158,3 +158,26 @@ describe('phone photos', () => {
     expect(video).toContain('INLINE_IMAGE_BUDGET_BYTES) return lastUrl');
   });
 });
+
+describe('resolution and cost', () => {
+  it('sends resolution to the API', () => {
+    const video = readFileSync(
+      path.join(__dirname, '..', 'mcp', 'grokVideo.ts'),
+      'utf8',
+    );
+    expect(video).toContain('if (job.resolution) body.resolution = job.resolution');
+  });
+
+  it('estimates from the resolution actually requested, not a flat rate', () => {
+    // A flat 8 cents quoted the 480p rate while the default renders at 720p,
+    // so every estimate came in about a third low.
+    expect(serverSource).toContain('ratePerSecond(args.resolution)');
+    expect(serverSource).toContain('"720p": 0.14');
+    expect(serverSource).toContain('"1080p": 0.25');
+  });
+
+  it('defaults both render tools to 720p', () => {
+    const defaults = serverSource.match(/z\.enum\(\["480p", "720p", "1080p"\]\)\.default\("720p"\)/g);
+    expect(defaults?.length).toBe(2);
+  });
+});
