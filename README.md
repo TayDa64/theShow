@@ -75,7 +75,7 @@ Ask in plain language. You never call the tools yourself.
 
 `configure_film` puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, resolution and its price, aspect ratio, audio, what must never appear, a music or voiceover path, and an optional reference image. The card returns your answers as JSON plus a cost estimate, and renders nothing.
 
-![The theShow configuration card inside Grok: scene, characters, style, shots, seconds per shot, resolution and price, shape, audio, never-show, and the optional reference and audio paths](docs/images/config-card.png)
+![The theShow configuration card inside Grok, showing the scene, characters, style, shots, seconds per shot, resolution and price, shape, audio and never-show fields, with accept and decline at the bottom](docs/images/config-card.png)
 
 One card is one model turn. Asking the same questions one at a time spends a turn on each before a frame exists — and turns cost money on top of renders.
 
