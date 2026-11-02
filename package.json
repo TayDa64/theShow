@@ -19,7 +19,8 @@
     "test:rate-limit": "vitest run tests/rate-limit.smoke.test.ts",
     "test:veo-chain": "vitest run tests/veo-chain.test.ts",
     "test:storage": "vitest run tests/storage-manager.test.ts",
-    "test:routes": "vitest run tests/film-routes.test.ts"
+    "test:routes": "vitest run tests/film-routes.test.ts",
+    "build:mcp": "esbuild mcp/server.ts --bundle --platform=node --format=esm --target=node20 --external:@ffmpeg-installer/ffmpeg --outfile=mcp/server.bundle.mjs"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
