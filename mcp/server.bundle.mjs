@@ -42430,11 +42430,12 @@ function resolveVideoCredential() {
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { join as join2 } from "node:path";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
-var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join2(tmpdir(), "theshow-output");
+var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join2(homedir2(), ".theshow", "media");
+var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join2(homedir2(), ".theshow", "jobs");
 var toolCache;
 async function binaryVersion(bin) {
   try {
@@ -42724,7 +42725,7 @@ async function pathToDataUrl(file2, mime = "image/png") {
 // mcp/grokVideo.ts
 import { execFile as execFile2 } from "node:child_process";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join as join3 } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
@@ -42761,7 +42762,7 @@ async function shrinkLocalImage(file2) {
   ];
   let lastUrl = "";
   for (const attempt of attempts) {
-    const target = join3(tmpdir2(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+    const target = join3(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
     await exec2(ffmpeg, [
       "-y",
       "-hide_banner",
@@ -42919,9 +42920,9 @@ async function generateGrokClip(job, opts) {
 }
 
 // mcp/server.ts
-import { mkdir as mkdir3, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join4 } from "node:path";
-import { tmpdir as tmpdir3 } from "node:os";
+import { tmpdir as tmpdir2 } from "node:os";
 import { createHash as createHash2 } from "node:crypto";
 var server = new McpServer({
   name: "theshow",
@@ -43472,7 +43473,7 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
   }
 );
-var DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join4(tmpdir3(), "theshow-output");
+var DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join4(tmpdir2(), "theshow-output");
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
     await mkdir3(DOWNLOAD_DIR, { recursive: true });
@@ -43580,6 +43581,7 @@ server.registerTool(
   }
 );
 async function main() {
+  await loadJobsFromDisk();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
@@ -43593,6 +43595,36 @@ function ratePerSecond(resolution) {
   return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
 }
 var sequenceJobs = /* @__PURE__ */ new Map();
+async function persistJob(job) {
+  try {
+    await mkdir3(JOBS_DIR, { recursive: true });
+    await writeFile3(join4(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
+  } catch (err) {
+    console.error(`theShow: could not persist job ${job.id}:`, err);
+  }
+}
+async function loadJobsFromDisk() {
+  try {
+    const files = await readdir(JOBS_DIR);
+    for (const name of files) {
+      if (!name.endsWith(".json")) continue;
+      try {
+        const raw = await readFile3(join4(JOBS_DIR, name), "utf8");
+        const job = JSON.parse(raw);
+        if (!job?.id) continue;
+        if (job.state === "running") {
+          job.state = "stopped";
+          job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
+          job.finishedAt = job.finishedAt ?? Date.now();
+          void persistJob(job);
+        }
+        sequenceJobs.set(job.id, job);
+      } catch {
+      }
+    }
+  } catch {
+  }
+}
 function sequenceJobId() {
   return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -43684,6 +43716,7 @@ async function runSequenceJob(job, args) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
         job.finishedAt = Date.now();
+        void persistJob(job);
         return;
       }
       const clipPath = await resolveToLocalFile(result.videoUrl);
@@ -43693,12 +43726,14 @@ async function runSequenceJob(job, args) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
         job.finishedAt = Date.now();
+        void persistJob(job);
         return;
       }
       previousFrame = frame.path;
       entry.framePath = frame.path;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
+      void persistJob(job);
     }
     if (trailing.length > 0) {
       job.shots.push(...trailing);
@@ -43721,10 +43756,12 @@ async function runSequenceJob(job, args) {
     }
     job.state = "completed";
     job.finishedAt = Date.now();
+    void persistJob(job);
   } catch (err) {
     job.state = "failed";
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
+    void persistJob(job);
   }
 }
 server.registerTool(
@@ -43783,7 +43820,7 @@ server.registerTool(
             type: "text",
             text: JSON.stringify({
               error: "Unknown resumeFromJobId",
-              detail: "No job has that id in this process. Jobs do not survive a server restart, so a film can only be continued within the same session that rendered it.",
+              detail: "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5)
             }, null, 2)
           }]
@@ -43887,6 +43924,7 @@ server.registerTool(
       }
     };
     sequenceJobs.set(job.id, job);
+    void persistJob(job);
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
@@ -43940,7 +43978,7 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: "Unknown jobId",
-            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5)
           }, null, 2)
         }]
@@ -44045,6 +44083,7 @@ server.registerTool(
       );
     }
     sequenceJobs.set(job.id, job);
+    void persistJob(job);
     void runSequenceJob(job, {
       shots: [{ prompt, durationSeconds: duration3, title: target.title }],
       characters: settings?.characters,
@@ -44078,6 +44117,44 @@ server.registerTool(
   }
 );
 server.registerTool(
+  "list_films",
+  {
+    description: "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+    inputSchema: external_exports.object({
+      limit: external_exports.number().int().min(1).max(50).default(10),
+      includeUnfinished: external_exports.boolean().default(false).describe(
+        "Also list films that stopped or failed, which still hold every shot they paid for."
+      )
+    })
+  },
+  async (args) => {
+    const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
+    const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
+      jobId: job.id,
+      state: job.state,
+      startedAt: new Date(job.startedAt).toISOString(),
+      shots: job.shots.length,
+      durationSeconds: job.filmDurationSeconds,
+      spentUsd: Math.round(job.spentUsd * 100) / 100,
+      filmPath: job.filmPath,
+      firstShot: job.shots[0]?.title,
+      repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
+      error: job.error
+    }));
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          count: shown.length,
+          films: shown,
+          storage: JOBS_DIR,
+          next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
+        }, null, 2)
+      }]
+    };
+  }
+);
+server.registerTool(
   "check_sequence",
   {
     description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
@@ -44093,7 +44170,7 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: "Unknown jobId",
-            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5)
           }, null, 2)
         }]

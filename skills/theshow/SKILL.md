@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These ten tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These eleven tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -158,10 +158,14 @@ calls, so a shot without the reference will drift even if the previous shot had 
    render_sequence({ resumeFromJobId: "seq_...", shots: [ ...new shots only... ], confirm: true })
    ```
 
-   A job id lives in the server process, so a film can only be continued in the same session that
-   rendered it. If the server has restarted, the clips are still on disk but the id is gone: assemble
-   them with `assemble_film`, or start the next leg from the last clip's frame via `extract_last_frame`
-   and `firstFrameUrl`.
+   Films survive a restart: every job is written to disk as it renders, into `~/.theshow/jobs`, and
+   reloaded at startup along with the footage in `~/.theshow/media`. So a film can be continued,
+   repaired or re-assembled days later. `list_films` shows what exists, with each film's job id, shot
+   count, cost and file.
+
+   A film that was mid-render when the server stopped comes back as `state: "stopped"` with an error
+   saying so. Every shot it had already finished is still there and still paid for; assemble them, or
+   continue from the last one.
 
    Continuity holds across the join: measured against the first frame, a five-shot chain stayed at
    about 0.86 correlation and the drift does not compound as the chain grows. Nothing here caps the
@@ -217,6 +221,15 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    The film's length always wins. A long bed does not stretch the picture.
 
+## Coming back to a film
+
+Films are files, not session state. `list_films({ includeUnfinished: true })` is free and lists every
+film with its job id, state, shot count, duration, cost and file path.
+
+Use it whenever a user refers to a previous film ("the lamplighter one", "what I made yesterday")
+instead of asking them for an id they will not have. Then continue it with `resumeFromJobId` or
+repair a shot with `retry_shot`. Never re-render a film you can find on disk.
+
 ## Fixing one bad shot
 
 A film is not all-or-nothing. When one shot comes back wrong, do not re-render the film.
@@ -260,6 +273,7 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
 | Music / narration | `audioTrackUrl` | mixed under the film; `audioTrackVolume` defaults to 0.25 |
 | Repair one shot | `retry_shot` | `jobId` + `shotIndex`; every other shot reused free |
+| Find an old film | `list_films` | free; returns job ids, costs and paths from earlier sessions |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
 parameter. Do not call them.
