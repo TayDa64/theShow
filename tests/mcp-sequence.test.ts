@@ -261,3 +261,29 @@ describe('the skill names every tool that exists', () => {
     }
   });
 });
+
+describe('continuing a film after the cast changed', () => {
+  it('warns when a resumed shot does not start on the frame the old film ends on', () => {
+    // A film survives a restart and can be extended from a later session. The
+    // shots it joins to were paid for earlier and cannot be checked by eye, so
+    // a continuation that opens on a re-boarded frame silently grafts a new
+    // cast onto the old film. Measured on the real film: the old last frame
+    // scored 0.248 against the re-boarded opening frame, an unpinned join.
+    const code = codeOnly(serverSource);
+    expect(code).toContain('const continuationStartFrame');
+    expect(code).toContain('resumeWarnings');
+    expect(code).toMatch(/firstFrameUrl identical to the old film's last frame/);
+  });
+
+  it('honours an explicit first frame over chaining when resuming', () => {
+    // The check has to test the frame that will actually be used, otherwise a
+    // shot that pins a new first frame passes a check on a frame it ignores.
+    const code = codeOnly(serverSource);
+    expect(code).toMatch(/args\.shots\[0\]\?\.firstFrameUrl \?\? resumeFramePath/);
+  });
+
+  it('surfaces the warning on the estimate, before anything is spent', () => {
+    const code = codeOnly(serverSource);
+    expect(code).toContain('...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {})');
+  });
+});

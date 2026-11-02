@@ -187,3 +187,40 @@ describe('resolution and cost', () => {
     expect(defaults?.length).toBe(2);
   });
 });
+
+describe('choosing a resolution on the form', () => {
+  const formBlock = serverSource.slice(
+    serverSource.indexOf('const FILM_FORM_SCHEMA'),
+    serverSource.indexOf('server.registerTool(\n  "configure_film"'),
+  );
+
+  it('offers a resolution choice carrying the real per-second price', () => {
+    // The form used to omit resolution entirely, so the estimate it showed was
+    // always the 720p rate no matter what the user wanted to spend. Prices sit
+    // in the option text because an elicitation enum is a plain list of strings
+    // with nowhere else to put them.
+    expect(formBlock).toContain('resolution');
+    expect(formBlock).toMatch(/480p — \$0\.08\/s/);
+    expect(formBlock).toMatch(/720p — \$0\.14\/s/);
+    expect(formBlock).toMatch(/1080p — \$0\.25\/s/);
+  });
+
+  it('prices the estimate from the chosen resolution instead of a fixed rate', () => {
+    const handler = serverSource.slice(
+      serverSource.indexOf('server.registerTool(\n  "configure_film"'),
+      serverSource.indexOf('server.registerTool(\n  "create_character"'),
+    );
+    expect(handler).toContain('resolutionFromLabel');
+    expect(handler).toContain('ratePerSecond(resolution)');
+    // The old code priced every quote at 0.14 and said so in a comment.
+    expect(handler).not.toMatch(/shotSeconds \* 0\.14/);
+  });
+
+  it('returns the chosen resolution so the render can use it', () => {
+    const handler = serverSource.slice(
+      serverSource.indexOf('server.registerTool(\n  "configure_film"'),
+      serverSource.indexOf('server.registerTool(\n  "create_character"'),
+    );
+    expect(handler).toMatch(/shotSeconds,\s*resolution,/);
+  });
+});

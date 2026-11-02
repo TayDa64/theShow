@@ -371,6 +371,19 @@ const FILM_FORM_SCHEMA = {
       maximum: 15,
       default: 8,
     },
+    resolution: {
+      type: "string" as const,
+      title: "Resolution and price",
+      // The prices are the measured ones, per second of finished video, so the
+      // choice is made on money rather than on a label. They live in the
+      // option names because that is the only place a form shows them.
+      enum: [
+        "480p — $0.08/s, 8s shot $0.64",
+        "720p — $0.14/s, 8s shot $1.12",
+        "1080p — $0.25/s, 8s shot $2.00",
+      ],
+      default: "720p — $0.14/s, 8s shot $1.12",
+    },
     aspectRatio: {
       type: "string" as const,
       title: "Shape",
@@ -491,10 +504,12 @@ server.registerTool(
     const v = (result.content ?? {}) as Record<string, unknown>;
     const shotCount = Number(v.shotCount ?? 2);
     const shotSeconds = Number(v.shotSeconds ?? 8);
-    // The form cannot know the resolution yet, so quote the 720p rate and say so;
-    // quoting the 480p rate made every estimate look a third cheaper than the
-    // render it was describing.
-    const perShot = Math.round(shotSeconds * 0.14 * 100) / 100;
+    // The form asks for resolution now, so the estimate can use the rate the
+    // user actually picked. It used to hardcode 720p because the form could not
+    // know, which meant the number shown was not the number they would be
+    // charged whenever they wanted something other than 720p.
+    const resolution = resolutionFromLabel(v.resolution) ?? "720p";
+    const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
     const total = Math.round(perShot * shotCount * 100) / 100;
 
     return {
@@ -508,6 +523,7 @@ server.registerTool(
             style: v.style ?? "Photoreal cinematic",
             shotCount,
             shotSeconds,
+            resolution,
             aspectRatio: v.aspectRatio ?? "16:9",
             audio: v.audio ?? "Diegetic only",
             neverShow: v.neverShow ?? "",
@@ -1119,6 +1135,20 @@ const RESOLUTION_RATES: Record<string, number> = { "480p": 0.08, "720p": 0.14, "
 function ratePerSecond(resolution: string): number {
   return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
 }
+/**
+ * Read a resolution back out of a form option label.
+ *
+ * The form has to show prices, and an elicitation enum is a plain list of
+ * strings with no room for a label separate from its value. So the value is the
+ * label: "720p — $0.14/s, 8s shot $1.12". This pulls the leading token back out
+ * and refuses anything it does not recognise rather than guessing, because a
+ * silent fallback here would reprice a render behind the user's back.
+ */
+export function resolutionFromLabel(value: unknown): "480p" | "720p" | "1080p" | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.trim().match(/^(480p|720p|1080p)\b/);
+  return (match?.[1] as "480p" | "720p" | "1080p" | undefined) ?? undefined;
+}
 
 /**
  * In-flight and finished sequence renders, keyed by job id.
@@ -1587,6 +1617,10 @@ server.registerTool(
     const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
     const resumeFramePath = carried.at(-1)?.framePath;
 
+    // An explicit first frame on the new shot wins over chaining, so check the
+    // join that will actually be made rather than the one the old film implies.
+    const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
+
     // Measured on real renders, 8 seconds each: 480p billed 0.64, 720p billed
     // 1.12, 1080p billed 2.00. The old flat 8 cents per second was only ever the
     // 480p rate, which is also the soft 848x480 default, so every earlier estimate
@@ -1594,6 +1628,24 @@ server.registerTool(
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100,
     ) / 100;
+
+    // A resumed film is the one place a stale cast hides, because the shots it
+    // joins to were paid for in an earlier session and cannot be re-checked by
+    // eye. If the new shots open on a boarded frame that is not the picture the
+    // old film ended on, the join is a cut between two different cast members.
+    // Say so before spending, rather than discovering it in the finished film.
+    const resumeWarnings: string[] = [];
+    if (resumeJob && continuationStartFrame) {
+      const oldEnd = carried.at(-1)?.framePath;
+      if (oldEnd && continuationStartFrame !== oldEnd) {
+        resumeWarnings.push(
+          "The new shot does not start on the frame the earlier film ends on. It will join " +
+            `the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut ` +
+            "between them is an unpinned join and the cast may change across it. Either pass " +
+            "firstFrameUrl identical to the old film's last frame, or start a new film.",
+        );
+      }
+    }
 
     const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
     // A boarded film's boundary frame is one picture used twice. Counting how
@@ -1643,6 +1695,7 @@ server.registerTool(
                 `$${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
               isEstimate: true,
             },
+            ...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {}),
             next:
               "Show this to the user. Call again with confirm: true only after they approve. Do not " +
               "set confirm without an explicit yes.",

@@ -43694,6 +43694,19 @@ var FILM_FORM_SCHEMA = {
       maximum: 15,
       default: 8
     },
+    resolution: {
+      type: "string",
+      title: "Resolution and price",
+      // The prices are the measured ones, per second of finished video, so the
+      // choice is made on money rather than on a label. They live in the
+      // option names because that is the only place a form shows them.
+      enum: [
+        "480p \u2014 $0.08/s, 8s shot $0.64",
+        "720p \u2014 $0.14/s, 8s shot $1.12",
+        "1080p \u2014 $0.25/s, 8s shot $2.00"
+      ],
+      default: "720p \u2014 $0.14/s, 8s shot $1.12"
+    },
     aspectRatio: {
       type: "string",
       title: "Shape",
@@ -43793,7 +43806,8 @@ server.registerTool(
     const v = result.content ?? {};
     const shotCount = Number(v.shotCount ?? 2);
     const shotSeconds = Number(v.shotSeconds ?? 8);
-    const perShot = Math.round(shotSeconds * 0.14 * 100) / 100;
+    const resolution = resolutionFromLabel(v.resolution) ?? "720p";
+    const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
     const total = Math.round(perShot * shotCount * 100) / 100;
     return {
       content: [{
@@ -43806,6 +43820,7 @@ server.registerTool(
             style: v.style ?? "Photoreal cinematic",
             shotCount,
             shotSeconds,
+            resolution,
             aspectRatio: v.aspectRatio ?? "16:9",
             audio: v.audio ?? "Diegetic only",
             neverShow: v.neverShow ?? "",
@@ -44246,6 +44261,11 @@ var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
 function ratePerSecond(resolution) {
   return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
 }
+function resolutionFromLabel(value) {
+  if (typeof value !== "string") return void 0;
+  const match = value.trim().match(/^(480p|720p|1080p)\b/);
+  return match?.[1] ?? void 0;
+}
 var sequenceJobs = /* @__PURE__ */ new Map();
 async function persistJob(job) {
   try {
@@ -44516,9 +44536,19 @@ server.registerTool(
     }
     const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
     const resumeFramePath = carried.at(-1)?.framePath;
+    const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
     ) / 100;
+    const resumeWarnings = [];
+    if (resumeJob && continuationStartFrame) {
+      const oldEnd = carried.at(-1)?.framePath;
+      if (oldEnd && continuationStartFrame !== oldEnd) {
+        resumeWarnings.push(
+          `The new shot does not start on the frame the earlier film ends on. It will join the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut between them is an unpinned join and the cast may change across it. Either pass firstFrameUrl identical to the old film's last frame, or start a new film.`
+        );
+      }
+    }
     const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
     const sharedBoundaries = args.shots.reduce((count, shot, i) => {
       const next = args.shots[i + 1];
@@ -44554,6 +44584,7 @@ server.registerTool(
               basis: `${shotCount} renders totalling ${totalSeconds}s at about $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
               isEstimate: true
             },
+            ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
             next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
           }, null, 2)
         }]
@@ -44912,3 +44943,6 @@ server.registerTool(
     };
   }
 );
+export {
+  resolutionFromLabel
+};
