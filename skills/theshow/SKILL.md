@@ -141,10 +141,25 @@ calls, so a shot without the reference will drift even if the previous shot had 
    When it finishes you get `filmPath`, `fileUrl`, `spentUsd`, `filmDurationSeconds`, and
    `lastFramePath`. Report the real `spentUsd` next to the estimate you gave.
 
-   **For a film longer than 12 shots, or longer than 15 seconds per shot, chain sequences.** Pass
-   the previous run's `lastFramePath` as `firstFrameUrl` to the next run. Continuity holds across the
-   join: measured against the first frame, a five-shot chain stayed at about 0.86 correlation, and
-   the drift does not compound as the chain grows. Report each sequence's cost separately.
+   **For a film longer than 12 shots, continue the same job.** Call `render_sequence` again with
+   `resumeFromJobId` set to the finished job's id and **only the new shots**. The earlier shots are
+   reused rather than re-rendered (they cost nothing more), the first new shot chains from that
+   film's last frame, and the assembly covers the whole film, not just the new tail. The result
+   splits `spentUsd` (this run) from `filmTotalUsd` (the film so far), so report both.
+
+   ```
+   render_sequence({ resumeFromJobId: "seq_...", shots: [ ...new shots only... ], confirm: true })
+   ```
+
+   A job id lives in the server process, so a film can only be continued in the same session that
+   rendered it. If the server has restarted, the clips are still on disk but the id is gone: assemble
+   them with `assemble_film`, or start the next leg from the last clip's frame via `extract_last_frame`
+   and `firstFrameUrl`.
+
+   Continuity holds across the join: measured against the first frame, a five-shot chain stayed at
+   about 0.86 correlation and the drift does not compound as the chain grows. Nothing here caps the
+   length of a film except patience and budget; a 12-shot run at 8 seconds is 96 seconds, and two
+   continued runs already pass three minutes.
 
    If the user wants manual control over one shot at a time, `generate_controlled_clip` still works:
    compose the prompt from `action`, `cameraMove`, `shotType`, the confirmed style, and the stored
@@ -156,10 +171,15 @@ calls, so a shot without the reference will drift even if the previous shot had 
    only when stitching existing clips, with `clips` as an array of **objects**, not strings:
    `[{ "url": "<clip path>", "title": "<shot title>" }]`, plus optional `fadeDuration` (default 0.5).
 
-   **What assembly does and does not do.** It normalizes mismatched resolutions and cross-fades on
-   the join, so clips that came back at slightly different sizes still cut cleanly. It cannot invent
-   motion that was not rendered: a slow cross-fade hides a jump in framing, but nothing makes two
-   unconnected shots look continuous. Continuity comes from the frame chain, not from the fade.
+   **Joins are hard cuts by default, and that is deliberate.** Chained shots drift slightly in fine
+   texture, so a cross-fade blends two different cobblestone patterns through each other: reviewed
+   frame by frame, the ground visibly ghosts and sharpness dips for the length of the fade, which
+   reads as the set melting. A cut keeps every texture sharp and reads as a cut. Leave `fadeDuration`
+   at `0` unless the user explicitly wants a dissolve as a stylistic choice.
+
+   **What assembly does and does not do.** It normalises mismatched sizes, frame rates and audio, so
+   clips that came back at different dimensions still join cleanly. It cannot invent motion that was
+   not rendered. Continuity comes from the frame chain, not from the join.
 
 ## Exact parameter names
 
@@ -173,6 +193,8 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Shape | `aspectRatio` | `16:9`, `9:16`, `1:1` |
 | Model | `model` | default `grok-imagine-video-1.5` |
 | Assembly clips | `clips[].url` | objects with `url`, `title`, `trimStart`, `trimEnd` |
+| Join style | `fadeDuration` | `0` = hard cut (default). Only raise it for a deliberate dissolve |
+| Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
 parameter. Do not call them.

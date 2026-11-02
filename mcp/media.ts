@@ -170,8 +170,18 @@ export type AssembleClip = {
 };
 
 /**
- * Assemble ordered clips into one film. Uses `xfade` cross-fades when the
- * FFmpeg build supports it, otherwise a stream-copy concat (hard cuts).
+ * Assemble ordered clips into one film.
+ *
+ * A fade of 0 is a real hard cut. It is not an xfade with duration 0: FFmpeg's
+ * xfade treats a zero-length transition as "the second input starts where the
+ * first ends", and chained, that silently collapses the output to the first
+ * clip. A three-shot film asked for a hard cut came back 2.04s long with one
+ * shot in it. So the two cases take genuinely different paths: `concat` for
+ * hard cuts, `xfade` only when there is an actual overlap to blend.
+ *
+ * Both paths normalise every input onto the first clip's geometry, because
+ * chained generations come back at slightly different sizes (848x480 then
+ * 736x416) and neither filter accepts mismatched streams.
  */
 export async function assembleClips(input: {
   clips: AssembleClip[];
@@ -196,20 +206,8 @@ export async function assembleClips(input: {
     return { path: outPath, mode: "single" as const, hasXfade };
   }
 
-  if (!hasXfade) {
-    // Concat demuxer: reliable hard cuts without re-encoding.
-    const listPath = join(dir, `concat-${digest}.txt`);
-    const lines = input.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
-    await writeFile(listPath, `${lines.join("\n")}\n`, "utf8");
-    await exec(ffmpeg, [
-      "-y", "-hide_banner", "-loglevel", "error",
-      "-f", "concat", "-safe", "0", "-i", listPath,
-      "-c", "copy", outPath,
-    ], { maxBuffer: 32 * 1024 * 1024 });
-    return { path: outPath, mode: "concat" as const, hasXfade };
-  }
-
-  // Cross-fade path: trim each input, then chain xfade offsets.
+  // Probe every clip once: trim points and cross-fade offsets both need real
+  // durations, and the concat path needs them for its silent audio beds.
   const durations: number[] = [];
   for (const clip of input.clips) {
     const full = await probeDuration(clip.file);
@@ -219,7 +217,35 @@ export async function assembleClips(input: {
     durations.push(Math.max(0.1, end - start));
   }
 
-  const fade = Math.min(input.fadeDuration, Math.min(...durations) / 2);
+  const wantsFade = input.fadeDuration > 0;
+  // Clamp the fade so it can never eat more than half of the shortest clip.
+  const fade = wantsFade
+    ? Math.min(input.fadeDuration, Math.min(...durations) / 2)
+    : 0;
+
+  if (!wantsFade && !hasXfade) {
+    // No xfade and no fade wanted: a stream-copy concat is exact and instant.
+    // Only safe when every clip already shares codec and geometry, so it falls
+    // through to the filter path below on any mismatch.
+    const listPath = join(dir, `concat-${digest}.txt`);
+    const lines = input.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
+    await writeFile(listPath, `${lines.join("\n")}\n`, "utf8");
+    const copyOut = join(dir, `film-copy-${digest}.mp4`);
+    try {
+      await exec(ffmpeg, [
+        "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", listPath,
+        "-c", "copy", copyOut,
+      ], { maxBuffer: 32 * 1024 * 1024 });
+      const copied = await probeDuration(copyOut);
+      if (copied !== undefined) {
+        return { path: copyOut, mode: "concat" as const, hasXfade };
+      }
+    } catch {
+      // Mismatched streams: fall through to the normalising filter path.
+    }
+  }
+
   const args: string[] = ["-y", "-hide_banner", "-loglevel", "error"];
   for (let i = 0; i < input.clips.length; i++) {
     const clip = input.clips[i];
@@ -228,8 +254,8 @@ export async function assembleClips(input: {
     args.push("-ss", String(start), "-to", String(end), "-i", clip.file);
   }
 
-  // xfade requires every input to share a constant frame rate and identical
-  // dimensions, so normalise all streams onto the first clip's geometry first.
+  // Both xfade and concat require every input to share a constant frame rate
+  // and identical dimensions, so normalise all streams onto the first clip.
   const geometry = await probeVideoGeometry(input.clips[0].file);
   const width = geometry?.width ?? 1280;
   const height = geometry?.height ?? 720;
@@ -247,26 +273,40 @@ export async function assembleClips(input: {
     if (withAudio[i]) {
       filters.push(`[${i}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`);
     } else {
-      // Silent bed so every input has an audio track to cross-fade.
+      // Silent bed so every input contributes an audio track either way.
       filters.push(
         `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${durations[i]},asetpts=PTS-STARTPTS[a${i}]`,
       );
     }
   }
 
-  let previousV = "v0";
-  let previousA = "a0";
-  let elapsed = durations[0];
-  for (let i = 1; i < n; i++) {
-    const offset = Math.max(0, elapsed - fade);
-    const isLast = i === n - 1;
-    const vLabel = isLast ? "vout" : `vx${i}`;
-    const aLabel = isLast ? "aout" : `ax${i}`;
-    filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
-    filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
-    previousV = vLabel;
-    previousA = aLabel;
-    elapsed = offset + durations[i];
+  let mode: "concat" | "xfade";
+
+  if (fade === 0) {
+    // Hard cuts. concat joins the streams end to end with no overlap, which is
+    // exactly what a cut is; xfade would blend two frames that should never
+    // both be on screen.
+    const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
+    const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
+    filters.push(`${videoInputs}concat=n=${n}:v=1:a=0[vout]`);
+    filters.push(`${audioInputs}concat=n=${n}:v=0:a=1[aout]`);
+    mode = "concat";
+  } else {
+    let previousV = "v0";
+    let previousA = "a0";
+    let elapsed = durations[0];
+    for (let i = 1; i < n; i++) {
+      const offset = Math.max(0, elapsed - fade);
+      const isLast = i === n - 1;
+      const vLabel = isLast ? "vout" : `vx${i}`;
+      const aLabel = isLast ? "aout" : `ax${i}`;
+      filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
+      filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
+      previousV = vLabel;
+      previousA = aLabel;
+      elapsed = offset + durations[i];
+    }
+    mode = "xfade";
   }
 
   args.push(
@@ -279,7 +319,9 @@ export async function assembleClips(input: {
   );
 
   await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return { path: outPath, mode: "xfade" as const, hasXfade, fadeSeconds: fade };
+  return mode === "xfade"
+    ? { path: outPath, mode, hasXfade, fadeSeconds: fade }
+    : { path: outPath, mode, hasXfade, fadeSeconds: 0 };
 }
 
 export async function pathToDataUrl(file: string, mime = "image/png") {

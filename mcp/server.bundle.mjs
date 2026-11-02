@@ -42584,28 +42584,6 @@ async function assembleClips(input2) {
     ], { maxBuffer: 32 * 1024 * 1024 });
     return { path: outPath, mode: "single", hasXfade };
   }
-  if (!hasXfade) {
-    const listPath = join2(dir, `concat-${digest}.txt`);
-    const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
-    await writeFile(listPath, `${lines.join("\n")}
-`, "utf8");
-    await exec(ffmpeg, [
-      "-y",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
-      "-c",
-      "copy",
-      outPath
-    ], { maxBuffer: 32 * 1024 * 1024 });
-    return { path: outPath, mode: "concat", hasXfade };
-  }
   const durations = [];
   for (const clip of input2.clips) {
     const full = await probeDuration(clip.file);
@@ -42614,7 +42592,37 @@ async function assembleClips(input2) {
     const end = clip.trimEnd ?? full;
     durations.push(Math.max(0.1, end - start));
   }
-  const fade = Math.min(input2.fadeDuration, Math.min(...durations) / 2);
+  const wantsFade = input2.fadeDuration > 0;
+  const fade = wantsFade ? Math.min(input2.fadeDuration, Math.min(...durations) / 2) : 0;
+  if (!wantsFade && !hasXfade) {
+    const listPath = join2(dir, `concat-${digest}.txt`);
+    const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
+    await writeFile(listPath, `${lines.join("\n")}
+`, "utf8");
+    const copyOut = join2(dir, `film-copy-${digest}.mp4`);
+    try {
+      await exec(ffmpeg, [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        listPath,
+        "-c",
+        "copy",
+        copyOut
+      ], { maxBuffer: 32 * 1024 * 1024 });
+      const copied = await probeDuration(copyOut);
+      if (copied !== void 0) {
+        return { path: copyOut, mode: "concat", hasXfade };
+      }
+    } catch {
+    }
+  }
   const args = ["-y", "-hide_banner", "-loglevel", "error"];
   for (let i = 0; i < input2.clips.length; i++) {
     const clip = input2.clips[i];
@@ -42641,19 +42649,29 @@ async function assembleClips(input2) {
       );
     }
   }
-  let previousV = "v0";
-  let previousA = "a0";
-  let elapsed = durations[0];
-  for (let i = 1; i < n; i++) {
-    const offset = Math.max(0, elapsed - fade);
-    const isLast = i === n - 1;
-    const vLabel = isLast ? "vout" : `vx${i}`;
-    const aLabel = isLast ? "aout" : `ax${i}`;
-    filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
-    filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
-    previousV = vLabel;
-    previousA = aLabel;
-    elapsed = offset + durations[i];
+  let mode;
+  if (fade === 0) {
+    const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
+    const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
+    filters.push(`${videoInputs}concat=n=${n}:v=1:a=0[vout]`);
+    filters.push(`${audioInputs}concat=n=${n}:v=0:a=1[aout]`);
+    mode = "concat";
+  } else {
+    let previousV = "v0";
+    let previousA = "a0";
+    let elapsed = durations[0];
+    for (let i = 1; i < n; i++) {
+      const offset = Math.max(0, elapsed - fade);
+      const isLast = i === n - 1;
+      const vLabel = isLast ? "vout" : `vx${i}`;
+      const aLabel = isLast ? "aout" : `ax${i}`;
+      filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
+      filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
+      previousV = vLabel;
+      previousA = aLabel;
+      elapsed = offset + durations[i];
+    }
+    mode = "xfade";
   }
   args.push(
     "-filter_complex",
@@ -42679,7 +42697,7 @@ async function assembleClips(input2) {
     outPath
   );
   await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return { path: outPath, mode: "xfade", hasXfade, fadeSeconds: fade };
+  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade } : { path: outPath, mode, hasXfade, fadeSeconds: 0 };
 }
 async function pathToDataUrl(file2, mime = "image/png") {
   const buffer = await readFile(file2);
@@ -43461,7 +43479,7 @@ server.registerTool(
 server.registerTool(
   "assemble_film",
   {
-    description: "Assemble ordered clips into a single film with cross-fades, using real FFmpeg. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Falls back to hard cuts when the available FFmpeg has no xfade filter.",
+    description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: measured on real chained clips, a cross-fade double-exposes drifting textures and reads as the set melting.",
     inputSchema: external_exports.object({
       clips: external_exports.array(external_exports.object({
         url: external_exports.string(),
@@ -43469,7 +43487,9 @@ server.registerTool(
         trimStart: external_exports.number().min(0).optional(),
         trimEnd: external_exports.number().min(0).optional()
       })).min(1),
-      fadeDuration: external_exports.number().min(0).max(5).default(0.5)
+      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+        "Seconds of cross-fade at each join. 0 is a hard cut, which is the default for a reason."
+      )
     })
   },
   async (args) => {
@@ -43491,7 +43511,7 @@ server.registerTool(
       crossFades: result.mode === "xfade",
       mode: result.mode,
       fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
-      message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts: this FFmpeg build has no xfade filter. Install FFmpeg 4.3+ for cross-fades."
+      message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
     };
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
@@ -43523,6 +43543,13 @@ function jobPayload(job) {
     ...done ? {
       spentUsd: Math.round(job.spentUsd * 100) / 100,
       estimatedUsd: job.estimateUsd,
+      // Carried shots were paid for by an earlier run. Show the whole film's
+      // cost and this run's cost separately so neither number lies.
+      ...job.carriedOverUsd !== void 0 ? {
+        carriedOverUsd: job.carriedOverUsd,
+        filmTotalUsd: Math.round((job.spentUsd + job.carriedOverUsd) * 100) / 100,
+        continuedFrom: job.resumedFrom
+      } : {},
       shots: job.shots,
       filmPath: job.filmPath,
       fileUrl: job.fileUrl,
@@ -43535,7 +43562,7 @@ function jobPayload(job) {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId."
     },
-    next: job.state === "completed" ? "Report the filmPath and spentUsd to the user. lastFramePath continues this film as firstFrameUrl." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed."
+    next: job.state === "completed" ? "Report the filmPath and spentUsd to the user. To make the film longer, call render_sequence again with resumeFromJobId set to this jobId and only the new shots." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed. Any shots already rendered are still on disk and can be assembled or continued from."
   };
 }
 async function runSequenceJob(job, args) {
@@ -43548,7 +43575,11 @@ async function runSequenceJob(job, args) {
     }
     characterRefs.push(...known.referenceImageUrls ?? []);
   }
-  let previousFrame = args.firstFrameUrl;
+  const carried = args.carriedShots ?? [];
+  job.shots.push(...carried);
+  job.completed = carried.length;
+  let previousFrame = args.resumeFramePath ?? carried.at(-1)?.framePath ?? args.firstFrameUrl;
+  if (previousFrame) job.lastFramePath = previousFrame;
   try {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
@@ -43561,20 +43592,22 @@ async function runSequenceJob(job, args) {
         firstFrameUrl: previousFrame,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+      const shotNumber = carried.length + i + 1;
       const entry = {
-        index: i + 1,
-        title: shot.title ?? `Shot ${i + 1}`,
+        index: shotNumber,
+        title: shot.title ?? `Shot ${shotNumber}`,
         status: result.status ?? "failed",
         videoUrl: result.videoUrl,
         costUsd: result.costUsd,
         error: result.error,
-        localPath: void 0
+        localPath: void 0,
+        framePath: void 0
       };
       job.spentUsd += result.costUsd ?? 0;
       job.shots.push(entry);
       if (result.status !== "completed" || !result.videoUrl) {
         job.state = "stopped";
-        job.error = `Shot ${i + 1} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
+        job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
         job.finishedAt = Date.now();
         return;
       }
@@ -43583,13 +43616,14 @@ async function runSequenceJob(job, args) {
       const frame = await extractLastFrame({ file: clipPath });
       if (!frame.path) {
         job.state = "stopped";
-        job.error = `Shot ${i + 1} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
+        job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
         job.finishedAt = Date.now();
         return;
       }
       previousFrame = frame.path;
+      entry.framePath = frame.path;
       job.lastFramePath = frame.path;
-      job.completed = i + 1;
+      job.completed = shotNumber;
     }
     if (args.assemble) {
       const files = job.shots.map((shot) => shot.localPath).filter((p) => Boolean(p)).map((file2) => ({ file: file2, trimStart: void 0, trimEnd: void 0 }));
@@ -43631,7 +43665,12 @@ server.registerTool(
       ),
       model: external_exports.string().default("grok-imagine-video-1.5"),
       assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
-      fadeDuration: external_exports.number().min(0).max(5).default(0.25),
+      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+        "Seconds of cross-fade at each join. 0 (the default) is a hard cut. Measured on real chained clips, a dissolve ghosts the cobblestones and sharpens-then-blurs at the seam, which reads as the set melting; a cut reads as a cut. Only raise this for a montage where a visible dissolve is the point."
+      ),
+      resumeFromJobId: external_exports.string().optional().describe(
+        "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
+      ),
       confirm: external_exports.boolean().default(false).describe(
         "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
       ),
@@ -43641,6 +43680,49 @@ server.registerTool(
   async (args) => {
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
+    let resumeJob;
+    if (args.resumeFromJobId) {
+      resumeJob = sequenceJobs.get(args.resumeFromJobId);
+      if (!resumeJob) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "Unknown resumeFromJobId",
+              detail: "No job has that id in this process. Jobs do not survive a server restart, so a film can only be continued within the same session that rendered it.",
+              known: Array.from(sequenceJobs.keys()).slice(-5)
+            }, null, 2)
+          }]
+        };
+      }
+      if (resumeJob.state === "running") {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "That job is still running",
+              detail: "Wait for it to finish and poll check_sequence. Continuing a running job renders it twice.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+      if (resumeJob.shots.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "That job rendered no shots to continue from",
+              jobId: resumeJob.id,
+              state: resumeJob.state,
+              detail: resumeJob.error ?? "Start a new film with firstFrameUrl instead."
+            }, null, 2)
+          }]
+        };
+      }
+    }
+    const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
+    const resumeFramePath = carried.at(-1)?.framePath;
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
     ) / 100;
@@ -43655,8 +43737,16 @@ server.registerTool(
               shots: shotCount,
               totalSeconds,
               aspectRatio: args.aspectRatio,
+              resolution: args.resolution,
+              fadeSeconds: args.fadeDuration,
               continuity: "Each shot starts from the previous shot's last frame.",
-              rendersAsOneJob: true
+              rendersAsOneJob: true,
+              ...resumeJob ? {
+                continuingJob: resumeJob.id,
+                alreadyRenderedShots: carried.length,
+                assembledFilmShots: carried.length + shotCount,
+                note: `Shots 1-${carried.length} are already rendered and cost nothing more; they go into the final assembly. This estimate covers only the ${shotCount} new shots.`
+              } : {}
             },
             estimate: {
               totalUsd: estimate,
@@ -43673,11 +43763,16 @@ server.registerTool(
       id: sequenceJobId(),
       startedAt: Date.now(),
       state: "running",
-      shotCount,
+      // Total film length, not just this call's new shots.
+      shotCount: carried.length + shotCount,
       completed: 0,
       estimateUsd: estimate,
       spentUsd: 0,
-      shots: []
+      shots: [],
+      ...resumeJob ? {
+        resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
+        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100
+      } : {}
     };
     sequenceJobs.set(job.id, job);
     void runSequenceJob(job, {
@@ -43689,7 +43784,9 @@ server.registerTool(
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot
+      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+      carriedShots: carried.length > 0 ? carried : void 0,
+      resumeFramePath
     });
     const inlineDeadline = Date.now() + 25e3;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
