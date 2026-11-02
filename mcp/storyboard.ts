@@ -180,11 +180,27 @@ export function planBoardFrames(opts: {
     } else if (index === prompts.length) {
       prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
     } else {
+      // A boundary belongs to TWO shots, and the wording used to describe it
+      // as both at once — "the last frame of shot k and the first frame of
+      // shot k+1 ... hold the same framing" — which the model resolved by
+      // averaging them. On a real board that put a compromise medium where a
+      // close-up on hands was planned: shot 1 sat wide, shot 2 was written as
+      // hands filling the frame, and the picture in between was neither, so the
+      // cut read as a jump in scale rather than an edited cut. Measured: the
+      // face in the boundary was 0.101 of the frame wide against the hero's
+      // 0.101, and the close-up never happened.
+      //
+      // The frame is now written as the INCOMING shot's opening, with the
+      // outgoing shot travelling to arrive at it. Same picture, same job, one
+      // owner: measured on the same pair, the face came out 0.219 and 0.211 of
+      // the frame wide, and one of three renders put it out of shot entirely,
+      // which is what "close on his hands" was asking for.
       prompt =
-        `Boundary frame: the last frame of shot ${index} and the first frame of shot ${index + 1}. ` +
-        `The action of shot ${index} has just resolved — ${prompts[index - 1]} ` +
-        `This is where shot ${index + 1} begins — ${prompts[index]} ` +
-        "Hold the same framing, light and wardrobe across the boundary.";
+        `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ` +
+        `${prompts[index]} ` +
+        `Shot ${index} travels in to arrive at this picture, so its move ends where this frame ` +
+        `begins — the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) ` +
+        "Hold the same light, wardrobe and room across the boundary.";
     }
 
     // A wardrobe change has to be asked for by name. Without this the picture

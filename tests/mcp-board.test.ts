@@ -56,8 +56,13 @@ describe('frame planning', () => {
     expect(frames).toHaveLength(SHOTS.length + 1);
     expect(frames[0].prompt).toContain('Opening frame of shot 1');
     expect(frames.at(-1)!.prompt).toContain('Closing frame of shot 3');
-    // The middle frames are explicitly both things at once: that is the join.
-    expect(frames[1].prompt).toContain('last frame of shot 1 and the first frame of shot 2');
+    // The middle frame is written as the incoming shot's opening, with the
+    // outgoing shot travelling to meet it. Describing it as both shots at once
+    // made the model average them, which put a compromise medium where a
+    // close-up was planned: measured, the face came out 0.101 of the frame wide
+    // against the hero's 0.101, and the close-up never happened.
+    expect(frames[1].prompt).toContain('The opening frame of shot 2, which is also the closing frame of shot 1');
+    expect(frames[1].prompt).toContain('travels in to arrive at this picture');
   });
 
   it('folds the look into every still prompt so the board matches the film', () => {

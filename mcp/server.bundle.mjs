@@ -43235,7 +43235,7 @@ function planBoardFrames(opts) {
     } else if (index === prompts.length) {
       prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
     } else {
-      prompt = `Boundary frame: the last frame of shot ${index} and the first frame of shot ${index + 1}. The action of shot ${index} has just resolved \u2014 ${prompts[index - 1]} This is where shot ${index + 1} begins \u2014 ${prompts[index]} Hold the same framing, light and wardrobe across the boundary.`;
+      prompt = `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ${prompts[index]} Shot ${index} travels in to arrive at this picture, so its move ends where this frame begins \u2014 the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) Hold the same light, wardrobe and room across the boundary.`;
     }
     const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
     const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
