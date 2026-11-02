@@ -30,7 +30,7 @@ The symptom is subtle: you give it a perfect prompt, it produces video anyway, a
 
 If a session seems to ignore theShow, check whether it actually called the tools. Run `grok mcp doctor` where the session is running. Six healthy tools means you are in the right place.
 
-If you installed an early version and the doctor reports `handshake failed (connection closed: initialize response)`, that release installed dependencies during startup, which overran the client's initialize window. Update to the current version:
+If you installed an early version and the doctor reports `handshake failed (connection closed: initialize response)`, one of two things was wrong: an early release installed dependencies during startup and overran the client's initialize window, or the manifest used a relative path that resolved from your home directory instead of the plugin folder. Both are fixed. Update with:
 
 ```bash
 grok plugin uninstall theshow && grok plugin install TayDa64/theShow --trust
