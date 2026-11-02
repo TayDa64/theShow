@@ -22,6 +22,14 @@ grok mcp doctor
 
 You want to see `theshow` reported healthy with six tools discovered. If it reports a failure, the details line names the missing piece.
 
+### Run it on your own machine, not in a cloud sandbox
+
+This one costs people an afternoon if they hit it blind. Plugins install per machine, into `~/.grok/installed-plugins/` on the computer where you ran the command. A Grok Build session started from a web share link runs in a throwaway cloud sandbox with its own empty workspace, and it cannot see your installed plugins.
+
+The symptom is subtle: you give it a perfect prompt, it produces video anyway, and nothing about the output mentions the plugin. It quietly fell back to the built-in image and video tools plus hand-written FFmpeg, which is the exact manual slog this plugin removes.
+
+If a session seems to ignore theShow, check whether it actually called the tools. Run `grok mcp doctor` where the session is running. Six healthy tools means you are in the right place.
+
 ## Your first film
 
 Ask in plain language. You never call the tools yourself.
