@@ -43078,8 +43078,142 @@ async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
 
 // mcp/storyboard.ts
 import { createHash as createHash2 } from "node:crypto";
-import { stat as stat2 } from "node:fs/promises";
+import { rm as rm2, stat as stat2 } from "node:fs/promises";
 import { join as join4 } from "node:path";
+
+// mcp/wardrobe.ts
+import { execFile as execFile3 } from "node:child_process";
+import { promisify as promisify3 } from "node:util";
+var exec3 = promisify3(execFile3);
+var SUBSTITUTION_COVERAGE = 0.26;
+var MIN_REFERENCE_SHARE = 0.12;
+var MIN_SAT = 50;
+var MIN_VAL = 60;
+var HUE_TOLERANCE = 14;
+var GRID_W = 320;
+var GRID_H = 180;
+async function readGrid(file2) {
+  const { ffmpeg } = await resolveTools();
+  const { stdout } = await exec3(
+    ffmpeg,
+    [
+      "-v",
+      "error",
+      "-i",
+      file2,
+      "-vf",
+      `scale=${GRID_W}:${GRID_H}`,
+      "-frames:v",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "-"
+    ],
+    { encoding: "buffer", maxBuffer: 8 * 1024 * 1024 }
+  );
+  const rgb = new Uint8Array(stdout);
+  if (rgb.length < GRID_W * GRID_H * 3) throw new Error(`could not decode ${file2}`);
+  return { width: GRID_W, height: GRID_H, rgb };
+}
+function armColumns(width) {
+  return [
+    [Math.round(width * 0.13), Math.round(width * 0.29)],
+    [Math.round(width * 0.71), Math.round(width * 0.87)]
+  ];
+}
+function armRows(height) {
+  return [Math.round(height * 0.46), Math.round(height * 0.82)];
+}
+function toHsv(r, g, b) {
+  const rn = r / 255, gn = g / 255, bn = b / 255;
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === rn) h = (gn - bn) / d % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h: h / 2, s: max === 0 ? 0 : d / max * 255, v: max * 255 };
+}
+function armBand(frame) {
+  const out = [];
+  const [y0, y1] = armRows(frame.height);
+  for (const [x0, x1] of armColumns(frame.width)) {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * frame.width + x) * 3;
+        out.push(toHsv(frame.rgb[i], frame.rgb[i + 1], frame.rgb[i + 2]));
+      }
+    }
+  }
+  return out;
+}
+function hueDistance(a, b) {
+  const d = Math.abs(a - b);
+  return Math.min(d, 180 - d);
+}
+function isGarment(p) {
+  return p.s > MIN_SAT && p.v > MIN_VAL;
+}
+function dominantHue(pixels) {
+  let sx = 0, sy = 0, n = 0;
+  for (const p of pixels) {
+    if (!isGarment(p)) continue;
+    const a = p.h * 2 * Math.PI / 180;
+    const w = p.s / 255;
+    sx += Math.cos(a) * w;
+    sy += Math.sin(a) * w;
+    n += 1;
+  }
+  if (n < 200) return void 0;
+  const angle = Math.atan2(sy, sx);
+  return (angle * 180 / Math.PI / 2 + 180) % 180;
+}
+async function checkWardrobe(referenceFile, stillFile) {
+  let reference, still;
+  try {
+    reference = await readGrid(referenceFile);
+    still = await readGrid(stillFile);
+  } catch (err) {
+    return { verdict: "unknown", coverage: 0, reason: err instanceof Error ? err.message : String(err) };
+  }
+  const referenceBand = armBand(reference);
+  const hue = dominantHue(referenceBand);
+  if (hue === void 0) {
+    return {
+      verdict: "unknown",
+      coverage: 0,
+      reason: "the reference picture has too little garment in the arm band to learn a colour from"
+    };
+  }
+  const referenceShare = referenceBand.filter(
+    (p) => isGarment(p) && hueDistance(p.h, hue) <= HUE_TOLERANCE
+  ).length / referenceBand.length;
+  if (referenceShare < MIN_REFERENCE_SHARE) {
+    return {
+      verdict: "unknown",
+      coverage: referenceShare,
+      referenceHue: hue,
+      reason: "the reference picture does not show enough of the outer garment to compare"
+    };
+  }
+  const stillBand = armBand(still);
+  const coverage = stillBand.filter(
+    (p) => isGarment(p) && hueDistance(p.h, hue) <= HUE_TOLERANCE
+  ).length / stillBand.length;
+  return {
+    verdict: coverage < SUBSTITUTION_COVERAGE ? "substituted" : "kept",
+    coverage,
+    referenceHue: hue
+  };
+}
+
+// mcp/storyboard.ts
 var STILL_USD = 0.02;
 var STILL_EXTENSIONS = ["png", "jpg", "webp"];
 function shotPrompt(shot) {
@@ -43169,7 +43303,7 @@ async function boardFilm(input2, deps) {
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.`,
+    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Each frame is checked against the picture's outer garment and re-rolled once if it changed, so a bad board can cost up to one extra still per frame.` : ""),
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43227,7 +43361,7 @@ async function boardFilm(input2, deps) {
       ...boardBase ? [] : deps.referenceImageUrls ?? [],
       ...boardBase ? [] : previousFrame ? [previousFrame] : []
     ];
-    const result = await deps.generateStill(
+    let result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
@@ -43236,6 +43370,37 @@ async function boardFilm(input2, deps) {
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem }
     );
+    let wardrobe;
+    let rerolled = false;
+    if (boardBase && result.localPath) {
+      const checker = deps.checkWardrobe ?? checkWardrobe;
+      wardrobe = await checker(boardBase, result.localPath);
+      if (wardrobe.verdict === "substituted") {
+        rerolled = true;
+        const second = await deps.generateStill(
+          {
+            prompt: entry.frame.prompt,
+            aspectRatio,
+            baseImageUrl: boardBase,
+            referenceImageUrls: refs.length > 0 ? refs : void 0
+          },
+          // Same stem on purpose: the accepted picture takes the canonical
+          // name, so a later board run reuses it free instead of buying the
+          // frame again, and the rejected attempt never becomes an anchor.
+          { outputDir: deps.outputDir, filename: entry.frame.stem }
+        );
+        if (second.localPath) {
+          const again = await checker(boardBase, second.localPath);
+          spentUsd += second.costUsd ?? STILL_USD;
+          if (second.localPath !== result.localPath) {
+            await rm2(result.localPath, { force: true }).catch(() => {
+            });
+          }
+          result = second;
+          wardrobe = again;
+        }
+      }
+    }
     if (result.localPath) {
       paths.set(entry.frame.index, result.localPath);
       spentUsd += result.costUsd ?? STILL_USD;
@@ -43244,7 +43409,13 @@ async function boardFilm(input2, deps) {
         prompt: entry.frame.prompt,
         path: result.localPath,
         reused: false,
-        costUsd: result.costUsd
+        costUsd: result.costUsd,
+        // Only report the check when it had something to say. A board with no
+        // base picture is not being checked at all, and an "unknown" on every
+        // frame would read as six problems.
+        wardrobe: wardrobe?.verdict === "unknown" ? void 0 : wardrobe?.verdict,
+        wardrobeCoverage: wardrobe?.verdict === "unknown" ? void 0 : wardrobe?.coverage,
+        rerolled: rerolled || void 0
       });
     } else {
       frames.push({

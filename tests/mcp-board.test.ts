@@ -453,3 +453,62 @@ describe('the picture outranks the prompt', () => {
     }
   });
 });
+
+describe('the outer garment survives the board', () => {
+  /**
+   * The failure this guards. Six stills edited from one hero frame with the
+   * same wording produced five coats and one shearling vest — the coat's
+   * sleeves gone, the blazer underneath promoted to the outer layer. That frame
+   * pinned the end of one shot and the start of the next, so the clip entering
+   * it interpolated into a costume change around thirteen seconds. Wording said
+   * the picture outranked the prompt and was obeyed most of the time; the check
+   * is what makes "most of the time" not good enough.
+   */
+  const VERDICT = (verdicts: Array<'kept' | 'substituted' | 'unknown'>) => {
+    let i = 0;
+    return vi.fn(async () => {
+      const verdict = verdicts[Math.min(i, verdicts.length - 1)];
+      i += 1;
+      return { verdict, coverage: verdict === 'substituted' ? 0.12 : 0.48 };
+    });
+  };
+
+  it('re-rolls a frame whose outer garment was substituted', async () => {
+    const generateStill = fakeStill();
+    // Frame 0 is bad on its first attempt, good on the second.
+    const checkWardrobe = VERDICT(['substituted', 'kept', 'kept', 'kept', 'kept']);
+
+    const board2 = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
+      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill, checkWardrobe },
+    );
+
+    // One extra still bought: N+1 frames plus the re-roll.
+    expect(generateStill.mock.calls).toHaveLength(SHOTS.length + 2);
+    expect(board2.frames[0].rerolled).toBe(true);
+    expect(board2.frames[0].wardrobe).toBe('kept');
+    // The frame that was re-rolled still anchors the same two shots.
+    expect(board2.shots[0].firstFrameUrl).toBe(board2.frames[0].path);
+    expect(board2.shots[0].lastFrameUrl).toBe(board2.frames[1].path);
+  });
+
+  it('keeps the first picture when the check abstains', async () => {
+    const generateStill = fakeStill();
+    const checkWardrobe = VERDICT(['unknown', 'unknown', 'unknown', 'unknown', 'unknown']);
+    await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
+      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill, checkWardrobe },
+    );
+    expect(generateStill.mock.calls).toHaveLength(SHOTS.length + 1);
+  });
+
+  it('checks nothing when there is no picture to check against', async () => {
+    const generateStill = fakeStill();
+    const checkWardrobe = vi.fn();
+    await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
+      { outputDir: dir, generateStill, checkWardrobe },
+    );
+    expect(checkWardrobe).not.toHaveBeenCalled();
+  });
+});

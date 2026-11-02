@@ -21,9 +21,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { GrokStillResult } from "./grokVideo.ts";
+import { checkWardrobe, type WardrobeCheck } from "./wardrobe.ts";
 
 /**
  * Measured on a real subscription call: 200000000 ticks, i.e. two cents.
@@ -75,6 +76,16 @@ export type BoardedFrame = {
   costUsd?: number;
   /** Set when this frame failed to render; the rest of the board still runs. */
   error?: string;
+  /**
+   * Whether the reference picture's outer garment survived into this still.
+   * Absent when there was no picture to check against, or nothing in it to
+   * compare with.
+   */
+  wardrobe?: "kept" | "substituted";
+  /** How much of the arm band still wore it. Higher is closer to the picture. */
+  wardrobeCoverage?: number;
+  /** True when the first attempt was rejected and a second one bought. */
+  rerolled?: boolean;
 };
 
 export type BoardFilmResult = {
@@ -228,6 +239,14 @@ export type BoardFilmDeps = {
    * better of the two and it is what keeps a room recognisable across a board.
    */
   baseImageUrl?: string;
+  /**
+   * Did this still keep the reference picture's outer garment?
+   *
+   * Injected so a test can describe an outcome instead of encoding a JPEG.
+   * Defaults to the real `checkWardrobe`, which reads the target colour off the
+   * reference picture rather than assuming one.
+   */
+  checkWardrobe?: (referenceFile: string, stillFile: string) => Promise<WardrobeCheck>;
 };
 
 /**
@@ -308,7 +327,11 @@ export async function boardFilm(
       `(${usable.length} + 1 shared boundaries)` +
       (heroStills ? `, plus one hero frame` : "") +
       `, ${billable} to render at $0.02 each, ` +
-      `${existing.length - missing.length} already on disk and free.`,
+      `${existing.length - missing.length} already on disk and free.` +
+      (deps.baseImageUrl
+        ? ` Each frame is checked against the picture's outer garment and re-rolled ` +
+          `once if it changed, so a bad board can cost up to one extra still per frame.`
+        : ""),
     isEstimate: true,
   };
 
@@ -407,7 +430,7 @@ export async function boardFilm(
       ...(boardBase ? [] : previousFrame ? [previousFrame] : []),
     ];
 
-    const result = await deps.generateStill(
+    let result = await deps.generateStill(
       {
         prompt: entry.frame.prompt,
         aspectRatio,
@@ -416,6 +439,50 @@ export async function boardFilm(
       },
       { outputDir: deps.outputDir, filename: entry.frame.stem },
     );
+
+    // Check the garment BEFORE this picture is allowed to anchor two shots.
+    //
+    // Worded instructions are followed most of the time and not all of the
+    // time: measured, six stills from one hero frame with identical wording
+    // produced five coats and one vest with the coat's sleeves gone. That one
+    // frame then pinned the end of the shot before it AND the start of the shot
+    // after it, so a whole clip interpolated into a costume change. A re-roll
+    // costs two cents; the clip that inherits the mistake costs eighty-six.
+    let wardrobe: WardrobeCheck | undefined;
+    let rerolled = false;
+    if (boardBase && result.localPath) {
+      const checker = deps.checkWardrobe ?? checkWardrobe;
+      wardrobe = await checker(boardBase, result.localPath);
+      if (wardrobe.verdict === "substituted") {
+        rerolled = true;
+        const second = await deps.generateStill(
+          {
+            prompt: entry.frame.prompt,
+            aspectRatio,
+            baseImageUrl: boardBase,
+            referenceImageUrls: refs.length > 0 ? refs : undefined,
+          },
+          // Same stem on purpose: the accepted picture takes the canonical
+          // name, so a later board run reuses it free instead of buying the
+          // frame again, and the rejected attempt never becomes an anchor.
+          { outputDir: deps.outputDir, filename: entry.frame.stem },
+        );
+        if (second.localPath) {
+          const again = await checker(boardBase, second.localPath);
+          spentUsd += second.costUsd ?? STILL_USD;
+          // The rejected picture must not survive on disk under a name a later
+          // board would pick up as "already bought", which happens whenever the
+          // two attempts came back in different formats.
+          if (second.localPath !== result.localPath) {
+            await rm(result.localPath, { force: true }).catch(() => {});
+          }
+          // Keep the re-roll either way: it is closer to the picture than the
+          // frame it replaced, and both were paid for.
+          result = second;
+          wardrobe = again;
+        }
+      }
+    }
 
     if (result.localPath) {
       paths.set(entry.frame.index, result.localPath);
@@ -426,6 +493,12 @@ export async function boardFilm(
         path: result.localPath,
         reused: false,
         costUsd: result.costUsd,
+        // Only report the check when it had something to say. A board with no
+        // base picture is not being checked at all, and an "unknown" on every
+        // frame would read as six problems.
+        wardrobe: wardrobe?.verdict === "unknown" ? undefined : wardrobe?.verdict,
+        wardrobeCoverage: wardrobe?.verdict === "unknown" ? undefined : wardrobe?.coverage,
+        rerolled: rerolled || undefined,
       });
     } else {
       frames.push({

@@ -172,6 +172,22 @@ calls, so a shot without the reference will drift even if the previous shot had 
    ("he has taken the coat off"); otherwise the board keeps what the photo shows. Do not pad the cast
    with details the photo contradicts.
 
+   **Do not list a garment you cannot see.** A second outer layer buried under the first is the one
+   detail that reliably leaks: a measured cast line ended "…under a tan sherpa-collar jacket with a
+   dark navy blazer beneath it", the coat survived, and the model spent a whole shot promoting the
+   blazer and turning the coat into a sleeveless vest around thirteen seconds in. Describe the layer
+   that is actually visible and stop there; the blazer underneath is in the picture whether or not the
+   sentence mentions it.
+
+   **The board now checks the garment for you.** Every still edited from a picture is compared back to
+   that picture: it learns the outer garment's colour from the arms of the reference, then measures how
+   much of each new still's arm band still carries it. A frame that lost the sleeves scores far below
+   one that kept them — 0.125 and 0.181 for the two bad frames against 0.329 and up for thirty good
+   ones — and the board buys one re-roll rather than let that frame anchor two shots. It costs at most
+   one extra still per frame, which is two cents against the eighty-odd cents of the clip that would
+   otherwise inherit the mistake. `frames[].wardrobe` says `kept` or `substituted`, and `rerolled` marks
+   the frames that needed a second try. Look at those first when a film goes wrong.
+
    `cast` is a physical description, not a name — a name means nothing to the image model.
 
    Show the stills and the cost. On approval, call again with `confirm: true`. The returned `shots`
