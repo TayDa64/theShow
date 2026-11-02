@@ -20,7 +20,6 @@ import { boardFilm, toRenderShots } from "./storyboard.ts";
 import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 
 const server = new McpServer({
@@ -848,7 +847,15 @@ server.registerTool(
   }
 );
 
-const DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join(tmpdir(), "theshow-output");
+// Downloaded clips belong with the film, not in a temp folder.
+//
+// They used to land in the system temp dir, which is cleared by a reboot or a
+// cleaner. The job record still pointed at them, so list_films would report a
+// finished film whose footage had quietly vanished, and retry_shot would try to
+// re-assemble from files that were no longer there. A paid render is the one
+// thing here that cannot be regenerated for free, so it goes in ~/.theshow/media
+// beside the film and the board frames.
+const DOWNLOAD_DIR = OUTPUT_DIR;
 
 /**
  * Accept a public https URL, a file:// URL, or a plain local path and return a

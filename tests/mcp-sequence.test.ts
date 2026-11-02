@@ -24,6 +24,24 @@ function codeOnly(source: string) {
     .join('\n');
 }
 
+describe('paid renders are kept', () => {
+  it('downloads clips into the durable media folder, not the system temp dir', () => {
+    const code = codeOnly(serverSource);
+    // A rendered clip is the only artefact here that cannot be regenerated for
+    // free. Downloads used to land in a tmpdir, which a reboot clears while the
+    // job record still pointed there, so a finished film could silently lose
+    // its footage and retry_shot would have nothing to re-assemble from.
+    const downloadDir = code.match(/const DOWNLOAD_DIR = ([^;]+);/);
+    expect(downloadDir).not.toBeNull();
+    expect(downloadDir?.[1]).not.toMatch(/tmpdir\(/);
+    expect(downloadDir?.[1]).toContain('OUTPUT_DIR');
+  });
+
+  it('does not import the temp-dir helper it no longer needs', () => {
+    expect(codeOnly(serverSource)).not.toMatch(/from "node:os"/);
+  });
+});
+
 describe('hard cuts', () => {
   it('defaults both render_sequence and assemble_film to a zero fade', () => {
     const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));

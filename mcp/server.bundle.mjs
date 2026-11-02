@@ -43443,7 +43443,6 @@ async function loadAllCharacters() {
 // mcp/server.ts
 import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
-import { tmpdir as tmpdir2 } from "node:os";
 import { createHash as createHash4 } from "node:crypto";
 var server = new McpServer({
   name: "theshow",
@@ -44057,7 +44056,7 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
   }
 );
-var DOWNLOAD_DIR = process.env.THESHOW_OUTPUT_DIR || join6(tmpdir2(), "theshow-output");
+var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
     await mkdir4(DOWNLOAD_DIR, { recursive: true });
