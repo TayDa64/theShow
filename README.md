@@ -108,7 +108,7 @@ None of them skips the estimate. A command that spends money still prices the wo
 
 Between the approved brief and the first paid render there is a cheap checkpoint: **`board_film`**. It generates one still per shot boundary, so you see the film as pictures first.
 
-A still is **$0.02**. A second of 720p video is **$0.14**. A four-shot film boards as five stills for ten cents and renders for about $3.44 — the board is roughly 3% of the cost and catches the things that are expensive to fix later: wrong wardrobe, wrong light, a face that is not your character, a room that reads nothing like the one you meant.
+A still is **$0.02**. A second of 720p video is **$0.14**. Four six-second shots board as five stills for ten cents and render for $3.44 — the board is roughly 3% of the cost and catches the things that are expensive to fix later: wrong wardrobe, wrong light, a face that is not your character, a room that reads nothing like the one you meant.
 
 - **N shots produce N+1 stills**, not 2N. The boundary between two shots is one picture, used as the first shot's last frame and the second shot's first frame. That is what makes the cut exact.
 - **A reference photo outranks the prompt here.** The board edits from your picture rather than treating it as a hint, so the prompt's job is to change the pose and the action and leave the rest alone.
@@ -142,7 +142,7 @@ A film is not one long generation. It is a chain, and the chain is the whole des
 
 **The boundary frame belongs to both shots.** A boarded film does not guess where one shot ends and the next begins: N shots produce N+1 stills, and shot 2's first frame is shot 1's last frame, byte for byte. Every cut is between two uses of the same file.
 
-**Pinning changes the deal.** A clip pinned only at its start drifts: two unpinned clips of the same scene sit around 0.20 correlation, which is why a cut between them pops. Pinning both ends pins the opening frame at 0.998 against the supplied image and the closing frame at 0.87 — lower only because the last rendered frame carries motion blur. Shot 1's last frame and shot 2's first frame are the same picture, so there is nothing to hide with a fade.
+**Pinning changes the deal.** A clip pinned only at its start drifts: two unpinned clips of the same scene sit around 0.20 correlation, which is why a cut between them pops. Pinning both ends holds the opening frame at 0.998 against the supplied image, and the closing frame between 0.87 and 0.99 — the low end is a last frame carrying motion blur, the high end is a clean settle. Either way, shot 1's last frame and shot 2's first frame are the same picture, so there is nothing to hide with a fade.
 
 **A location is the subject, not the setting.** When the cast includes a character whose role is `Location`, its photo becomes the base that every frame is edited from, and the board spends one extra still — two cents — building a hero frame of the cast inside that room first. Measured skyline agreement across a five-frame board: **0.72** by that route, against 0.57 editing from the location alone, 0.36 chaining, and 0.25 when a portrait rode along as a second reference. A face has a portrait pinned on every frame to correct it; a redrawn room has nothing.
 
@@ -164,7 +164,7 @@ Every render is a real charge, and **resolution sets the price**. Measured on re
 | `720p` | 1280×720 | $0.14 | $1.12 | $4.48 |
 | `1080p` | 1920×1088 | $0.25 | $2.00 | $8.00 |
 
-- **A still is $0.02**, measured. Board first when the look matters: five stills for a four-shot film is ten cents against $3.44 of footage.
+- **A still is $0.02**, measured. Board first when the look matters: five stills for a four-shot film is ten cents against $3.44 of footage at six seconds a shot.
 - **The default is 720p.** Leaving resolution unset does not mean 480p pricing — the API returns a soft 848×480 frame for it, so the old flat "eight cents a second" figure was quoting the cheapest, worst-looking setting and made every estimate a third too low. Always name the resolution beside a price.
 - **One shot runs to 15 seconds.** Nothing caps a film except patience and budget; 12 shots at 8 seconds is 96 seconds, and two continued runs pass three minutes.
 - **Every render returns its actual `costUsd`.** Quote that, not the estimate. Failed renders are not billed.
