@@ -10,9 +10,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { resolveVideoCredential } from "./grok-auth.ts";
-import { assembleClips, extractLastFrame, pathToDataUrl, probeDuration } from "./media.ts";
+import { JOBS_DIR, assembleClips, extractLastFrame, pathToDataUrl, probeDuration } from "./media.ts";
 import { generateGrokClip, type GrokClipResult } from "./grokVideo.ts";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -867,6 +867,9 @@ server.registerTool(
 );
 
 async function main() {
+  // Load films saved by earlier sessions before taking requests, so a user who
+  // comes back tomorrow can still continue or repair what they paid for.
+  await loadJobsFromDisk();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
@@ -966,7 +969,58 @@ type SequenceJob = {
   error?: string;
 };
 
+/**
+ * Film jobs, kept in memory for speed and mirrored to disk so a film survives a
+ * restart.
+ *
+ * The memory-only version meant a session ended and the film was gone: the
+ * clips were still there, the settings and the shot list and the link between
+ * them were not. For something the user paid real money for, that is the wrong
+ * failure. Every write now mirrors to a JSON file, and the store loads what it
+ * finds on startup.
+ */
 const sequenceJobs = new Map<string, SequenceJob>();
+
+async function persistJob(job: SequenceJob) {
+  try {
+    await mkdir(JOBS_DIR, { recursive: true });
+    await writeFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
+  } catch (err) {
+    // A failed write must never lose the render. The job is already in memory,
+    // and the next state change tries again.
+    console.error(`theShow: could not persist job ${job.id}:`, err);
+  }
+}
+
+async function loadJobsFromDisk() {
+  try {
+    const files = await readdir(JOBS_DIR);
+    for (const name of files) {
+      if (!name.endsWith(".json")) continue;
+      try {
+        const raw = await readFile(join(JOBS_DIR, name), "utf8");
+        const job = JSON.parse(raw) as SequenceJob;
+        if (!job?.id) continue;
+        // A job that was mid-render when the server died cannot be resumed by
+        // polling: nothing is driving it. Mark it honestly rather than leaving
+        // it "running" forever.
+        if (job.state === "running") {
+          job.state = "stopped";
+          job.error =
+            "The server stopped while this film was rendering. Shots already finished are kept; " +
+            "the rest were never rendered.";
+          job.finishedAt = job.finishedAt ?? Date.now();
+          void persistJob(job);
+        }
+        sequenceJobs.set(job.id, job);
+      } catch {
+        // One unreadable file must not stop the others from loading.
+      }
+    }
+  } catch {
+    // No jobs directory yet: a first run.
+  }
+}
 
 function sequenceJobId(): string {
   return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1108,6 +1162,7 @@ async function runSequenceJob(
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
         job.finishedAt = Date.now();
+        void persistJob(job);
         return;
       }
 
@@ -1118,12 +1173,15 @@ async function runSequenceJob(
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
         job.finishedAt = Date.now();
+        void persistJob(job);
         return;
       }
       previousFrame = frame.path;
       entry.framePath = frame.path;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
+      // Paid for, so on disk: a crash between shots keeps everything bought.
+      void persistJob(job);
     }
 
     // Reused shots go on last and change nothing. They are already paid for.
@@ -1153,10 +1211,12 @@ async function runSequenceJob(
 
     job.state = "completed";
     job.finishedAt = Date.now();
+    void persistJob(job);
   } catch (err) {
     job.state = "failed";
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
+    void persistJob(job);
   }
 }
 
@@ -1237,8 +1297,7 @@ server.registerTool(
             text: JSON.stringify({
               error: "Unknown resumeFromJobId",
               detail:
-                "No job has that id in this process. Jobs do not survive a server restart, so a " +
-                "film can only be continued within the same session that rendered it.",
+              "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5),
             }, null, 2),
           }],
@@ -1356,6 +1415,7 @@ server.registerTool(
       }),
     };
     sequenceJobs.set(job.id, job);
+    void persistJob(job);
 
     // Deliberately not awaited: a multi-shot chain outlives the client's request
     // timeout, and awaiting it turns a finished film into a timeout error.
@@ -1439,7 +1499,8 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: "Unknown jobId",
-            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            detail:
+              "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5),
           }, null, 2),
         }],
@@ -1567,6 +1628,7 @@ server.registerTool(
     }
 
     sequenceJobs.set(job.id, job);
+    void persistJob(job);
 
     void runSequenceJob(job, {
       shots: [{ prompt, durationSeconds: duration, title: target.title }],
@@ -1604,6 +1666,62 @@ server.registerTool(
 );
 
 /**
+ * List the films this user has made, newest first.
+ *
+ * Read-only and free. The point is that a film is no longer trapped in the
+ * session that rendered it: come back a week later and the job id, the shot
+ * count, the cost and the file are all still there to continue or repair.
+ */
+server.registerTool(
+  "list_films",
+  {
+    description:
+      "List films rendered with this plugin, newest first: job id, state, shot count, duration, " +
+      "cost and file path. Read-only and free. Use it to find a film to continue with " +
+      "resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+    inputSchema: z.object({
+      limit: z.number().int().min(1).max(50).default(10),
+      includeUnfinished: z.boolean().default(false).describe(
+        "Also list films that stopped or failed, which still hold every shot they paid for.",
+      ),
+    }),
+  },
+  async (args) => {
+    const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
+    const shown = all
+      .filter((job) => args.includeUnfinished || job.state === "completed")
+      .slice(0, args.limit)
+      .map((job) => ({
+        jobId: job.id,
+        state: job.state,
+        startedAt: new Date(job.startedAt).toISOString(),
+        shots: job.shots.length,
+        durationSeconds: job.filmDurationSeconds,
+        spentUsd: Math.round(job.spentUsd * 100) / 100,
+        filmPath: job.filmPath,
+        firstShot: job.shots[0]?.title,
+        repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : undefined,
+        error: job.error,
+      }));
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          count: shown.length,
+          films: shown,
+          storage: JOBS_DIR,
+          next: shown.length === 0
+            ? "No films yet. Configure one with configure_film, then render_sequence."
+            : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to " +
+              "retry_shot to replace one of its shots.",
+        }, null, 2),
+      }],
+    };
+  }
+);
+
+/**
  * Poll a render_sequence job.
  *
  * Separate tool rather than a second mode on render_sequence, so polling can
@@ -1627,7 +1745,8 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: "Unknown jobId",
-            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            detail:
+              "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5),
           }, null, 2),
         }],

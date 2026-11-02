@@ -235,7 +235,7 @@ describe('the skill names every tool that exists', () => {
       'utf8',
     );
     const registered = [...serverSource.matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]);
-    expect(registered.length).toBe(10);
+    expect(registered.length).toBe(11);
     for (const name of registered) {
       expect(skill, `${name} is registered but the skill never mentions it`).toContain(name);
     }

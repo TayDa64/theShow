@@ -11,14 +11,25 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-/** Where generated frames and films land. */
-export const OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join(tmpdir(), "theshow-output");
+/**
+ * Where generated frames and films land.
+ *
+ * A stable per-user directory rather than a temp path, because these are the
+ * user's films: a tmpdir is cleared by a reboot or a cleaner, and losing a paid
+ * render to housekeeping is unforgivable. THESHOW_OUTPUT_DIR still overrides.
+ */
+export const OUTPUT_DIR =
+  process.env.THESHOW_OUTPUT_DIR || join(homedir(), ".theshow", "media");
+
+/** Where film jobs are kept so a film survives a server restart. */
+export const JOBS_DIR =
+  process.env.THESHOW_JOBS_DIR || join(homedir(), ".theshow", "jobs");
 
 type ToolPaths = { ffmpeg: string; ffprobe: string; hasXfade: boolean };
 
