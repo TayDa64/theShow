@@ -6,7 +6,8 @@ This directory turns theShow (StoryForge) into a Grok Build plugin and MCP serve
 
 - `plugin.json` — Grok Build plugin manifest
 - `.mcp.json` — MCP server declaration
-- `mcp/launch.mjs` — zero-setup launcher (installs dependencies on first run)
+- `mcp/launch.mjs` — launcher (runs the pre-bundled server)
+- `mcp/server.bundle.mjs` — the server, bundled so startup needs no install
 - `skills/theshow/SKILL.md` — workflow instructions the model follows
 - `mcp/server.ts` — MCP server exposing the core tools
 
@@ -20,7 +21,7 @@ grok plugin install TayDa64/theShow --trust
 
 Pin a release by appending a tag, for example `TayDa64/theShow@v0.1.0`. To install from a local checkout instead, pass the folder path in place of the GitHub shorthand.
 
-The server installs its own dependencies on first launch through `mcp/launch.mjs`, so there is no manual `npm install` step. Confirm the wiring with:
+The server ships pre-bundled, so there is no `npm install` step and startup needs no network. Confirm the wiring with:
 
 ```bash
 grok mcp doctor

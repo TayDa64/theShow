@@ -12,7 +12,7 @@ This is how to install it and make your first film.
 grok plugin install TayDa64/theShow --trust
 ```
 
-That is the whole setup. The plugin ships a launcher that installs its own dependencies on first run, so there is no `npm install` step and nothing to configure before you start.
+That is the whole setup. The plugin ships a pre-bundled server, so there is no `npm install` step, no network fetch at startup, and nothing to configure before you start.
 
 Confirm it worked:
 
@@ -29,6 +29,12 @@ This one costs people an afternoon if they hit it blind. Plugins install per mac
 The symptom is subtle: you give it a perfect prompt, it produces video anyway, and nothing about the output mentions the plugin. It quietly fell back to the built-in image and video tools plus hand-written FFmpeg, which is the exact manual slog this plugin removes.
 
 If a session seems to ignore theShow, check whether it actually called the tools. Run `grok mcp doctor` where the session is running. Six healthy tools means you are in the right place.
+
+If you installed an early version and the doctor reports `handshake failed (connection closed: initialize response)`, that release installed dependencies during startup, which overran the client's initialize window. Update to the current version:
+
+```bash
+grok plugin uninstall theshow && grok plugin install TayDa64/theShow --trust
+```
 
 ## Your first film
 
