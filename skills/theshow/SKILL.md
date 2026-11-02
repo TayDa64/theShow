@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These seven tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These nine tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -48,8 +48,17 @@ The fields, whether they arrive by form or by message:
    biggest drop in unwanted invention. Ask once, take no for an answer.
 
 The form's reference field takes a **path or URL, not a file** — the MCP protocol has no file
-upload. So when the user wants to supply an image, have them attach it in chat and paste the path,
-or give you a public https link.
+upload. So when the user wants to supply an image, have them attach it in chat, or give you a public
+https link.
+
+**On a phone, this is the normal path, not a workaround.** Tell them plainly: attach the photo to
+the chat, and its path can be used as-is. Do not ask them to download it, open a desktop, or host it
+somewhere. A chat attachment already arrives as a readable local path, so iPhone and Android photos
+work directly.
+
+Phone photos need no preparation — HEIC and HEIF are transcoded automatically, and anything too
+large is stepped down until it fits the request limit. A 12-megapixel photo comes through around
+190 KB. Never tell the user to resize or convert their photo first.
 
 Then render the confirmed block back to them like this before spending anything:
 
@@ -104,17 +113,53 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    Show the storyboard to the user and get approval. This call is free and instant; a render is not.
 
-3. **Sequential clips**
-   For each shot, in order:
-   - Compose the prompt from the shot's `action`, `cameraMove`, `shotType`, the confirmed style,
-     and the character's stored description. Keep it specific and physical: what moves, where the
-     camera is, what the light does.
-   - Call `generate_controlled_clip` with the parameters listed below.
-   - Report the returned `costUsd` to the user before starting the next shot.
+3. **Sequential clips — use `render_sequence`**
+
+   **Prefer `render_sequence` for anything longer than one shot.** It renders every shot in order,
+   chains each one from the previous shot's final frame automatically, and assembles the film. That
+   is the whole reason the plugin can make a real film instead of a pile of clips.
+
+   ```
+   render_sequence({
+     shots: [{ prompt, durationSeconds, title }, ...],   // 1 to 12
+     characters: ["Ada"],                                 // reference images auto-applied
+     firstFrameUrl: "<optional anchor for shot one>",
+     aspectRatio: "16:9",
+     assemble: true,
+   })
+   ```
+
+   Two-step, always:
+
+   - Call it **without** `confirm`. It renders nothing and returns `estimate.totalUsd`. Show that
+     figure, get a yes, and only then call again with `confirm: true`.
+   - The second call returns a `jobId` and `state: "running"` straight away. A sequence takes
+     minutes, well past the client's own request timeout, so **poll `check_sequence` with the jobId
+     every 20 to 30 seconds** until `done` is true. Do not re-call `render_sequence` while one is
+     running; that renders the whole film twice and bills twice.
+
+   When it finishes you get `filmPath`, `fileUrl`, `spentUsd`, `filmDurationSeconds`, and
+   `lastFramePath`. Report the real `spentUsd` next to the estimate you gave.
+
+   **For a film longer than 12 shots, or longer than 15 seconds per shot, chain sequences.** Pass
+   the previous run's `lastFramePath` as `firstFrameUrl` to the next run. Continuity holds across the
+   join: measured against the first frame, a five-shot chain stayed at about 0.86 correlation, and
+   the drift does not compound as the chain grows. Report each sequence's cost separately.
+
+   If the user wants manual control over one shot at a time, `generate_controlled_clip` still works:
+   compose the prompt from `action`, `cameraMove`, `shotType`, the confirmed style, and the stored
+   character description, then thread `firstFrameUrl` from `extract_last_frame` yourself. Report
+   `costUsd` before starting the next shot.
 
 4. **Assembly**
-   Call `assemble_film` with `clips` as an array of **objects**, not strings:
+   `render_sequence` assembles automatically when `assemble` is true. Call `assemble_film` yourself
+   only when stitching existing clips, with `clips` as an array of **objects**, not strings:
    `[{ "url": "<clip path>", "title": "<shot title>" }]`, plus optional `fadeDuration` (default 0.5).
+
+   **What assembly does and does not do.** It normalizes mismatched resolutions and cross-fades on
+   the join, so clips that came back at slightly different sizes still cut cleanly. It cannot invent
+   motion that was not rendered: a slow cross-fade hides a jump in framing, but nothing makes two
+   unconnected shots look continuous. Continuity comes from the frame chain, not from the fade.
 
 ## Exact parameter names
 

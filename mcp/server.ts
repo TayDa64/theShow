@@ -118,13 +118,37 @@ const BEAT_LADDER = [
   },
 ];
 
+type ShotBeat = { title: string; action: string; note?: string };
+
 function planShots(opts: {
   sceneDescription: string;
   characterNames: string[];
   shotCount: number;
   totalDurationSeconds: number;
+  /** Story beats supplied by the caller. Overrides the built-in ladder entirely. */
+  beats?: ShotBeat[];
 }) {
-  const { sceneDescription, characterNames, shotCount, totalDurationSeconds } = opts;
+  const { sceneDescription, characterNames, shotCount, totalDurationSeconds, beats } = opts;
+
+  // A supplied beat list wins. The built-in ladder is a template, and using it
+  // when the user described their own story is how a film ends up following a
+  // shape nobody asked for.
+  if (beats && beats.length > 0) {
+    const cast = characterNames.length > 0 ? characterNames : ["the main character"];
+    const scene = sceneDescription.trim().replace(/\.$/, "");
+    const per = Math.max(1, Math.floor(totalDurationSeconds / beats.length));
+    return beats.map((beat, i) => ({
+      shotNumber: i + 1,
+      title: beat.title,
+      shotType: i === 0 ? "wide" : "medium",
+      durationSeconds: per,
+      action: beat.action.replace(/\{scene\}/g, scene).replace(/\{character\}/g, cast[0]),
+      continuityNotes: beat.note ?? "",
+      characters: cast.filter(() => true),
+      focusCharacter: cast[0],
+      firstFrameFrom: i > 0 ? `last frame of shot ${i}` : undefined,
+    }));
+  }
   const scene = sceneDescription.trim().replace(/\.$/, "");
   const cast = characterNames.length > 0 ? characterNames : ["the main character"];
 
@@ -414,6 +438,14 @@ server.registerTool(
     description: "Plan multi-shot storyboard for a scene.",
     inputSchema: z.object({
       sceneDescription: z.string(),
+      beats: z.array(z.object({
+        title: z.string(),
+        action: z.string().describe("What happens in this shot. {scene} and {character} are substituted."),
+        note: z.string().optional().describe("Continuity requirement carried into the prompt."),
+      })).optional().describe(
+        "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only " +
+        "a default shape and must not be imposed on a story the user already described.",
+      ),
       characters: z.array(z.string()),
       targetDurationSeconds: z.number().optional(),
       shotCount: z.number().optional(),
@@ -433,6 +465,7 @@ server.registerTool(
       characterNames: args.characters ?? [],
       shotCount,
       totalDurationSeconds,
+      beats: args.beats,
     });
 
     const unknown = (args.characters ?? []).filter((name) => !lookupCharacter(name));
@@ -758,3 +791,321 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+/**
+ * Render a whole shot sequence as one continuous chain.
+ *
+ * The tools already supported this, but only if the model drove it: render,
+ * extract, thread the frame path into the next call, repeat, then assemble. That
+ * is a lot of bookkeeping to get right by hand, and every dropped frame path is
+ * a visible cut plus a wasted render. Doing the loop in one process makes the
+ * chain the default rather than a recipe the model has to remember.
+ *
+ * Cost is the reason this is a separate explicit call: each shot is a real
+ * charge, so it reports what it will spend before it spends it, refuses to start
+ * unless told to go, and reports actual cost at the end.
+ */
+/**
+ * In-flight and finished sequence renders, keyed by job id.
+ *
+ * render_sequence has to return before the client's request timeout, and a
+ * three-shot chain already runs past the 60-second default. The first version
+ * rendered synchronously and the client gave up while the server was still
+ * working: the clips landed on disk, the money was spent, and the caller got a
+ * timeout instead of a film. So a long sequence now registers a job, returns its
+ * id immediately, and is polled with check_sequence.
+ */
+type SequenceJob = {
+  id: string;
+  startedAt: number;
+  finishedAt?: number;
+  state: "running" | "completed" | "stopped" | "failed";
+  shotCount: number;
+  completed: number;
+  estimateUsd: number;
+  spentUsd: number;
+  shots: Array<{ index: number; title: string; status: string; videoUrl?: string; costUsd?: number; error?: string }>;
+  filmPath?: string;
+  fileUrl?: string;
+  filmDurationSeconds?: number;
+  filmBytes?: number;
+  lastFramePath?: string;
+  unknownCharacters?: string[];
+  error?: string;
+};
+
+const sequenceJobs = new Map<string, SequenceJob>();
+
+function sequenceJobId(): string {
+  return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function jobPayload(job: SequenceJob) {
+  const done = job.state !== "running";
+  return {
+    jobId: job.id,
+    state: job.state,
+    progress: `${job.completed}/${job.shotCount} shots`,
+    done,
+    ...(done ? {
+      spentUsd: Math.round(job.spentUsd * 100) / 100,
+      estimatedUsd: job.estimateUsd,
+      shots: job.shots,
+      filmPath: job.filmPath,
+      fileUrl: job.fileUrl,
+      filmDurationSeconds: job.filmDurationSeconds,
+      filmBytes: job.filmBytes,
+      lastFramePath: job.lastFramePath,
+      unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : undefined,
+      error: job.error,
+    } : {
+      spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
+      message: "Still rendering. Poll check_sequence with this jobId.",
+    }),
+    next: job.state === "completed"
+      ? "Report the filmPath and spentUsd to the user. lastFramePath continues this film as firstFrameUrl."
+      : job.state === "running"
+        ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots."
+        : "Report the error and the shot that failed.",
+  };
+}
+
+/**
+ * Run the chain in the background on the already-downloaded clips. Writes into
+ * the job so a poll sees progress as each shot lands.
+ */
+async function runSequenceJob(
+  job: SequenceJob,
+  args: {
+    shots: Array<{ prompt: string; durationSeconds: number; title?: string }>;
+    characters?: string[];
+    firstFrameUrl?: string;
+    aspectRatio: string;
+    model: string;
+    assemble: boolean;
+    fadeDuration: number;
+    timeoutSecondsPerShot: number;
+  },
+) {
+  const characterRefs: string[] = [];
+  for (const name of args.characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) { (job.unknownCharacters ??= []).push(name); continue; }
+    characterRefs.push(...(known.referenceImageUrls ?? []));
+  }
+
+  let previousFrame: string | undefined = args.firstFrameUrl;
+
+  try {
+    for (let i = 0; i < args.shots.length; i++) {
+      const shot = args.shots[i];
+      const result = await generateGrokClip({
+        prompt: shot.prompt,
+        durationSeconds: shot.durationSeconds,
+        aspectRatio: args.aspectRatio as "16:9" | "9:16" | "1:1",
+        model: args.model,
+        firstFrameUrl: previousFrame,
+        referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
+      }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+
+      const entry = {
+        index: i + 1,
+        title: shot.title ?? `Shot ${i + 1}`,
+        status: result.status ?? "failed",
+        videoUrl: result.videoUrl,
+        costUsd: result.costUsd,
+        error: result.error,
+        localPath: undefined as string | undefined,
+      };
+      job.spentUsd += result.costUsd ?? 0;
+      job.shots.push(entry);
+
+      if (result.status !== "completed" || !result.videoUrl) {
+        job.state = "stopped";
+        job.error = `Shot ${i + 1} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
+        job.finishedAt = Date.now();
+        return;
+      }
+
+      const clipPath = await resolveToLocalFile(result.videoUrl);
+      entry.localPath = clipPath;
+      const frame = await extractLastFrame({ file: clipPath });
+      if (!frame.path) {
+        job.state = "stopped";
+        job.error = `Shot ${i + 1} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
+        job.finishedAt = Date.now();
+        return;
+      }
+      previousFrame = frame.path;
+      job.lastFramePath = frame.path;
+      job.completed = i + 1;
+    }
+
+    if (args.assemble) {
+      const files = job.shots
+        .map((shot) => (shot as { localPath?: string }).localPath)
+        .filter((p): p is string => Boolean(p))
+        .map((file) => ({ file, trimStart: undefined, trimEnd: undefined }));
+      const assembled = await assembleClips({ clips: files, fadeDuration: args.fadeDuration });
+      job.filmPath = assembled.path;
+      job.fileUrl = `file://${assembled.path}`;
+      job.filmDurationSeconds = await probeDuration(assembled.path);
+      job.filmBytes = (await (await import("node:fs/promises")).stat(assembled.path)).size;
+    }
+
+    job.state = "completed";
+    job.finishedAt = Date.now();
+  } catch (err) {
+    job.state = "failed";
+    job.error = err instanceof Error ? err.message : String(err);
+    job.finishedAt = Date.now();
+  }
+}
+
+server.registerTool(
+  "render_sequence",
+  {
+    description:
+      "Render a multi-shot sequence with automatic continuity: each shot starts from the previous " +
+      "shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. " +
+      "Optionally assembles the result into one film. This is how you make something longer than a " +
+      "single 15-second clip. Spends real money per shot, so call once without confirm for an " +
+      "estimate and only pass confirm after the user approves it. Returns a jobId immediately; a " +
+      "long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+    inputSchema: z.object({
+      shots: z.array(z.object({
+        prompt: z.string().describe(
+          "Everything the model must show in this shot. It has no memory between shots, so repeat " +
+          "wardrobe, lighting, and set details in every entry.",
+        ),
+        durationSeconds: z.number().min(1).max(15).default(8),
+        title: z.string().optional(),
+      })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
+      characters: z.array(z.string()).optional().describe(
+        "Character names from create_character. Their reference images go on every shot.",
+      ),
+      firstFrameUrl: z.string().optional().describe(
+        "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
+      ),
+      aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      model: z.string().default("grok-imagine-video-1.5"),
+      assemble: z.boolean().default(true).describe("Also assemble the clips into one film."),
+      fadeDuration: z.number().min(0).max(5).default(0.25),
+      confirm: z.boolean().default(false).describe(
+        "Must be true to render. Call once without it to get the estimate, show it to the user, and " +
+        "call again with true only after they approve.",
+      ),
+      timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
+    }),
+  },
+  async (args) => {
+    const shotCount = args.shots.length;
+    const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
+
+    // 8 cents per second is the measured figure across real renders; the point is
+    // to be within a few percent, not to promise an exact number.
+    const estimate = Math.round(args.shots.reduce((sum, s) => sum + s.durationSeconds * 0.08, 0) * 100) / 100;
+
+    if (!args.confirm) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willRender: false,
+            plan: {
+              shots: shotCount,
+              totalSeconds,
+              aspectRatio: args.aspectRatio,
+              continuity: "Each shot starts from the previous shot's last frame.",
+              rendersAsOneJob: true,
+            },
+            estimate: {
+              totalUsd: estimate,
+              basis: `${shotCount} renders totalling ${totalSeconds}s at roughly $0.08/s, from measured runs`,
+              isEstimate: true,
+            },
+            next:
+              "Show this to the user. Call again with confirm: true only after they approve. Do not " +
+              "set confirm without an explicit yes.",
+          }, null, 2),
+        }],
+      };
+    }
+
+    const job: SequenceJob = {
+      id: sequenceJobId(),
+      startedAt: Date.now(),
+      state: "running",
+      shotCount,
+      completed: 0,
+      estimateUsd: estimate,
+      spentUsd: 0,
+      shots: [],
+    };
+    sequenceJobs.set(job.id, job);
+
+    // Deliberately not awaited: a multi-shot chain outlives the client's request
+    // timeout, and awaiting it turns a finished film into a timeout error.
+    void runSequenceJob(job, {
+      shots: args.shots,
+      characters: args.characters,
+      firstFrameUrl: args.firstFrameUrl,
+      aspectRatio: args.aspectRatio,
+      model: args.model,
+      assemble: args.assemble,
+      fadeDuration: args.fadeDuration,
+      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+    });
+
+    // Give the first shot a short window so a single quick shot can come back
+    // inline; anything longer is picked up by polling.
+    const inlineDeadline = Date.now() + 25_000;
+    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+      await sleep(500);
+    }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        action: job.state === "running" ? "started" : job.state,
+        ...jobPayload(job),
+      }, null, 2) }],
+    };
+  }
+);
+
+/**
+ * Poll a render_sequence job.
+ *
+ * Separate tool rather than a second mode on render_sequence, so polling can
+ * never be mistaken for a new render and never spends anything.
+ */
+server.registerTool(
+  "check_sequence",
+  {
+    description:
+      "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends " +
+      "nothing. Returns progress while running, and the film path plus actual cost when finished.",
+    inputSchema: z.object({
+      jobId: z.string().describe("The jobId render_sequence returned."),
+    }),
+  },
+  async (args) => {
+    const job = sequenceJobs.get(args.jobId);
+    if (!job) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "Unknown jobId",
+            detail: "No sequence job has that id in this process. Jobs do not survive a server restart.",
+            known: Array.from(sequenceJobs.keys()).slice(-5),
+          }, null, 2),
+        }],
+      };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }],
+    };
+  }
+);
