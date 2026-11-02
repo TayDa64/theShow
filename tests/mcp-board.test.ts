@@ -461,59 +461,49 @@ describe('the picture outranks the prompt', () => {
 
 describe('the outer garment survives the board', () => {
   /**
-   * The failure this guards. Six stills edited from one hero frame with the
-   * same wording produced five coats and one shearling vest — the coat's
-   * sleeves gone, the blazer underneath promoted to the outer layer. That frame
-   * pinned the end of one shot and the start of the next, so the clip entering
-   * it interpolated into a costume change around thirteen seconds. Wording said
-   * the picture outranked the prompt and was obeyed most of the time; the check
-   * is what makes "most of the time" not good enough.
+   * The failure this guards, and the honest state of the guard.
+   *
+   * A still that loses the coat's sleeves pins the end of one shot and the start
+   * of the next, so the clip entering it interpolates into a costume change and
+   * the film appears to ignore its own prompt. The cause was wording, and the
+   * fix is in mcp/cast.ts: the cast line no longer names garments when a picture
+   * is attached, so there is nothing for the model to build a second layer out
+   * of.
+   *
+   * What is NOT here is a pixel check for a substituted garment. Two were built
+   * and both were pulled:
+   *
+   *  - Fixed arm-band columns (13-29%, 71-87% of width) work only when the
+   *    subject fills the frame like the portrait does. On a real board the man
+   *    stands behind a desk occupying a third of the picture, so the band landed
+   *    on furniture: it abstained on every frame of a shipped board, silently.
+   *  - Anchoring the band to a detected face fixes that and separates cleanly
+   *    (bad frames 0.144 and 0.262, good frames 0.391 and up, over 33 stills),
+   *    but it needs a face detector. The plugin ships no OpenCV and no model
+   *    files, and ffmpeg cannot find a head.
+   *
+   * Colour alone does not separate either: measured, a tan office wall scores
+   * higher on the coat's hue than the coat does. So the guard is the prompt
+   * wording, which is testable, and the pixel verdict belongs to the person
+   * looking at the board - which is why board_film renders stills before it
+   * renders video.
    */
-  const VERDICT = (verdicts: Array<'kept' | 'substituted' | 'unknown'>) => {
-    let i = 0;
-    return vi.fn(async () => {
-      const verdict = verdicts[Math.min(i, verdicts.length - 1)];
-      i += 1;
-      return { verdict, coverage: verdict === 'substituted' ? 0.12 : 0.48 };
-    });
-  };
-
-  it('re-rolls a frame whose outer garment was substituted', async () => {
+  it('never names a garment in the prompt when a picture is attached', async () => {
     const generateStill = fakeStill();
-    // Frame 0 is bad on its first attempt, good on the second.
-    const checkWardrobe = VERDICT(['substituted', 'kept', 'kept', 'kept', 'kept']);
-
+    const cast =
+      'Tay: bald head, full black beard with grey flecks at the chin, warm medium-brown skin, ' +
+      'blue and white vertical-striped button-down shirt under a tan sherpa-collar jacket ' +
+      'with a dark navy blazer beneath it';
     const board2 = await boardFilm(
-      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
-      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill, checkWardrobe },
+      { shots: SHOTS, aspectRatio: '16:9', confirm: true, cast },
+      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill },
     );
-
-    // One extra still bought: N+1 frames plus the re-roll.
-    expect(generateStill.mock.calls).toHaveLength(SHOTS.length + 2);
-    expect(board2.frames[0].rerolled).toBe(true);
-    expect(board2.frames[0].wardrobe).toBe('kept');
-    // The frame that was re-rolled still anchors the same two shots.
-    expect(board2.shots[0].firstFrameUrl).toBe(board2.frames[0].path);
-    expect(board2.shots[0].lastFrameUrl).toBe(board2.frames[1].path);
-  });
-
-  it('keeps the first picture when the check abstains', async () => {
-    const generateStill = fakeStill();
-    const checkWardrobe = VERDICT(['unknown', 'unknown', 'unknown', 'unknown', 'unknown']);
-    await boardFilm(
-      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
-      { outputDir: dir, baseImageUrl: '/refs/office.jpg', generateStill, checkWardrobe },
-    );
-    expect(generateStill.mock.calls).toHaveLength(SHOTS.length + 1);
-  });
-
-  it('checks nothing when there is no picture to check against', async () => {
-    const generateStill = fakeStill();
-    const checkWardrobe = vi.fn();
-    await boardFilm(
-      { shots: SHOTS, aspectRatio: '16:9', confirm: true },
-      { outputDir: dir, generateStill, checkWardrobe },
-    );
-    expect(checkWardrobe).not.toHaveBeenCalled();
+    for (const frame of board2.frames) {
+      const prompt = String(frame.prompt);
+      expect(prompt).not.toMatch(/blazer/i);
+      expect(prompt).not.toMatch(/sherpa/i);
+      // The identity half survives, because that is what a face can be checked against.
+      expect(prompt).toMatch(/bald head/);
+    }
   });
 });

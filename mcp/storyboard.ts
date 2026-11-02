@@ -25,7 +25,6 @@ import { castForPicture } from "./cast.js";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { GrokStillResult } from "./grokVideo.ts";
-import { checkWardrobe, type WardrobeCheck } from "./wardrobe.ts";
 
 /**
  * Measured on a real subscription call: 200000000 ticks, i.e. two cents.
@@ -82,11 +81,8 @@ export type BoardedFrame = {
    * Absent when there was no picture to check against, or nothing in it to
    * compare with.
    */
-  wardrobe?: "kept" | "substituted";
   /** How much of the arm band still wore it. Higher is closer to the picture. */
-  wardrobeCoverage?: number;
   /** True when the first attempt was rejected and a second one bought. */
-  rerolled?: boolean;
 };
 
 export type BoardFilmResult = {
@@ -257,14 +253,6 @@ export type BoardFilmDeps = {
    * better of the two and it is what keeps a room recognisable across a board.
    */
   baseImageUrl?: string;
-  /**
-   * Did this still keep the reference picture's outer garment?
-   *
-   * Injected so a test can describe an outcome instead of encoding a JPEG.
-   * Defaults to the real `checkWardrobe`, which reads the target colour off the
-   * reference picture rather than assuming one.
-   */
-  checkWardrobe?: (referenceFile: string, stillFile: string) => Promise<WardrobeCheck>;
 };
 
 /**
@@ -390,30 +378,49 @@ export async function boardFilm(
   // A location photo AND portraits cannot both ride along: measured on one
   // office, frames edited from the office alone agreed on the skyline at a mean
   // 0.57, and adding a portrait reference dropped that to 0.25. So the board
-  // spends two cents building ONE hero frame first — the portrait as the subject
-  // ("place this man in this office"), the location as its setting, which is the
-  // one arrangement that held both a real face and a recognisable room — and
-  // then edits every shot from that single picture.
+  // spends two cents building ONE hero frame first and then edits every shot
+  // from that single picture.
+  //
+  // Which of the two photos is the SUBJECT of that hero edit decides which one
+  // survives, and it is not a toss-up. On `/v1/images/edits` the first picture
+  // is the thing being changed and the rest are context, so:
+  //
+  //  - Portrait first ("place this person into the setting in the second
+  //    photo"): the face is perfect and the room is not. Measured, the frame
+  //    came back as the portrait's own bright living room - sofa, doorway,
+  //    trees in daylight - because the portrait's background is part of the
+  //    subject an edit is inclined to keep. The office was reduced to a hint.
+  //  - Office first ("place the person from the second photo into this
+  //    office"): the room is exact (skyline structure correlation 0.97 against
+  //    0.02-0.08 the other way round) and the person is still the person.
+  //    The office is the thing that must not change, because a redrawn room is
+  //    what makes two shots look like two different films; a face has a
+  //    portrait pinned on every frame afterwards to correct it. Measured on
+  //    three reps, the tan coat survived all three.
+  //
+  // So the office is the base and the portrait is the reference, whichever the
+  // caller passed. Garments are never named in the text - see mcp/cast.ts.
   let boardBase = deps.baseImageUrl;
   const heroRefs = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
+    const subject = heroRefs[0];
+    const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
         prompt:
-          `Place this person into the setting in the second photo. ` +
-          // Same rule as the frames: on the one still that seeds the whole
-          // board, naming a garment the portrait does not show is how a second
-          // outer layer gets invented at the very top of the chain.
-          `${input.cast?.trim() ? `${castForPicture(input.cast)}` : ""}` +
+          `Place the person from the second photo into this office. ` +
+          `${input.cast?.trim() ? castForPicture(input.cast) : ""}` +
           `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
-          `Keep the room, ` +
-          `its furniture, its windows and the view through them exactly as they are. ` +
+          `The first photo is the room and it does not change: its walls, its furniture, its ` +
+          `windows and the city through them stay exactly as they are, and its own dusk light is ` +
+          `the light of this frame. The second photo supplies the person and nothing else - its ` +
+          `own background is discarded. ` +
           `Photoreal, single held frame, no motion blur, no text, no watermark.`,
         aspectRatio,
-        baseImageUrl: deps.baseImageUrl,
-        referenceImageUrls: heroRefs,
+        baseImageUrl: setting,
+        referenceImageUrls: [subject],
       },
-      { outputDir: deps.outputDir, filename: `board-hero-${createHash("sha1").update(`${heroRefs.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`).digest("hex").slice(0, 16)}` },
+      { outputDir: deps.outputDir, filename: `board-hero-${createHash("sha1").update(`officeFirst|${heroRefs.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`).digest("hex").slice(0, 16)}` },
     );
     if (heroResult.localPath) {
       boardBase = heroResult.localPath;
@@ -461,50 +468,6 @@ export async function boardFilm(
       { outputDir: deps.outputDir, filename: entry.frame.stem },
     );
 
-    // Check the garment BEFORE this picture is allowed to anchor two shots.
-    //
-    // Worded instructions are followed most of the time and not all of the
-    // time: measured, six stills from one hero frame with identical wording
-    // produced five coats and one vest with the coat's sleeves gone. That one
-    // frame then pinned the end of the shot before it AND the start of the shot
-    // after it, so a whole clip interpolated into a costume change. A re-roll
-    // costs two cents; the clip that inherits the mistake costs eighty-six.
-    let wardrobe: WardrobeCheck | undefined;
-    let rerolled = false;
-    if (boardBase && result.localPath) {
-      const checker = deps.checkWardrobe ?? checkWardrobe;
-      wardrobe = await checker(boardBase, result.localPath);
-      if (wardrobe.verdict === "substituted") {
-        rerolled = true;
-        const second = await deps.generateStill(
-          {
-            prompt: entry.frame.prompt,
-            aspectRatio,
-            baseImageUrl: boardBase,
-            referenceImageUrls: refs.length > 0 ? refs : undefined,
-          },
-          // Same stem on purpose: the accepted picture takes the canonical
-          // name, so a later board run reuses it free instead of buying the
-          // frame again, and the rejected attempt never becomes an anchor.
-          { outputDir: deps.outputDir, filename: entry.frame.stem },
-        );
-        if (second.localPath) {
-          const again = await checker(boardBase, second.localPath);
-          spentUsd += second.costUsd ?? STILL_USD;
-          // The rejected picture must not survive on disk under a name a later
-          // board would pick up as "already bought", which happens whenever the
-          // two attempts came back in different formats.
-          if (second.localPath !== result.localPath) {
-            await rm(result.localPath, { force: true }).catch(() => {});
-          }
-          // Keep the re-roll either way: it is closer to the picture than the
-          // frame it replaced, and both were paid for.
-          result = second;
-          wardrobe = again;
-        }
-      }
-    }
-
     if (result.localPath) {
       paths.set(entry.frame.index, result.localPath);
       spentUsd += result.costUsd ?? STILL_USD;
@@ -514,12 +477,6 @@ export async function boardFilm(
         path: result.localPath,
         reused: false,
         costUsd: result.costUsd,
-        // Only report the check when it had something to say. A board with no
-        // base picture is not being checked at all, and an "unknown" on every
-        // frame would read as six problems.
-        wardrobe: wardrobe?.verdict === "unknown" ? undefined : wardrobe?.verdict,
-        wardrobeCoverage: wardrobe?.verdict === "unknown" ? undefined : wardrobe?.coverage,
-        rerolled: rerolled || undefined,
       });
     } else {
       frames.push({
