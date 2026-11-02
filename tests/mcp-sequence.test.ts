@@ -314,10 +314,17 @@ describe('a transient render failure is not a stopped film', () => {
    */
   const code = codeOnly(serverSource);
 
-  it('retries once, and only when the API says the failure was its own', () => {
+  it('retries only when the API says the failure was its own', () => {
     expect(code).toContain('result.status === "failed" && result.retryable');
-    // A retry loop with no condition would re-bill a rejected render.
-    expect(code).not.toContain('for (let attempt = 0; attempt < 2; attempt += 1) {\n      const result');
+    expect(code).toContain('retries < 3');
+  });
+
+  it('degrades to a cut rather than stopping the film', () => {
+    // Measured failure rate with a closing frame pinned: 1 in 4 rendered. Four
+    // refusals in a row is rare but real, and a stopped chain means the rest of
+    // the film is never made.
+    expect(code).toContain('rendered without its closing frame');
+    expect(code).toContain('job.warnings = [...(job.warnings ?? []), ...degradations]');
   });
 
   it('classifies internal_error as worth another try', () => {

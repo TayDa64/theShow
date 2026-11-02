@@ -44450,6 +44450,7 @@ async function runSequenceJob(job, args) {
   job.completed = carried.length;
   let previousFrame = args.resumeFramePath ?? carried.at(-1)?.framePath ?? args.firstFrameUrl;
   if (previousFrame) job.lastFramePath = previousFrame;
+  const degradations = [];
   try {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
@@ -44467,8 +44468,27 @@ async function runSequenceJob(job, args) {
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       let result = await renderShot();
-      if (result.status === "failed" && result.retryable) {
+      let retries = 0;
+      while (result.status === "failed" && result.retryable && retries < 3) {
+        retries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2500 * retries));
         result = await renderShot();
+      }
+      if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
+        result = await generateGrokClip({
+          prompt: anchored,
+          durationSeconds: shot.durationSeconds,
+          aspectRatio: args.aspectRatio,
+          resolution: args.resolution,
+          model: args.model,
+          firstFrameUrl: shotFirstFrame,
+          referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+        }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+        if (result.status === "completed") {
+          degradations.push(
+            `Shot ${carried.length + i + 1} rendered without its closing frame after the API refused it four times: that seam is a cut rather than a chained join.`
+          );
+        }
       }
       const shotNumber = carried.length + i + 1;
       const entry = {
@@ -44531,6 +44551,9 @@ async function runSequenceJob(job, args) {
     }
     job.state = "completed";
     job.finishedAt = Date.now();
+    if (degradations.length > 0) {
+      job.warnings = [...job.warnings ?? [], ...degradations];
+    }
     void persistJob(job);
   } catch (err) {
     job.state = "failed";

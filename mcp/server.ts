@@ -1438,6 +1438,8 @@ async function runSequenceJob(
     args.resumeFramePath ?? carried.at(-1)?.framePath ?? args.firstFrameUrl;
   if (previousFrame) job.lastFramePath = previousFrame;
 
+  /** Things that still made a film, but not the film that was asked for. */
+  const degradations: string[] = [];
   try {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
@@ -1470,18 +1472,46 @@ async function runSequenceJob(
         lastFrameUrl: shot.lastFrameUrl,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
-      // One retry, but only for a failure the API told us was its own fault.
+      // Retry an API failure it owns, then degrade rather than stop the film.
       //
-      // A bookended render - first frame AND last frame pinned - fails
-      // intermittently with "Video generation failed due to an internal error.
-      // Please try again." and then succeeds on the next identical request:
-      // measured, three tries on one picture returned failed, completed,
-      // failed, while the same still rendered first-frame-only every time. A
-      // retry costs nothing when the first attempt failed, and it is the
-      // difference between a twelve-second film and a stopped chain.
+      // A render with `last_frame` pinned fails intermittently with "Video
+      // generation failed due to an internal error. Please try again." - and
+      // means it: measured on one shot's frames, first-frame-only completed 4 of
+      // 4, last-frame-only 2 of 4, and the bookend both at once 1 of 4. It is
+      // the closing frame the proxy is unhappy about, not our picture: the same
+      // request succeeds on a later attempt.
+      //
+      // A failed render is not billed, so retrying costs nothing but time. At
+      // that failure rate one retry still leaves roughly one shot in six
+      // stopping a film, which is why there are three.
+      //
+      // If it still will not take the closing frame, the shot renders from its
+      // first frame alone and says so. That trades a chained join for a hard cut
+      // on ONE seam - visible, reported, and far better than a stopped chain
+      // where the rest of the film was never made.
       let result = await renderShot();
-      if (result.status === "failed" && result.retryable) {
+      let retries = 0;
+      while (result.status === "failed" && result.retryable && retries < 3) {
+        retries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2500 * retries));
         result = await renderShot();
+      }
+      if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
+        result = await generateGrokClip({
+          prompt: anchored,
+          durationSeconds: shot.durationSeconds,
+          aspectRatio: args.aspectRatio as "16:9" | "9:16" | "1:1",
+          resolution: args.resolution,
+          model: args.model,
+          firstFrameUrl: shotFirstFrame,
+          referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
+        }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+        if (result.status === "completed") {
+          degradations.push(
+            `Shot ${carried.length + i + 1} rendered without its closing frame after the API ` +
+            `refused it four times: that seam is a cut rather than a chained join.`,
+          );
+        }
       }
 
       const shotNumber = carried.length + i + 1;
@@ -1555,6 +1585,11 @@ async function runSequenceJob(
 
     job.state = "completed";
     job.finishedAt = Date.now();
+    if (degradations.length > 0) {
+      // A film that exists but is not quite the one that was asked for must say
+      // so, or the seam reads as a bug the user has to hunt for.
+      job.warnings = [...(job.warnings ?? []), ...degradations];
+    }
     void persistJob(job);
   } catch (err) {
     job.state = "failed";
