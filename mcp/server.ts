@@ -1460,7 +1460,7 @@ async function runSequenceJob(
       const anchored = mentionsPerson(prompt)
         ? `${prompt} Keep the face exactly as the first frame shows it.`
         : prompt;
-      const result = await generateGrokClip({
+      const renderShot = () => generateGrokClip({
         prompt: anchored,
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio as "16:9" | "9:16" | "1:1",
@@ -1470,6 +1470,19 @@ async function runSequenceJob(
         lastFrameUrl: shot.lastFrameUrl,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+      // One retry, but only for a failure the API told us was its own fault.
+      //
+      // A bookended render - first frame AND last frame pinned - fails
+      // intermittently with "Video generation failed due to an internal error.
+      // Please try again." and then succeeds on the next identical request:
+      // measured, three tries on one picture returned failed, completed,
+      // failed, while the same still rendered first-frame-only every time. A
+      // retry costs nothing when the first attempt failed, and it is the
+      // difference between a twelve-second film and a stopped chain.
+      let result = await renderShot();
+      if (result.status === "failed" && result.retryable) {
+        result = await renderShot();
+      }
 
       const shotNumber = carried.length + i + 1;
       const entry = {

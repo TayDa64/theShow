@@ -261,6 +261,20 @@ async function toBookendPair(first: string, last: string): Promise<{ first: stri
 }
 
 /**
+ * Is this failure worth another try, or is it the request's fault?
+ *
+ * The render proxy answers `internal_error` / "Video generation failed due to an
+ * internal error. Please try again." and means it: measured, the identical
+ * request succeeded on the next attempt. Anything else - a rejected frame, a
+ * bad duration - is not going to fix itself.
+ */
+function isTransientRenderFailure(poll: Record<string, unknown>): boolean {
+  const err = poll.error;
+  const text = typeof err === "string" ? err : JSON.stringify(err ?? "");
+  return /internal[_ ]error|please try again|temporarily unavailable|overloaded|rate.?limit/i.test(text);
+}
+
+/**
  * Submit a clip and, when asked, poll until it renders.
  *
  * Returns a plain result object rather than throwing: every failure mode here is
@@ -415,7 +429,24 @@ export async function generateGrokClip(
       };
     }
     if (poll.status === "failed" || poll.status === "error") {
-      return { ...base, status: "failed", code: "failed", detail: JSON.stringify(poll) };
+      // A `last_frame` render fails intermittently and for no reason the caller
+      // can see. Measured on one short 480p clip, three identical requests
+      // against one picture came back failed, completed, failed - and the same
+      // bookend pair failed with one frame pair and succeeded with another
+      // moments later. It is not the picture: a first-frame-only render of the
+      // same still succeeds every time.
+      //
+      // A bookend is the whole reason shots join instead of cut, so a transient
+      // internal_error on it must not be reported as "this film is broken".
+      // Reported back as `retryable` rather than retried here, because the
+      // caller is the one holding the film's budget and the shot's chain.
+      return {
+        ...base,
+        status: "failed",
+        code: "failed",
+        retryable: isTransientRenderFailure(poll),
+        detail: JSON.stringify(poll),
+      };
     }
   }
 
@@ -467,6 +498,8 @@ export type GrokStillResult = {
   aspectRatioParam?: "aspect_ratio" | "aspectRatio" | "none";
   /** Which route produced the picture: a fresh generation or an edit of a base. */
   route?: "generations" | "edits";
+  /** The render failed in a way that succeeded on the next identical attempt. */
+  retryable?: boolean;
 };
 
 /**

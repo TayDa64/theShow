@@ -42826,6 +42826,11 @@ async function toBookendPair(first, last) {
   }
   return { first: firstRef, last: lastRef };
 }
+function isTransientRenderFailure(poll) {
+  const err = poll.error;
+  const text = typeof err === "string" ? err : JSON.stringify(err ?? "");
+  return /internal[_ ]error|please try again|temporarily unavailable|overloaded|rate.?limit/i.test(text);
+}
 async function generateGrokClip(job, opts) {
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
@@ -42938,7 +42943,13 @@ async function generateGrokClip(job, opts) {
       };
     }
     if (poll.status === "failed" || poll.status === "error") {
-      return { ...base, status: "failed", code: "failed", detail: JSON.stringify(poll) };
+      return {
+        ...base,
+        status: "failed",
+        code: "failed",
+        retryable: isTransientRenderFailure(poll),
+        detail: JSON.stringify(poll)
+      };
     }
   }
   return {
@@ -44445,7 +44456,7 @@ async function runSequenceJob(job, args) {
       const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
       const prompt = composeShotPrompt(args.continuity, shot.prompt);
       const anchored = mentionsPerson(prompt) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
-      const result = await generateGrokClip({
+      const renderShot = () => generateGrokClip({
         prompt: anchored,
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio,
@@ -44455,6 +44466,10 @@ async function runSequenceJob(job, args) {
         lastFrameUrl: shot.lastFrameUrl,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
+      let result = await renderShot();
+      if (result.status === "failed" && result.retryable) {
+        result = await renderShot();
+      }
       const shotNumber = carried.length + i + 1;
       const entry = {
         index: shotNumber,

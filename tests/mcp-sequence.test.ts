@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 const serverSource = readFileSync(path.join(__dirname, '..', 'mcp', 'server.ts'), 'utf8');
 const mediaSource = readFileSync(path.join(__dirname, '..', 'mcp', 'media.ts'), 'utf8');
+const videoSource = readFileSync(path.join(__dirname, '..', 'mcp', 'grokVideo.ts'), 'utf8');
 
 /** Source with comment lines removed, so a note explaining a bug is not read as the bug. */
 function codeOnly(source: string) {
@@ -299,5 +300,30 @@ describe('the face anchor', () => {
     expect(code).toContain('Keep the face exactly as the first frame shows it.');
     // "his" was measured as no better and assumes a man.
     expect(code).not.toContain('Hold his face as the first frame shows it.');
+  });
+});
+
+describe('a transient render failure is not a stopped film', () => {
+  /**
+   * Measured: with both ends pinned ("bookend"), the render proxy answers
+   * "Video generation failed due to an internal error. Please try again." and
+   * then succeeds on the next identical request - three tries on one picture
+   * returned failed, completed, failed, while the same still rendered
+   * first-frame-only every time. Before this, the first such blip stopped a
+   * four-shot chain at shot one and spent nothing, which is safe but useless.
+   */
+  const code = codeOnly(serverSource);
+
+  it('retries once, and only when the API says the failure was its own', () => {
+    expect(code).toContain('result.status === "failed" && result.retryable');
+    // A retry loop with no condition would re-bill a rejected render.
+    expect(code).not.toContain('for (let attempt = 0; attempt < 2; attempt += 1) {\n      const result');
+  });
+
+  it('classifies internal_error as worth another try', () => {
+    const video = codeOnly(videoSource);
+    expect(video).toContain('function isTransientRenderFailure');
+    expect(video).toContain('internal[_ ]error');
+    expect(video).toContain('retryable: isTransientRenderFailure(poll)');
   });
 });
