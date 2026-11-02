@@ -43001,6 +43001,174 @@ function planShots(opts) {
     return shot;
   });
 }
+var FILM_FORM_SCHEMA = {
+  type: "object",
+  properties: {
+    scene: {
+      type: "string",
+      title: "Scene",
+      description: "Location, time of day, weather, mood. One or two sentences.",
+      minLength: 1,
+      maxLength: 600
+    },
+    characters: {
+      type: "string",
+      title: "Characters",
+      description: "For each: name, age, build, wardrobe, distinguishing features. Anything you leave out is left out of the film, not invented.",
+      maxLength: 600
+    },
+    style: {
+      type: "string",
+      title: "Style",
+      description: "Look and colour direction.",
+      enum: [
+        "Photoreal cinematic",
+        "Period film",
+        "Documentary",
+        "Animated",
+        "Stylised illustration"
+      ],
+      default: "Photoreal cinematic"
+    },
+    shotCount: {
+      type: "integer",
+      title: "Shots",
+      description: "One paid render per shot.",
+      minimum: 1,
+      maximum: 8,
+      default: 2
+    },
+    shotSeconds: {
+      type: "integer",
+      title: "Seconds per shot",
+      description: "Each shot, 1 to 15 seconds.",
+      minimum: 1,
+      maximum: 15,
+      default: 8
+    },
+    aspectRatio: {
+      type: "string",
+      title: "Shape",
+      enum: ["16:9", "9:16", "1:1"],
+      default: "16:9"
+    },
+    audio: {
+      type: "string",
+      title: "Audio",
+      enum: ["Diegetic only", "Dialogue", "Silent"],
+      default: "Diegetic only"
+    },
+    neverShow: {
+      type: "string",
+      title: "Never show",
+      description: "Hard constraints, stated literally: no on-screen text, no logos, no extra people.",
+      maxLength: 400
+    },
+    referenceImage: {
+      type: "string",
+      title: "Reference image path (optional)",
+      description: "A local path or https URL to a portrait or location still. Attach the file in chat and paste its path here, or leave blank."
+      // Deliberately not format:"uri". That rejects a plain local path such as
+      // /workspace/photo.png with "must match format uri", and a local path is
+      // the normal case here because a chat attachment resolves to one.
+    }
+  },
+  required: ["scene"]
+};
+server.registerTool(
+  "configure_film",
+  {
+    description: "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
+    inputSchema: external_exports.object({
+      scene: external_exports.string().optional().describe("Pre-fill the scene if the user already said it."),
+      prompt: external_exports.string().optional().describe("Card heading shown to the user.")
+    })
+  },
+  async (args) => {
+    const title = args.prompt ?? "Configure the film";
+    const caps = server.server.getClientCapabilities();
+    const canElicit = Boolean(caps?.elicitation);
+    if (!canElicit) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            elicitationSupported: false,
+            message: "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
+            fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
+              key,
+              title: v2.title ?? key,
+              description: v2.description ?? ""
+            }))
+          }, null, 2)
+        }]
+      };
+    }
+    const schema = structuredClone(FILM_FORM_SCHEMA);
+    if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
+    let result;
+    try {
+      result = await server.server.elicitInput({
+        message: title,
+        requestedSchema: schema
+      });
+    } catch (err) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            elicitationSupported: true,
+            formFailed: true,
+            error: err instanceof Error ? err.message : String(err),
+            message: "The form was shown but the response was rejected. Ask for the same fields conversationally."
+          }, null, 2)
+        }]
+      };
+    }
+    if (result.action !== "accept") {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: result.action,
+            message: result.action === "decline" ? "The user dismissed the form. Do not render. Ask what they would like to change." : "The user cancelled. Do not render."
+          }, null, 2)
+        }]
+      };
+    }
+    const v = result.content ?? {};
+    const shotCount = Number(v.shotCount ?? 2);
+    const shotSeconds = Number(v.shotSeconds ?? 8);
+    const perShot = Math.round(shotSeconds * 0.08 * 100) / 100;
+    const total = Math.round(perShot * shotCount * 100) / 100;
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          action: "accept",
+          config: {
+            scene: v.scene ?? "",
+            characters: v.characters ?? "",
+            style: v.style ?? "Photoreal cinematic",
+            shotCount,
+            shotSeconds,
+            aspectRatio: v.aspectRatio ?? "16:9",
+            audio: v.audio ?? "Diegetic only",
+            neverShow: v.neverShow ?? "",
+            referenceImage: v.referenceImage || void 0
+          },
+          estimate: {
+            perShotUsd: perShot,
+            totalUsd: total,
+            basis: `${shotCount} renders x ${shotSeconds}s at roughly $0.08/s, from measured runs`,
+            isEstimate: true
+          },
+          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Never invent a character detail the user left blank."
+        }, null, 2)
+      }]
+    };
+  }
+);
 server.registerTool(
   "create_character",
   {
