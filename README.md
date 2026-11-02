@@ -158,7 +158,7 @@ A film is not one long generation. It is a chain, and the chain is the whole des
 
 Every render is a real charge, and **resolution sets the price**. Measured on real eight-second renders:
 
-| Resolution | Output | Per second | 8-second shot | 4-shot film |
+| Resolution | Output | Per second | 8-second shot | Four 8-second shots |
 |---|---|---|---|---|
 | `480p` | 848×480 | $0.08 | $0.64 | $2.56 |
 | `720p` | 1280×720 | $0.14 | $1.12 | $4.48 |
