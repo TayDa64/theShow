@@ -42650,6 +42650,7 @@ async function assembleClips(input2) {
     }
   }
   let mode;
+  let totalDuration = durations.reduce((sum, d) => sum + d, 0);
   if (fade === 0) {
     const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
     const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
@@ -42671,7 +42672,23 @@ async function assembleClips(input2) {
       previousA = aLabel;
       elapsed = offset + durations[i];
     }
+    totalDuration = elapsed;
     mode = "xfade";
+  }
+  let audioMap = "[aout]";
+  if (input2.audioTrackFile) {
+    const bedIndex = input2.clips.length;
+    const gain = Math.min(Math.max(input2.audioTrackVolume ?? 0.25, 0.01), 4);
+    const fadeOut = Math.min(
+      input2.audioTrackFadeOutSeconds ?? 1.5,
+      Math.max(totalDuration / 2, 0.1)
+    );
+    args.push("-stream_loop", "-1", "-i", input2.audioTrackFile);
+    filters.push(
+      `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}[bed]`
+    );
+    filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    audioMap = "[aoutmix]";
   }
   args.push(
     "-filter_complex",
@@ -42679,7 +42696,7 @@ async function assembleClips(input2) {
     "-map",
     "[vout]",
     "-map",
-    "[aout]",
+    audioMap,
     "-c:v",
     "libx264",
     "-preset",
@@ -42697,7 +42714,7 @@ async function assembleClips(input2) {
     outPath
   );
   await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade } : { path: outPath, mode, hasXfade, fadeSeconds: 0 };
+  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration };
 }
 async function pathToDataUrl(file2, mime = "image/png") {
   const buffer = await readFile(file2);
@@ -43510,7 +43527,14 @@ server.registerTool(
       })).min(1),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
-      )
+      ),
+      audioTrackUrl: external_exports.string().optional().describe(
+        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it."
+      ),
+      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25).describe(
+        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video."
+      ),
+      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5)
     })
   },
   async (args) => {
@@ -43519,7 +43543,13 @@ server.registerTool(
       const file2 = await resolveToLocalFile(clip.url);
       localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
     }
-    const result = await assembleClips({ clips: localFiles, fadeDuration: args.fadeDuration });
+    const result = await assembleClips({
+      clips: localFiles,
+      fadeDuration: args.fadeDuration,
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+      audioTrackVolume: args.audioTrackVolume,
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+    });
     const durationSeconds = await probeDuration(result.path);
     const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
     const payload = {
@@ -43532,6 +43562,11 @@ server.registerTool(
       crossFades: result.mode === "xfade",
       mode: result.mode,
       fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
+      audioBed: result.audioBed ? {
+        source: args.audioTrackUrl,
+        volume: args.audioTrackVolume,
+        note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio."
+      } : void 0,
       message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
     };
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -43648,7 +43683,13 @@ async function runSequenceJob(job, args) {
     }
     if (args.assemble) {
       const files = job.shots.map((shot) => shot.localPath).filter((p) => Boolean(p)).map((file2) => ({ file: file2, trimStart: void 0, trimEnd: void 0 }));
-      const assembled = await assembleClips({ clips: files, fadeDuration: args.fadeDuration });
+      const assembled = await assembleClips({
+        clips: files,
+        fadeDuration: args.fadeDuration,
+        audioTrackFile: args.audioTrackFile,
+        audioTrackVolume: args.audioTrackVolume,
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+      });
       job.filmPath = assembled.path;
       job.fileUrl = `file://${assembled.path}`;
       job.filmDurationSeconds = await probeDuration(assembled.path);
@@ -43689,6 +43730,11 @@ server.registerTool(
       ),
       model: external_exports.string().default("grok-imagine-video-1.5"),
       assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
+      audioTrackUrl: external_exports.string().optional().describe(
+        "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
+      ),
+      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25),
+      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
       ),
@@ -43809,6 +43855,10 @@ server.registerTool(
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,
+      // Resolved once, up front, so a bad path fails before any shot renders.
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+      audioTrackVolume: args.audioTrackVolume,
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : void 0,
       resumeFramePath
