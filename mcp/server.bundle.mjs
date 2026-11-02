@@ -43078,6 +43078,27 @@ async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
 
 // mcp/storyboard.ts
 import { createHash as createHash2 } from "node:crypto";
+
+// mcp/cast.ts
+var GARMENT = /\b(shirts?|blazers?|jackets?|coats?|suits?|ties?|necktie|bowtie|dress(?:es)?|gowns?|sweaters?|jumpers?|hoodies?|vests?|waistcoats?|trousers?|pants|jeans|shorts|skirts?|kilts?|robes?|capes?|cloaks?|parkas?|trench|sherpa|fleece|pullovers?|cardigans?|polos?|t-?shirts?|button-?downs?|henleys?|uniforms?|aprons?|overalls?|dungarees?|leggings?|tights|socks?|stockings?|shoes?|boots?|trainers|sneakers|loafers?|sandals?|heels|hats?|caps?|beanies?|berets?|helmets?|scar(?:f|ves)|gloves?|mittens?|belts?|suspenders?|braces|watches?|wristwatch|necklaces?|earrings?|bracelets?|rings?|glasses|spectacles|sunglasses|goggles|lapels?|cuffs?|collars?|sleeves?|hem|pockets?|buttons?|zippers?|pinstripes?|plaid|tartan|houndstooth|tweed|denim|corduroy|linen|silk|satin|leather|wool|cashmere|velvet|khaki|chinos|attire|outfit|wardrobe|clothing|clothes|dressed|wearing|dress shirt)\b/i;
+function castClauses(cast) {
+  return cast.split(/(?<=[.;])\s+|,\s+/).map((part) => part.trim()).filter((part) => part.length > 0);
+}
+function namesGarment(text) {
+  return GARMENT.test(text);
+}
+function identityOnly(cast) {
+  const kept = castClauses(cast).filter((clause) => !namesGarment(clause));
+  if (kept.length === 0) return "";
+  return kept.join(", ").replace(/[,;]\s*$/, "").trim();
+}
+function castForPicture(cast) {
+  const identity = cast?.trim() ? identityOnly(cast) : "";
+  const body = identity ? `THE CAST, taken from the reference picture and identical in every frame: ${identity}.` : "THE CAST, taken from the reference picture and identical in every frame: the person in it.";
+  return `${body} Their face, head, hair and skin are those of the reference picture: match them exactly. Their clothing is whatever the reference picture shows them wearing \u2014 take the garments from the picture and copy them unchanged; do not add, swap, layer or remove any garment, and do not infer one from this description. `;
+}
+
+// mcp/storyboard.ts
 import { rm as rm2, stat as stat2 } from "node:fs/promises";
 import { join as join4 } from "node:path";
 
@@ -43223,7 +43244,7 @@ function planBoardFrames(opts) {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
   const hasPicture = Boolean(opts.baseImageUrl);
-  const castLock = cast?.trim() ? hasPicture ? `THE CAST, taken from the reference picture and identical in every frame: ${cast.trim()}. Match the reference picture exactly for this person's face, head, beard and clothing, and copy them unchanged into every frame. ` : `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
+  const castLock = cast?.trim() ? hasPicture ? castForPicture(cast) : `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
@@ -43333,7 +43354,7 @@ async function boardFilm(input2, deps) {
   if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
     const heroResult = await deps.generateStill(
       {
-        prompt: `Place this person into the setting in the second photo. ${input2.cast?.trim() ? `${input2.cast.trim()}. ` : ""}${input2.look?.trim() ? `${input2.look.trim()} ` : ""}Keep their face, hair, beard and clothing exactly as they are, and keep the room, its furniture, its windows and the view through them exactly as they are. Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: `Place this person into the setting in the second photo. ${input2.cast?.trim() ? `${castForPicture(input2.cast)}` : ""}${input2.look?.trim() ? `${input2.look.trim()} ` : ""}Keep the room, its furniture, its windows and the view through them exactly as they are. Photoreal, single held frame, no motion blur, no text, no watermark.`,
         aspectRatio,
         baseImageUrl: deps.baseImageUrl,
         referenceImageUrls: heroRefs

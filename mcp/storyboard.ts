@@ -21,6 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { castForPicture } from "./cast.js";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { GrokStillResult } from "./grokVideo.ts";
@@ -158,11 +159,12 @@ export function planBoardFrames(opts: {
   // preserve it, not to re-imagine it. A shot prompt can still change something,
   // but it has to say so explicitly — see WARDROBE_CHANGE below.
   const hasPicture = Boolean(opts.baseImageUrl);
+  // When a picture is attached, the cast line is stripped of anything the
+  // picture can disagree with — see mcp/cast.ts. A cast line is written once, by
+  // hand, from memory; the picture is the thing that is actually true.
   const castLock = cast?.trim()
     ? hasPicture
-      ? `THE CAST, taken from the reference picture and identical in every frame: ${cast.trim()}. ` +
-        `Match the reference picture exactly for this person's face, head, beard and clothing, ` +
-        `and copy them unchanged into every frame. `
+      ? castForPicture(cast)
       : `THE CAST, identical in every frame: ${cast.trim()}. `
     : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
@@ -399,9 +401,12 @@ export async function boardFilm(
       {
         prompt:
           `Place this person into the setting in the second photo. ` +
-          `${input.cast?.trim() ? `${input.cast.trim()}. ` : ""}` +
+          // Same rule as the frames: on the one still that seeds the whole
+          // board, naming a garment the portrait does not show is how a second
+          // outer layer gets invented at the very top of the chain.
+          `${input.cast?.trim() ? `${castForPicture(input.cast)}` : ""}` +
           `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
-          `Keep their face, hair, beard and clothing exactly as they are, and keep the room, ` +
+          `Keep the room, ` +
           `its furniture, its windows and the view through them exactly as they are. ` +
           `Photoreal, single held frame, no motion blur, no text, no watermark.`,
         aspectRatio,
