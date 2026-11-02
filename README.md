@@ -100,7 +100,7 @@ Nine commands ship with the plugin. Each one is the same workflow, started partw
 | `/check [jobId]` | Progress and real cost on a render, or your recent films |
 | `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
 | `/films [count]` | Lists films on disk. Free |
-| `/resume <jobId> <what next>` | Continues an existing film with more shots |
+| `/continue <jobId> <what next>` | Continues an existing film with more shots |
 
 None of them skips the estimate. A command that spends money still prices the work, shows you the figure, and waits for your yes.
 

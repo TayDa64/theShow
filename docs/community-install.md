@@ -97,6 +97,6 @@ StoryForge Studio is the other. Clone the repository, run `npm install` and `npm
 
 The plugin is at 0.1.0, and a film can go from the card to a polled job to a file. This document is the write-up, so publishing the install path is the page you are reading.
 
-Slash commands now ship with the plugin: `/film`, `/scene`, `/character`, `/board`, `/render`, `/check`, `/retry`, `/films`, and `/resume`. Each one is the same workflow started partway in, and none of them skips the estimate. Still open: a marketplace catalog entry pinned to a SHA.
+Slash commands now ship with the plugin: `/film`, `/scene`, `/character`, `/board`, `/render`, `/check`, `/retry`, `/films`, and `/continue`. Each one is the same workflow started partway in, and none of them skips the estimate. Still open: a marketplace catalog entry pinned to a SHA.
 
 If you build something with it, the interesting problems left are continuity problems: how to hold a location, a light source, or a prop across a cut. That is where the tool earns its keep.

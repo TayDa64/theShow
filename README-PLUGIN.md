@@ -54,7 +54,7 @@ Or start from a command. `/film` opens the configuration card; the rest begin th
 | `/check [jobId]` | Progress and cost, or recent films |
 | `/retry <jobId> <shot> [prompt]` | Repair one shot |
 | `/films [count]` | List films on disk. Free |
-| `/resume <jobId> <what next>` | Continue an existing film |
+| `/continue <jobId> <what next>` | Continue an existing film |
 
 ## The thirteen tools
 

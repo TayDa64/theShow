@@ -1,5 +1,5 @@
 ---
-description: Continue an earlier film with more shots, keeping its cast and look.
+description: Continue an earlier theShow film with more shots, keeping its cast and look.
 argument-hint: <jobId> <what happens next>
 ---
 

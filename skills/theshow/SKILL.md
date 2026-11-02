@@ -119,7 +119,7 @@ types one, honour what it names and skip the step they already took.
 | `/check [jobId]` | Progress and real cost on a render, or recent films |
 | `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
 | `/films [count]` | Lists films on disk. Free |
-| `/resume <jobId> <what next>` | Continues an existing film with more shots |
+| `/continue <jobId> <what next>` | Continues an existing film with more shots |
 
 None of them skips the estimate. A command that spends money still calls its tool without `confirm`,
 shows the figure, and waits.
