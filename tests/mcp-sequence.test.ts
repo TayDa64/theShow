@@ -112,11 +112,35 @@ describe('the skill matches the tools', () => {
 
   it('documents resumeFromJobId and the hard-cut default', () => {
     expect(skill).toContain('resumeFromJobId');
-    expect(skill).toContain('hard cuts by default');
+    expect(skill).toContain('Joins default to hard cuts');
     expect(skill).toContain('| Continue a film | `resumeFromJobId` |');
   });
 
   it('no longer tells the model to restart a film to lengthen it', () => {
     expect(skill).not.toContain("Pass\nthe previous run's `lastFramePath` as `firstFrameUrl` to the next run");
+  });
+});
+
+describe('the continuity block', () => {
+  it('is built from configure_film answers and omits blanks', () => {
+    const code = codeOnly(serverSource);
+    expect(code).toContain('function buildContinuityBlock');
+    expect(code).toContain('continuityBlock: buildContinuityBlock(v)');
+    // Blank form fields must not turn into invented prose.
+    expect(code).toContain('if (characters) parts.push');
+    expect(code).toContain('if (never) parts.push');
+  });
+
+  it('is prepended to every shot prompt, not just the first', () => {
+    const code = codeOnly(serverSource);
+    expect(code).toContain('function composeShotPrompt');
+    // The call must sit inside the per-shot loop, keyed off the job args.
+    expect(code).toContain('prompt: composeShotPrompt(args.continuity, shot.prompt)');
+  });
+
+  it('reaches the runner from render_sequence', () => {
+    const renderSeq = serverSource.slice(serverSource.indexOf('"render_sequence"'));
+    expect(renderSeq.slice(0, 3000)).toContain('continuity: z.string().optional()');
+    expect(codeOnly(serverSource)).toContain('continuity: args.continuity');
   });
 });
