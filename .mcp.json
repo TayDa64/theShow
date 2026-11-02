@@ -2,7 +2,7 @@
   "mcpServers": {
     "theshow": {
       "command": "node",
-      "args": ["mcp/launch.mjs"],
+      "args": ["${GROK_PLUGIN_ROOT}/mcp/launch.mjs"],
       "env": {
         "GEMINI_API_KEY": "${GEMINI_API_KEY}",
         "XAI_API_KEY": "${XAI_API_KEY}"
