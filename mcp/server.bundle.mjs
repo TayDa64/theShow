@@ -44144,12 +44144,17 @@ server.registerTool(
     };
   }
 );
+var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
+function mentionsPerson(text) {
+  return PERSON_IN_SHOT.test(text);
+}
 function composeShotPrompt(continuity, prompt) {
   const anchor2 = continuity?.trim();
-  if (!anchor2) return prompt;
+  const shot = prompt.trim();
+  if (!anchor2) return shot;
   return `${anchor2}
 
-Shot: ${prompt.trim()}`;
+Shot: ${shot}`;
 }
 function localImagePath(ref) {
   if (!ref) return void 0;
@@ -44582,8 +44587,10 @@ async function runSequenceJob(job, args) {
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
       const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
+      const prompt = composeShotPrompt(args.continuity, shot.prompt);
+      const anchored = mentionsPerson(prompt) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
       const result = await generateGrokClip({
-        prompt: composeShotPrompt(args.continuity, shot.prompt),
+        prompt: anchored,
         durationSeconds: shot.durationSeconds,
         aspectRatio: args.aspectRatio,
         resolution: args.resolution,

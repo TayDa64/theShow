@@ -153,7 +153,10 @@ describe('the continuity block', () => {
     const code = codeOnly(serverSource);
     expect(code).toContain('function composeShotPrompt');
     // The call must sit inside the per-shot loop, keyed off the job args.
-    expect(code).toContain('prompt: composeShotPrompt(args.continuity, shot.prompt)');
+    expect(code).toContain('const prompt = composeShotPrompt(args.continuity, shot.prompt)');
+    // The face anchor is added per shot and passed through, never dropped
+    // between the compose step and the request.
+    expect(code).toContain('prompt: anchored,');
   });
 
   it('reaches the runner from render_sequence', () => {
@@ -285,5 +288,16 @@ describe('continuing a film after the cast changed', () => {
   it('surfaces the warning on the estimate, before anything is spent', () => {
     const code = codeOnly(serverSource);
     expect(code).toContain('...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {})');
+  });
+});
+
+describe('the face anchor', () => {
+  it('only rides along when the shot puts a person in frame', () => {
+    const code = codeOnly(serverSource);
+    // A shot with no person in it must not be given a face to invent.
+    expect(code).toContain('mentionsPerson(prompt)');
+    expect(code).toContain('Keep the face exactly as the first frame shows it.');
+    // "his" was measured as no better and assumes a man.
+    expect(code).not.toContain('Hold his face as the first frame shows it.');
   });
 });
