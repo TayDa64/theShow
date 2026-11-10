@@ -152,10 +152,24 @@ calls, so a shot without the reference will drift even if the previous shot had 
    supplied portraits or a look you both settled on. Store the returned character ID. Ask for a
    reference photo here if you have not already — it is worth one question.
 
+   When a character wears more than one layer, store them as `wardrobe.layers` (id, item, order from
+   inner to outer, and `inReference`: visible, partial, or hidden) plus `wardrobe.startState.worn`.
+   Put identity — face, hair, skin — in `appearance`, not in the same sentence as the coat. A later
+   state that has its own photo, such as the coat off, goes in `wardrobe.stateImages`. Older files
+   that only have `description` still work.
+
 2. **Storyboard**
    Call `plan_storyboard` with `sceneDescription`, `characters` (the names from step 1),
    `targetDurationSeconds`, and `shotCount`. It returns numbered shots with `shotType`,
    `cameraMove`, `action`, `continuityNotes`, `focusCharacter`, and `characterContext`.
+
+   If clothing or objects will move, pass `wardrobeEvents`, `props`, `locations`, and `propEvents`
+   (or put `locationId` and those events on each beat). Each prop has its own `locationId`, so two
+   hangers in two rooms stay two hangers. The tool replays the events into a checklist and folds
+   that wording into each shot's `action`. A removed garment becomes a prop at its destination
+   rather than disappearing. If the layer that becomes outermost was only partial or hidden in the
+   reference photo, and no state photo exists, the shot carries a warning that the model will have
+   to guess its appearance.
 
    Show the storyboard to the user and get approval. This call is free and instant; a render is not.
 
@@ -192,20 +206,25 @@ calls, so a shot without the reference will drift even if the previous shot had 
    ("he has taken the coat off"); otherwise the board keeps what the photo shows. Do not pad the cast
    with details the photo contradicts.
 
-   **Do not list a garment you cannot see.** A second outer layer buried under the first is the one
-   detail that reliably leaks: a measured cast line ended "…under a tan sherpa-collar jacket with a
-   dark navy blazer beneath it", the coat survived, and the model spent a whole shot promoting the
-   blazer and turning the coat into a sleeveless vest around thirteen seconds in. Describe the layer
-   that is actually visible and stop there; the blazer underneath is in the picture whether or not the
-   sentence mentions it.
+   **Do not list a garment you cannot see — until a named change makes it the outer layer.** A
+   second outer layer buried under the first is the one detail that reliably leaks: a measured cast
+   line ended "…under a tan sherpa-collar jacket with a dark navy blazer beneath it", the coat
+   survived, and the model spent a whole shot promoting the blazer and turning the coat into a
+   sleeveless vest around thirteen seconds in. While the photo still matches the worn stack, describe
+   the layer that is actually visible and stop there. After a named change, use the checklist: name
+   what is worn now, and treat the removed garment as a prop in the room.
 
    **Look at the stills yourself; nothing measures the garment for you.** A colour check was built
    and removed. It learned the coat's colour from the hero frame's arms, the hero is cropped at the
    chest, so it had no sleeves to learn from and quietly abstained on all five frames of a real
    board. Detecting a face to anchor the measurement works, but needs OpenCV and model files, and
    this plugin ships neither. What actually holds the wardrobe is `mcp/cast.ts` refusing to let the
-   prompt name a garment the picture contradicts, plus your own eyes on a board that costs pennies
-   against a render that costs dollars.
+   prompt name a garment the picture contradicts, the layer checklist after a named change, plus
+   your own eyes on a board that costs pennies against a render that costs dollars.
+
+   There is a stub for a post-render audit that would compare sampled frames to the prop ledger.
+   It is not implemented and must not be called: it would need a vision pass, and the cost of that
+   pass per shot has not been measured.
 
    `cast` is a physical description, not a name — a name means nothing to the image model.
 

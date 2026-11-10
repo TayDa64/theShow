@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Wardrobe layers on a character record, named clothing events (remove, put on, adjust), and a
+  per-location prop ledger. `plan_storyboard` and `board_film` replay those events into each shot's
+  checklist so prompts describe what is worn and the props that belong in that room. A removed
+  garment is staged as a prop rather than deleted. The ledger is stored on a `render_sequence` job.
+  A post-render vision audit is defined but not implemented; its cost has not been measured.
 - `lastFrameUrl` on clip generation and per shot in `render_sequence`. With `firstFrameUrl` as well a
   shot is bookended: the model has to arrive at a chosen frame, so a cut between two shots lands on
   identical pixels instead of two near-misses. Measured on real renders, a bookended shot landed its

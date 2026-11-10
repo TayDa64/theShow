@@ -27,6 +27,17 @@ import {
 } from "./grokVideo.ts";
 import { boardFilm, toRenderShots } from "./storyboard.ts";
 import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
+import {
+  annotateAction,
+  characterFromRecord,
+  replayContinuity,
+  type CharacterWardrobe,
+  type LocationRecord,
+  type PropEvent,
+  type PropRecord,
+  type ShotContinuity,
+  type WardrobeEvent,
+} from "./continuity.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -40,6 +51,26 @@ const CharacterSchema = z.object({
   name: z.string(),
   role: z.string().optional(),
   description: z.string().optional(),
+  appearance: z.string().optional().describe(
+    "Identity only: face, hair, skin, build. Clothing belongs in wardrobe.layers.",
+  ),
+  wardrobe: z.object({
+    layers: z.array(z.object({
+      id: z.string(),
+      item: z.string(),
+      order: z.number().describe("Inner to outer. 1 is against the skin."),
+      inReference: z.enum(["visible", "partial", "hidden"]),
+    })).min(1),
+    startState: z.object({
+      worn: z.array(z.string()).describe("Layer ids worn at the start of the film."),
+    }).optional(),
+    stateImages: z.array(z.object({
+      worn: z.array(z.string()),
+      referenceImageUrls: z.array(z.string()),
+    })).optional().describe(
+      "Optional photos of a later wardrobe state, such as the coat off.",
+    ),
+  }).optional(),
   // Deliberately not z.string().url(): a local path or a chat attachment has to
   // reach toApiImageRef, which inlines it as a data URI. Zod's .url() rejects
   // "/workspace/photo.png", so the same reference worked on
@@ -48,6 +79,40 @@ const CharacterSchema = z.object({
     "Portrait reference images: public https URLs, data URIs, or local file paths. " +
     "Each is inlined for the API, so a path from a chat attachment or extract_last_frame works.",
   ),
+});
+
+const WardrobeEventSchema = z.object({
+  shot: z.number().int().min(1).optional().describe("1-based shot number. Implied when the event sits on a beat."),
+  character: z.string().optional(),
+  action: z.enum(["remove", "putOn", "adjust"]),
+  layer: z.string().describe("Layer id from the character's wardrobe."),
+  to: z.string().optional().describe(
+    "For a removal, the destination prop id, or its name inside this shot's location.",
+  ),
+  note: z.string().optional(),
+});
+
+const PropRecordSchema = z.object({
+  id: z.string(),
+  locationId: z.string(),
+  name: z.string(),
+  placement: z.string(),
+  holder: z.string().optional(),
+});
+
+const PropEventSchema = z.object({
+  shot: z.number().int().min(1).optional(),
+  action: z.enum(["add", "move", "remove"]),
+  propId: z.string(),
+  locationId: z.string().optional(),
+  name: z.string().optional(),
+  placement: z.string().optional(),
+  holder: z.string().optional(),
+});
+
+const LocationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
 });
 
 /**
@@ -59,13 +124,17 @@ const CharacterSchema = z.object({
  * into chat and use it later", that made the feature useless by the time the
  * later came. The map is now a cache in front of mcp/characters.ts.
  */
-const characterStore = new Map<string, {
+type StoredCharacter = {
   id: string;
   name: string;
   role?: string;
   description?: string;
+  appearance?: string;
+  wardrobe?: CharacterWardrobe;
   referenceImageUrls?: string[];
-}>();
+};
+
+const characterStore = new Map<string, StoredCharacter>();
 
 async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
   const key = args.name.trim().toLowerCase();
@@ -78,14 +147,18 @@ async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
     name: args.name,
     role: args.role ?? existing?.role,
     description: args.description ?? existing?.description,
+    appearance: args.appearance ?? existing?.appearance,
+    wardrobe: args.wardrobe ?? existing?.wardrobe,
     referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls,
   });
 
-  const entry = {
+  const entry: StoredCharacter = {
     id: saved.id,
     name: saved.name,
     role: saved.role,
     description: saved.description,
+    appearance: saved.appearance,
+    wardrobe: saved.wardrobe,
     referenceImageUrls: saved.referenceImageUrls,
   };
   characterStore.set(key, entry);
@@ -108,6 +181,8 @@ function lookupCharacter(name: string) {
     name: fromDisk.name,
     role: fromDisk.role,
     description: fromDisk.description,
+    appearance: fromDisk.appearance,
+    wardrobe: fromDisk.wardrobe,
     referenceImageUrls: fromDisk.referenceImageUrls,
   });
   return characterStore.get(key);
@@ -122,6 +197,8 @@ async function loadCharactersFromDisk() {
         name: character.name,
         role: character.role,
         description: character.description,
+        appearance: character.appearance,
+        wardrobe: character.wardrobe,
         referenceImageUrls: character.referenceImageUrls,
       });
     }
@@ -314,6 +391,8 @@ function planShots(opts: {
         name: c.name,
         role: c.role,
         description: c.description,
+        appearance: c.appearance,
+        wardrobe: c.wardrobe,
         referenceImageUrls: c.referenceImageUrls ?? [],
       }));
     }
@@ -628,16 +707,81 @@ server.registerTool(
   }
 );
 
+function stampShotNumbers<T extends { shot?: number }>(events: T[] | undefined, shot: number): T[] {
+  return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? shot }));
+}
+
+function buildContinuityLedger(input: {
+  characterNames: string[];
+  shotCount: number;
+  shotLocations?: Array<string | undefined>;
+  locations?: LocationRecord[];
+  props?: PropRecord[];
+  wardrobeEvents?: WardrobeEvent[];
+  propEvents?: PropEvent[];
+}) {
+  const characters = input.characterNames
+    .map((name) => lookupCharacter(name))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .map((entry) => characterFromRecord(entry));
+  const hasReferencePicture = input.characterNames.some((name) => {
+    const known = lookupCharacter(name);
+    return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+  });
+  const snapshots = replayContinuity({
+    characters,
+    locations: input.locations,
+    props: input.props,
+    wardrobeEvents: input.wardrobeEvents,
+    propEvents: input.propEvents,
+    shotLocations: input.shotLocations,
+    shotCount: input.shotCount,
+    hasReferencePicture,
+  });
+  return { characters, hasReferencePicture, snapshots };
+}
+
+function applyShotContinuity(
+  shot: Record<string, unknown>,
+  snapshot: ShotContinuity | undefined,
+  wardrobeChanged: boolean,
+) {
+  if (!snapshot) return shot;
+  shot.locationId = snapshot.locationId;
+  shot.wardrobeChecklist = snapshot.checklists;
+  shot.propsInView = snapshot.propsInView;
+  shot.continuityPrompt = snapshot.prompt;
+  shot.wardrobeChanged = wardrobeChanged;
+  if (snapshot.prompt) {
+    if (typeof shot.action === "string") {
+      shot.action = annotateAction(shot.action, snapshot.prompt);
+    }
+    if (typeof shot.prompt === "string") {
+      shot.prompt = annotateAction(shot.prompt, snapshot.prompt);
+    }
+    const notes = typeof shot.continuityNotes === "string" ? shot.continuityNotes : "";
+    shot.continuityNotes = [notes, snapshot.prompt].filter((part) => part.trim()).join(" ");
+  }
+  if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
+  return shot;
+}
+
 server.registerTool(
   "plan_storyboard",
   {
-    description: "Plan multi-shot storyboard for a scene.",
+    description:
+      "Plan multi-shot storyboard for a scene. Accepts optional wardrobe events and a " +
+      "per-location prop ledger so each shot's prompt describes only what is worn and " +
+      "the props that belong in that room.",
     inputSchema: z.object({
       sceneDescription: z.string(),
       beats: z.array(z.object({
         title: z.string(),
         action: z.string().describe("What happens in this shot. {scene} and {character} are substituted."),
         note: z.string().optional().describe("Continuity requirement carried into the prompt."),
+        locationId: z.string().optional().describe("Room this shot takes place in. Props are scoped to it."),
+        wardrobeEvents: z.array(WardrobeEventSchema).optional(),
+        propEvents: z.array(PropEventSchema).optional(),
       })).optional().describe(
         "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only " +
         "a default shape and must not be imposed on a story the user already described.",
@@ -645,6 +789,19 @@ server.registerTool(
       characters: z.array(z.string()),
       targetDurationSeconds: z.number().optional(),
       shotCount: z.number().optional(),
+      locations: z.array(LocationSchema).optional().describe(
+        "Named rooms. Two props with the same name in different rooms stay two props.",
+      ),
+      props: z.array(PropRecordSchema).optional().describe(
+        "Starting prop ledger. Each prop belongs to one locationId.",
+      ),
+      wardrobeEvents: z.array(WardrobeEventSchema).optional().describe(
+        "Named clothing changes, keyed by 1-based shot number: remove, putOn, adjust.",
+      ),
+      propEvents: z.array(PropEventSchema).optional().describe(
+        "Named prop changes, keyed by 1-based shot number: add, move, remove. A prop without " +
+        "an id is left where it is.",
+      ),
     }),
   },
   async (args) => {
@@ -664,13 +821,64 @@ server.registerTool(
       beats: args.beats,
     });
 
+    const shotLocations = (args.beats ?? []).map((beat) => beat.locationId);
+    const beatWardrobe = (args.beats ?? []).flatMap((beat, index) =>
+      stampShotNumbers(beat.wardrobeEvents, index + 1),
+    );
+    const beatProps = (args.beats ?? []).flatMap((beat, index) =>
+      stampShotNumbers(beat.propEvents, index + 1),
+    );
+    const wardrobeEvents = [
+      ...stampShotNumbers(args.wardrobeEvents, 1).map((event, index) => ({
+        ...event,
+        shot: args.wardrobeEvents?.[index]?.shot ?? event.shot,
+      })),
+      ...beatWardrobe,
+    ].filter((event): event is WardrobeEvent => typeof event.shot === "number");
+    const propEvents = [
+      ...stampShotNumbers(args.propEvents, 1).map((event, index) => ({
+        ...event,
+        shot: args.propEvents?.[index]?.shot ?? event.shot,
+      })),
+      ...beatProps,
+    ].filter((event): event is PropEvent => typeof event.shot === "number");
+
+    const { snapshots } = buildContinuityLedger({
+      characterNames: args.characters ?? [],
+      shotCount: shots.length,
+      shotLocations: shotLocations.length === shots.length ? shotLocations : shotLocations.concat(
+        Array.from({ length: Math.max(0, shots.length - shotLocations.length) }, () => undefined),
+      ),
+      locations: args.locations,
+      props: args.props,
+      wardrobeEvents,
+      propEvents,
+    });
+
+    const annotated = shots.map((shot, index) =>
+      applyShotContinuity(
+        { ...shot } as Record<string, unknown>,
+        snapshots[index],
+        wardrobeEvents.some((event) => event.shot === index + 1),
+      ),
+    );
+    const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
+
     const unknown = (args.characters ?? []).filter((name) => !lookupCharacter(name));
     const payload: Record<string, unknown> = {
       scene: args.sceneDescription,
-      shotCount: shots.length,
-      totalDurationSeconds: shots.reduce((sum, shot) => sum + (shot.durationSeconds as number), 0),
-      shots,
+      shotCount: annotated.length,
+      totalDurationSeconds: annotated.reduce((sum, shot) => sum + (shot.durationSeconds as number), 0),
+      shots: annotated,
+      continuity: {
+        locations: args.locations ?? [],
+        props: args.props ?? [],
+        wardrobeEvents,
+        propEvents,
+        shots: snapshots,
+      },
     };
+    if (continuityWarnings.length > 0) payload.continuityWarnings = continuityWarnings;
     if (unknown.length > 0) {
       payload.note = `No stored character record for: ${unknown.join(", ")}. Call create_character first so continuity notes can carry wardrobe and reference images.`;
     }
@@ -1283,6 +1491,14 @@ type SequenceJob = {
   lastFramePath?: string;
   unknownCharacters?: string[];
   error?: string;
+  /** Wardrobe events and the per-location prop ledger, so a resumed film keeps them. */
+  ledger?: {
+    locations: LocationRecord[];
+    props: PropRecord[];
+    wardrobeEvents: WardrobeEvent[];
+    propEvents: PropEvent[];
+    shots?: ShotContinuity[];
+  };
 };
 
 /**
@@ -1376,6 +1592,7 @@ function jobPayload(job: SequenceJob) {
       unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : undefined,
       warnings: job.warnings?.length ? job.warnings : undefined,
       error: job.error,
+      ledger: job.ledger,
     } : {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId.",
@@ -1675,6 +1892,16 @@ server.registerTool(
         "you never have to repeat it and the model cannot forget it. configure_film returns a " +
         "ready-made block for this.",
       ),
+      ledger: z.object({
+        locations: z.array(LocationSchema).optional(),
+        props: z.array(PropRecordSchema).optional(),
+        wardrobeEvents: z.array(WardrobeEventSchema).optional(),
+        propEvents: z.array(PropEventSchema).optional(),
+        shots: z.array(z.any()).optional(),
+      }).optional().describe(
+        "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed " +
+        "film keeps the same rooms and props. Does not by itself spend money or call vision.",
+      ),
       firstFrameUrl: z.string().optional().describe(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
       ),
@@ -1876,8 +2103,26 @@ server.registerTool(
         // of the whole film still chains from where the film actually began.
         startFramePath: resumeJob.startFramePath,
         warnings: resumeJob.warnings ? [...resumeJob.warnings] : undefined,
+        ledger: args.ledger
+          ? {
+              locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
+              props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
+              wardrobeEvents: args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents ?? [],
+              propEvents: args.ledger.propEvents ?? resumeJob.ledger?.propEvents ?? [],
+              shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+            }
+          : resumeJob.ledger,
       } : {
         startFramePath: resumeFramePath ?? args.firstFrameUrl,
+        ...(args.ledger ? {
+          ledger: {
+            locations: args.ledger.locations ?? [],
+            props: args.ledger.props ?? [],
+            wardrobeEvents: args.ledger.wardrobeEvents ?? [],
+            propEvents: args.ledger.propEvents ?? [],
+            shots: args.ledger.shots,
+          },
+        } : {}),
       }),
     };
     sequenceJobs.set(job.id, job);
@@ -1955,10 +2200,19 @@ server.registerTool(
         ),
         title: z.string().optional(),
         durationSeconds: z.number().min(1).max(15).default(8),
+        locationId: z.string().optional(),
+        continuityPrompt: z.string().optional(),
+        wardrobeChanged: z.boolean().optional(),
+        wardrobeEvents: z.array(WardrobeEventSchema).optional(),
+        propEvents: z.array(PropEventSchema).optional(),
       })).min(1).max(12).describe(
         "Shots in order. N shots produce N+1 stills, because the boundary between two shots is " +
         "one picture shared by both.",
       ),
+      locations: z.array(LocationSchema).optional(),
+      props: z.array(PropRecordSchema).optional(),
+      wardrobeEvents: z.array(WardrobeEventSchema).optional(),
+      propEvents: z.array(PropEventSchema).optional(),
       look: z.string().optional().describe(
         "Style and continuity wording folded into every still prompt: configure_film's " +
         "continuityBlock, or the style line from the confirmed config. Without it the stills " +
@@ -2003,9 +2257,45 @@ server.registerTool(
     // Default the base to a Location character unless the caller named one.
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
 
+    const shotLocations = args.shots.map((shot) => shot.locationId);
+    const fromShotsWardrobe = args.shots.flatMap((shot, index) =>
+      stampShotNumbers(shot.wardrobeEvents, index + 1),
+    );
+    const fromShotsProps = args.shots.flatMap((shot, index) =>
+      stampShotNumbers(shot.propEvents, index + 1),
+    );
+    const wardrobeEvents = [
+      ...(args.wardrobeEvents ?? []),
+      ...fromShotsWardrobe,
+    ].filter((event): event is WardrobeEvent => typeof event.shot === "number");
+    const propEvents = [
+      ...(args.propEvents ?? []),
+      ...fromShotsProps,
+    ].filter((event): event is PropEvent => typeof event.shot === "number");
+    const { snapshots } = buildContinuityLedger({
+      characterNames: args.characters ?? [],
+      shotCount: args.shots.length,
+      shotLocations,
+      locations: args.locations,
+      props: args.props,
+      wardrobeEvents,
+      propEvents,
+    });
+    const boardedShots = args.shots.map((shot, index) => {
+      const snapshot = snapshots[index];
+      const extra = shot.continuityPrompt ?? snapshot?.prompt ?? "";
+      return {
+        ...shot,
+        continuityPrompt: extra || undefined,
+        wardrobeChanged:
+          Boolean(shot.wardrobeChanged) ||
+          wardrobeEvents.some((event) => event.shot === index + 1),
+      };
+    });
+
     const board = await boardFilm(
       {
-        shots: args.shots,
+        shots: boardedShots,
         aspectRatio: args.aspectRatio,
         look: args.look,
         cast: args.cast,
@@ -2030,6 +2320,16 @@ server.registerTool(
     // one thing this tool must never do is spend past the caller's ceiling.
     const payload = {
       ...board,
+      continuity: {
+        locations: args.locations ?? [],
+        props: args.props ?? [],
+        wardrobeEvents,
+        propEvents,
+        shots: snapshots,
+      },
+      ...(snapshots.some((snapshot) => snapshot.warnings.length > 0)
+        ? { continuityWarnings: snapshots.flatMap((snapshot) => snapshot.warnings) }
+        : {}),
       ...(missing.length > 0 ? { unknownCharacters: missing } : {}),
       ...(board.action === "boarded" || board.action === "partial"
         ? { renderShots: toRenderShots(board) }
@@ -2196,6 +2496,7 @@ server.registerTool(
       startFramePath: original.startFramePath,
       warnings: [...(original.warnings ?? [])],
       repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+      ledger: original.ledger,
       // Every reused shot was paid for by the original film. Count it, so the
       // reported film total is the film's real cost rather than this call's.
       carriedOverUsd: Math.round(

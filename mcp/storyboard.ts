@@ -43,6 +43,14 @@ export type BoardShotInput = {
   action?: string;
   title?: string;
   durationSeconds?: number;
+  /** Extra checklist wording (wardrobe and set dressing) folded into this frame. */
+  continuityPrompt?: string;
+  /**
+   * True when this shot carries a structured wardrobe event. The free-text
+   * `asksForChange` path still works; this flag covers the same case when the
+   * change was named as an event rather than in prose.
+   */
+  wardrobeChanged?: boolean;
 };
 
 export type BoardFrame = {
@@ -108,7 +116,10 @@ export type BoardFilmResult = {
 
 /** Resolve the prompt for a shot, whichever key the caller used. */
 function shotPrompt(shot: BoardShotInput): string {
-  return (shot.prompt ?? shot.action ?? "").trim();
+  const base = (shot.prompt ?? shot.action ?? "").trim();
+  const extra = shot.continuityPrompt?.trim() ?? "";
+  if (!extra || base.includes(extra)) return base;
+  return `${base} ${extra}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -217,8 +228,14 @@ export function planBoardFrames(opts: {
     // A wardrobe change has to be asked for by name. Without this the picture
     // wins by default, which is what was wanted; with it, a shot that says "he
     // has taken the coat off" is obeyed rather than quietly reverted.
+    const shotForFrame = index === 0
+      ? shots[0]
+      : index === prompts.length
+        ? shots[prompts.length - 1]
+        : shots[index];
     const asksForChange =
-      /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
+      /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt)
+      || Boolean(shotForFrame?.wardrobeChanged);
     const personRule = !hasPicture
       ? ""
       : asksForChange

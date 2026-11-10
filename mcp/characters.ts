@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
+import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
 
 export const CHARACTERS_DIR =
   process.env.THESHOW_CHARACTERS_DIR || join(homedir(), ".theshow", "characters");
@@ -37,6 +38,10 @@ export type CharacterRecord = {
   name: string;
   role?: string;
   description?: string;
+  /** Identity only: face, hair, skin. Wardrobe lives in `wardrobe`. */
+  appearance?: string;
+  /** Optional layered wardrobe. Absent on older files that only have description. */
+  wardrobe?: CharacterWardrobe;
   /** Local paths point at copies inside this character's own refs folder. */
   referenceImageUrls: string[];
   createdAt: string;
@@ -55,6 +60,8 @@ export type CharacterInput = {
   name: string;
   role?: string;
   description?: string;
+  appearance?: string;
+  wardrobe?: CharacterWardrobe;
   referenceImageUrls?: string[];
 };
 
@@ -114,6 +121,10 @@ function parseRecord(folder: string, raw: string): CharacterRecord | undefined {
       name: parsed.name.trim(),
       role: typeof parsed.role === "string" ? parsed.role : undefined,
       description: typeof parsed.description === "string" ? parsed.description : undefined,
+      appearance: typeof (parsed as { appearance?: unknown }).appearance === "string"
+        ? (parsed as { appearance: string }).appearance
+        : undefined,
+      wardrobe: parseWardrobe((parsed as { wardrobe?: unknown }).wardrobe),
       referenceImageUrls: Array.isArray(parsed.referenceImageUrls)
         ? parsed.referenceImageUrls.filter((ref): ref is string => typeof ref === "string")
         : [],
@@ -229,6 +240,30 @@ async function keepReferences(input: {
 }
 
 /**
+ * Copy any per-state wardrobe photos into the character folder, the same way
+ * portraits are copied: a state image is only useful if it outlives the path
+ * it arrived on.
+ */
+async function keepWardrobeReferences(input: {
+  folder: string;
+  wardrobe: CharacterWardrobe;
+  warnings: string[];
+}): Promise<CharacterWardrobe> {
+  const stateImages = input.wardrobe.stateImages ?? [];
+  if (stateImages.length === 0) return input.wardrobe;
+  const kept = [];
+  for (const entry of stateImages) {
+    const referenceImageUrls = await keepReferences({
+      folder: input.folder,
+      refs: entry.referenceImageUrls,
+      warnings: input.warnings,
+    });
+    kept.push({ worn: entry.worn, referenceImageUrls });
+  }
+  return { ...input.wardrobe, stateImages: kept };
+}
+
+/**
  * Create or update a character on disk and return the record as written.
  *
  * Blanks are filled from what the folder already holds, so adding a portrait to
@@ -256,6 +291,8 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
     name,
     role: input.role ?? existing?.role,
     description: input.description ?? existing?.description,
+    appearance: input.appearance ?? existing?.appearance,
+    wardrobe: input.wardrobe ?? existing?.wardrobe,
     referenceImageUrls,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -263,15 +300,25 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
   };
 
   // Exactly the documented shape on disk: the runtime extras stay in memory.
-  const onDisk = {
+  const wardrobe = record.wardrobe
+    ? await keepWardrobeReferences({ folder, wardrobe: record.wardrobe, warnings })
+    : undefined;
+
+  const onDisk: Record<string, unknown> = {
     id: record.id,
     name: record.name,
     role: record.role,
     description: record.description,
+    appearance: record.appearance,
+    wardrobe,
     referenceImageUrls: record.referenceImageUrls,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+  for (const key of Object.keys(onDisk)) {
+    if (onDisk[key] === undefined) delete onDisk[key];
+  }
+  if (wardrobe) record.wardrobe = wardrobe;
 
   try {
     await mkdir(folder, { recursive: true });

@@ -122,7 +122,7 @@ A still is **$0.02**. A second of 720p video is **$0.14**. Four six-second shots
 |---|---|---|
 | `configure_film` | free | Collects the whole brief on one card, with a cost estimate |
 | `create_character` | free | Stores a named character with reference photos on disk |
-| `plan_storyboard` | free | Turns a scene into numbered shots with framing and continuity notes |
+| `plan_storyboard` | free | Turns a scene into numbered shots with framing, wardrobe checklists and a per-room prop ledger |
 | `board_film` | $0.02 a still | Boards a film as stills, one per shot boundary, so cuts land on identical pixels |
 | `generate_still` | $0.02 | One image, for a frame you want on its own |
 | `render_sequence` | per shot | Renders a whole shot list with frame-to-frame continuity, then assembles it |
@@ -147,6 +147,10 @@ A film is not one long generation. It is a chain, and the chain is the whole des
 **A location is the subject, not the setting.** When the cast includes a character whose role is `Location`, its photo becomes the base that every frame is edited from, and the board spends one extra still — two cents — building a hero frame of the cast inside that room first. Measured skyline agreement across a five-frame board: **0.72** by that route, against 0.57 editing from the location alone, 0.36 chaining, and 0.25 when a portrait rode along as a second reference. A face has a portrait pinned on every frame to correct it; a redrawn room has nothing.
 
 **The cast line describes the photo, never argues with it.** A measured board whose cast line said "navy blazer" while the portrait showed a tan sherpa coat produced a different jacket in three of five frames — the prompt was arguing with the picture. Once the line described the coat that is in the photo, the same board held it in all five. Garment agreement rose from 0.51 to 0.64. `mcp/cast.ts` now enforces that: a cast line naming a garment the picture contradicts is rewritten.
+
+**Wardrobe is a checklist of layers, not one sentence.** A character can store ordered layers (what is against the skin, what sits on top, and how much of each the reference photo actually shows), a start state, and optional photos of later states. Named events — take off, put on, adjust — replay into that checklist for each shot. The board prompt then describes only what is worn. A removed coat does not vanish: it becomes a prop at its destination, for example on a hanger.
+
+**Props belong to a room.** The living-room hanger and the study hanger are different objects with different ids, even when they share a name, and they are never merged. Each shot's prompt names the props in view at that location as fixed set dressing. An unnamed prop is left where it is; only an event that names a prop by id can move or remove it. The ledger is stored on the film job in `~/.theshow/jobs`, so a resumed film keeps the same rooms and objects.
 
 **Cuts are planned, not hidden.** Chained generations drift in fine texture, so any join between near-identical framings shows it — a dissolve double-exposes both patterns, a hard cut pops. Neither is a fix. The real fix is to change the framing between shots, and that is why the storyboard varies shot type and camera move per shot.
 
@@ -210,7 +214,8 @@ The MCP server ships as `mcp/server.bundle.mjs`, a committed esbuild bundle, bec
 - **Rate limits exist** on the generation endpoints. Space calls out; theShow reports the real error rather than silently switching backends.
 - **`retry_shot` cannot repair the seam after the repair.** Shots after the new one were built from the original shot's last frame, so that next join becomes a cut. The tool says so in `warnings` every time.
 - **A film caught mid-render when the server stopped** returns as `state: "stopped"`. Every shot it had already finished is still on disk and still paid for — assemble them, or continue from the last one.
-- **No garment check.** A colour check was built and removed: it learned the coat from the hero frame's arms, the hero is cropped at the chest, and it quietly abstained on every frame of a real board. What holds the wardrobe is the cast line, plus your own eyes on a board that costs pennies. This README would rather say that than imply a safeguard that does not exist.
+- **No garment check.** A colour check was built and removed: it learned the coat from the hero frame's arms, the hero is cropped at the chest, and it quietly abstained on every frame of a real board. What holds the wardrobe is the cast line, the layer checklist, plus your own eyes on a board that costs pennies. This README would rather say that than imply a safeguard that does not exist.
+- **Post-render continuity audit is not implemented.** The interface exists so a later pass can sample frames and flag props that vanished, appeared or moved, with frame numbers. It is not wired to any vision or image call. The cost of that pass per shot has not been measured.
 
 ---
 
@@ -235,7 +240,7 @@ The Studio prefers Grok when a credential resolves and falls back to Gemini Veo,
 
 ```bash
 npm run build:mcp    # bundle mcp/server.ts → mcp/server.bundle.mjs (committed)
-npm test             # 174 tests across 15 files
+npm test             # 190 tests across 16 files
 npm run typecheck
 npm run lint
 ```
@@ -247,6 +252,7 @@ mcp/          the MCP server and its continuity logic
   server.ts     tool definitions
   storyboard.ts board planning and still generation
   cast.ts       cast-line reconciliation against the reference photo
+  continuity.ts wardrobe layers and the per-location prop ledger
   grokVideo.ts  the video and image API client
   characters.ts the on-disk character store
 skills/theshow/ the workflow the model follows
@@ -260,7 +266,7 @@ tests/          vitest
 
 ## Where this goes next
 
-The interesting problems left are continuity problems: holding a location, a light source, or a prop across a cut, and doing it without charging for the same shot twice.
+The interesting problems left are continuity problems: holding a light source across a cut, checking a finished shot against the prop ledger without a measured vision cost, and doing the expensive half without charging for the same shot twice.
 
 If you build something with it, that is where the tool earns its keep.
 
