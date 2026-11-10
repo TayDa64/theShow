@@ -58,8 +58,11 @@ const CharacterSchema = z.object({
     layers: z.array(z.object({
       id: z.string(),
       item: z.string(),
-      order: z.number().describe("Inner to outer. 1 is against the skin."),
+      order: z.number().describe("Inner to outer within this layer type."),
       inReference: z.enum(["visible", "partial", "hidden"]),
+      type: z.enum(["clothing", "footwear"]).optional().describe(
+        "Clothing and footwear stack separately. Defaults to clothing.",
+      ),
     })).min(1),
     startState: z.object({
       worn: z.array(z.string()).describe("Layer ids worn at the start of the film."),

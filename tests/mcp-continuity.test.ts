@@ -234,6 +234,47 @@ describe('the hidden-layer warning', () => {
     });
     expect(shots[1].warnings.join(' ')).not.toMatch(/will have to guess/i);
   });
+
+  it('warns about hidden footwear even while a visible coat is still on top', () => {
+    const withShoes: CharacterContinuity = {
+      ...TAY,
+      wardrobe: {
+        layers: [
+          ...TAY.wardrobe!.layers,
+          { id: 'street-shoes', item: 'street shoes', order: 1, inReference: 'hidden', type: 'footwear' },
+          { id: 'house-shoes', item: 'house shoes', order: 1, inReference: 'hidden', type: 'footwear' },
+        ],
+        startState: { worn: ['shirt', 'blazer', 'coat', 'street-shoes'] },
+      },
+    };
+    const shots = replayContinuity({
+      characters: [withShoes],
+      locations: LOCATIONS,
+      props: [
+        ...HANGERS,
+        { id: 'house-shoes-pair', locationId: 'living-room', name: 'house shoes', placement: 'beside the chair' },
+      ],
+      shotLocations: ['living-room', 'living-room'],
+      shotCount: 2,
+      wardrobeEvents: [
+        { shot: 2, action: 'remove', layer: 'street-shoes', to: 'beside the chair' },
+        { shot: 2, action: 'putOn', layer: 'house-shoes' },
+      ],
+      propEvents: [
+        { shot: 2, action: 'remove', propId: 'house-shoes-pair' },
+      ],
+    });
+    expect(shots[0].checklists[0].outermost?.id).toBe('coat');
+    expect(shots[0].warnings.join(' ')).toMatch(/street shoes/i);
+    expect(shots[0].warnings.join(' ')).toMatch(/not at all/i);
+    expect(shots[1].checklists[0].worn.map((layer) => layer.id)).toContain('house-shoes');
+    expect(shots[1].checklists[0].worn.map((layer) => layer.id)).not.toContain('street-shoes');
+    expect(shots[1].warnings.join(' ')).toMatch(/house shoes/i);
+    expect(shots[1].prompt).toMatch(/takes off the street shoes/i);
+    expect(shots[1].prompt).toMatch(/puts on the house shoes/i);
+    expect(shots[1].prompt).toMatch(/street shoes are beside the chair/i);
+    expect(parseWardrobe(withShoes.wardrobe)?.layers.find((layer) => layer.id === 'street-shoes')?.type).toBe('footwear');
+  });
 });
 
 describe('backward compatibility', () => {

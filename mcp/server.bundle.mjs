@@ -43404,6 +43404,7 @@ import { basename, join as join5, sep } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
+var LAYER_TYPES = ["clothing", "footwear"];
 function sameWorn(a, b) {
   const left = [...a].map((id) => id.trim()).filter(Boolean).sort();
   const right = [...b].map((id) => id.trim()).filter(Boolean).sort();
@@ -43415,6 +43416,9 @@ function layerById(layers, id) {
 }
 function sortLayers(layers) {
   return [...layers].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+}
+function layerType(layer) {
+  return layer.type ?? "clothing";
 }
 function defaultWorn(wardrobe) {
   if (wardrobe.startState?.worn) return [...wardrobe.startState.worn];
@@ -43573,7 +43577,7 @@ function checklistFor(runtime, props, warnings) {
   const wardrobe = runtime.wardrobe;
   if (!wardrobe) return void 0;
   const worn = sortLayers(wardrobe.layers.filter((layer) => runtime.worn.has(layer.id)));
-  const outermost = worn.at(-1);
+  const outermost = sortLayers(worn.filter((layer) => layerType(layer) === "clothing")).at(-1);
   const staged = props.filter((prop) => wardrobe.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
     const layer = wardrobe.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
     return {
@@ -43598,12 +43602,18 @@ function checklistFor(runtime, props, warnings) {
     })),
     warnings: []
   };
-  if (outermost && (outermost.inReference === "partial" || outermost.inReference === "hidden")) {
-    const photo = findStateImage(wardrobe, worn.map((layer) => layer.id));
-    const hasPhoto = Boolean(photo?.referenceImageUrls.some((url2) => url2.trim()));
-    if (!hasPhoto) {
-      const how = outermost.inReference === "partial" ? "only in part" : "not at all";
-      const warning = `After this change, ${runtime.name}'s outermost layer is ${outermost.item}, but the reference picture shows it ${how} and there is no photo for this state. The model will have to guess the rest of its appearance.`;
+  const photo = findStateImage(wardrobe, worn.map((layer) => layer.id));
+  const hasPhoto = Boolean(photo?.referenceImageUrls.some((url2) => url2.trim()));
+  if (!hasPhoto) {
+    const groupOutermost = /* @__PURE__ */ new Map();
+    for (const type of LAYER_TYPES) {
+      const top = sortLayers(worn.filter((layer) => layerType(layer) === type)).at(-1);
+      if (top) groupOutermost.set(type, top);
+    }
+    for (const [type, top] of groupOutermost) {
+      if (top.inReference !== "partial" && top.inReference !== "hidden") continue;
+      const how = top.inReference === "partial" ? "only in part" : "not at all";
+      const warning = type === "clothing" ? `After this change, ${runtime.name}'s outermost layer is ${top.item}, but the reference picture shows it ${how} and there is no photo for this state. The model will have to guess the rest of its appearance.` : `${runtime.name}'s ${top.item} (${type}) are shown ${how} in the reference picture, and there is no photo for this state. The model will have to guess their appearance.`;
       list.warnings.push(warning);
       warnings.push(warning);
     }
@@ -43671,7 +43681,8 @@ function wardrobePrompt(opts) {
     }
     parts.push(`${describeWorn(checklist)}.`);
     for (const staged of checklist.staged) {
-      parts.push(`The ${staged.item} is ${staged.placement}.`);
+      const verb = /\b(shoes|pants|trousers|glasses)\b/i.test(staged.item) ? "are" : "is";
+      parts.push(`The ${staged.item} ${verb} ${staged.placement}.`);
     }
     for (const adjustment of checklist.adjustments) {
       if (!adjustment.note) continue;
@@ -43745,11 +43756,13 @@ function parseWardrobe(raw) {
     if (typeof layer.item !== "string" || !layer.item.trim()) continue;
     if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) continue;
     const inReference = IN_REFERENCE.includes(layer.inReference) ? layer.inReference : "visible";
+    const type = LAYER_TYPES.includes(layer.type) ? layer.type : void 0;
     layers.push({
       id: layer.id.trim(),
       item: layer.item.trim(),
       order: layer.order,
-      inReference
+      inReference,
+      ...type ? { type } : {}
     });
   }
   if (layers.length === 0) return void 0;
@@ -43990,8 +44003,11 @@ var CharacterSchema = external_exports.object({
     layers: external_exports.array(external_exports.object({
       id: external_exports.string(),
       item: external_exports.string(),
-      order: external_exports.number().describe("Inner to outer. 1 is against the skin."),
-      inReference: external_exports.enum(["visible", "partial", "hidden"])
+      order: external_exports.number().describe("Inner to outer within this layer type."),
+      inReference: external_exports.enum(["visible", "partial", "hidden"]),
+      type: external_exports.enum(["clothing", "footwear"]).optional().describe(
+        "Clothing and footwear stack separately. Defaults to clothing."
+      )
     })).min(1),
     startState: external_exports.object({
       worn: external_exports.array(external_exports.string()).describe("Layer ids worn at the start of the film.")

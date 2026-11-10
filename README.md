@@ -240,7 +240,7 @@ The Studio prefers Grok when a credential resolves and falls back to Gemini Veo,
 
 ```bash
 npm run build:mcp    # bundle mcp/server.ts → mcp/server.bundle.mjs (committed)
-npm test             # 190 tests across 16 files
+npm test             # 191 tests across 16 files
 npm run typecheck
 npm run lint
 ```
