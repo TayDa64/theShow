@@ -1,0 +1,69 @@
+{
+ "shotNumber": 2,
+ "title": "b2",
+ "shotType": "wide",
+ "durationSeconds": 4,
+ "action": "Standing in place, his right hand lifts the coat off his left shoulder and he draws his left arm out of its sleeve. His left hand takes the collar at his right shoulder and pulls the coat off his right arm. He holds the whole coat by the collar in his left hand.",
+ "continuityNotes": "",
+ "characters": [
+  "Tay"
+ ],
+ "focusCharacter": "Tay",
+ "firstFrameFrom": "last frame of shot 1",
+ "locationId": "hall",
+ "framing": "wide",
+ "camera": "locked",
+ "start": {
+  "worn": [
+   "coat",
+   "blazer",
+   "shirt",
+   "trousers",
+   "dress-shoes"
+  ],
+  "mark": "A",
+  "door": "closed",
+  "slots": {
+   "hanger-1": null,
+   "hanger-2": "cardigan",
+   "hanger-3": null
+  },
+  "floorAt": [
+   {
+    "item": "moccasins",
+    "n": 2,
+    "text": "one pair of brown moccasins side by side in front of the bench's door-side end, toes toward the camera"
+   }
+  ]
+ },
+ "steps": [
+  "Standing in place, his right hand lifts the coat off his left shoulder and he draws his left arm out of its sleeve.",
+  "His left hand takes the collar at his right shoulder and pulls the coat off his right arm.",
+  "He holds the whole coat by the collar in his left hand."
+ ],
+ "line": {
+  "text": "Halfway to the moon and back.",
+  "delivery": "sung",
+  "voiceTag": "<AUDIO_0>"
+ },
+ "end": {
+  "worn": [
+   "blazer",
+   "shirt",
+   "trousers",
+   "dress-shoes"
+  ],
+  "held": "coat",
+  "mark": "A"
+ },
+ "contact": "one whole coat, never torn, split or doubled; his arms never pass through it.",
+ "avoid": [
+  "a second coat"
+ ],
+ "audio": "his singing voice only, no music.",
+ "pin": "start",
+ "faceAnchor": "auto",
+ "promptStyle": "sections-v2",
+ "prompt": "WIDE SHOT of the whole room, locked-off camera at chest height, framed as the first frame, never moving. START: He is under the amber lamp, just past the door frame, facing the camera. He wears an open tan sherpa coat; an open navy blazer; a blue and white striped shirt, open collar, no tie; dark trousers; black slip-on dress shoes on both feet. The door is shut. Hangers from the door side: empty, beige cardigan, empty. Floor: one pair of brown moccasins side by side in front of the bench's door-side end, toes toward the camera. Fixed set: door, amber lamp, drawing, rail with three wooden hangers, moon window, and one solid one-piece oak bench from below the drawing to the frame's right edge, never moved or resized. ACTION: 1) Standing in place, his right hand lifts the coat off his left shoulder and he draws his left arm out of its sleeve. 2) His left hand takes the collar at his right shoulder and pulls the coat off his right arm. 3) He holds the whole coat by the collar in his left hand. As he moves he sings once, softly and warmly, at an easy natural pace, never sped up, in the voice from <AUDIO_0>: \"Halfway to the moon and back.\" END: He is under the amber lamp, just past the door frame, facing the camera. He wears an open navy blazer; a blue and white striped shirt, open collar, no tie; dark trousers; black slip-on dress shoes on both feet. He holds the whole coat by the collar in his left hand. CONTACT: One whole coat, never torn, split or doubled; his arms never pass through it. AVOID: a second coat. AUDIO: his singing voice only, no music.",
+ "promptWords": 291
+}

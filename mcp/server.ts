@@ -9,7 +9,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { resolveBeatDuration, resolveBeatShotType } from "./beats.ts";
 import { ensureCredentialForJob, resolveVideoCredential } from "./grok-auth.ts";
+import { renderSectionsV2, shouldAnchorFace } from "./promptSections.ts";
 import {
   CLOSING_FRAME_MATCH_THRESHOLD,
   JOBS_DIR,
@@ -288,6 +290,16 @@ function mergeCharacterReferences(
  * Only an explicit Location role qualifies. A character reference is a face to
  * graft onto a scene, never the scene itself.
  */
+function locationScene(characters: string[] | undefined): string | undefined {
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known?.description?.trim()) continue;
+    if (!/\b(location|place|set|environment|interior|exterior)\b/i.test(known.role ?? "")) continue;
+    return known.description.trim();
+  }
+  return undefined;
+}
+
 function findLocationBase(characters: string[] | undefined): string | undefined {
   for (const name of characters ?? []) {
     const known = lookupCharacter(name);
@@ -354,7 +366,15 @@ const BEAT_LADDER = [
   },
 ];
 
-type ShotBeat = { title: string; action: string; note?: string };
+type ShotBeat = {
+  title: string;
+  action: string;
+  note?: string;
+  framing?: string;
+  shotType?: string;
+  durationSeconds?: number;
+  line?: { text?: string; delivery?: "spoken" | "sung" };
+};
 
 function planShots(opts: {
   sceneDescription: string;
@@ -376,8 +396,8 @@ function planShots(opts: {
     return beats.map((beat, i) => ({
       shotNumber: i + 1,
       title: beat.title,
-      shotType: i === 0 ? "wide" : "medium",
-      durationSeconds: per,
+      shotType: resolveBeatShotType(beat, i),
+      durationSeconds: resolveBeatDuration(beat, per),
       action: beat.action.replace(/\{scene\}/g, scene).replace(/\{character\}/g, cast[0]),
       continuityNotes: beat.note ?? "",
       characters: cast.filter(() => true),
@@ -767,6 +787,7 @@ function buildContinuityLedger(input: {
   props?: PropRecord[];
   wardrobeEvents?: WardrobeEvent[];
   propEvents?: PropEvent[];
+  shotSteps?: Array<{ shot: number; steps: string[] }>;
 }) {
   const characters = input.characterNames
     .map((name) => lookupCharacter(name))
@@ -785,6 +806,7 @@ function buildContinuityLedger(input: {
     shotLocations: input.shotLocations,
     shotCount: input.shotCount,
     hasReferencePicture,
+    ...(input.shotSteps && input.shotSteps.length > 0 ? { shotSteps: input.shotSteps } : {}),
   };
   const snapshots = replayContinuity(plan);
   const contracts = deriveContracts(plan);
@@ -803,6 +825,7 @@ function buildContinuityLedger(input: {
 function continuityPlanFromRenderArgs(args: {
   shots: Array<{ locationId?: string; prompt?: string }>;
   characters?: string[];
+  promptStyle?: "legacy" | "sections-v2";
   ledger?: {
     locations?: LocationRecord[];
     props?: PropRecord[];
@@ -810,6 +833,7 @@ function continuityPlanFromRenderArgs(args: {
     propEvents?: Array<Omit<PropEvent, "shot"> & { shot?: number }>;
     shotSteps?: Array<{ shot: number; steps: string[] }>;
     voiceId?: string;
+    promptStyle?: "legacy" | "sections-v2";
     spokenLines?: ContinuityPlan["spokenLines"];
     shotPrompts?: ContinuityPlan["shotPrompts"];
     scaleMarks?: ContinuityPlan["scaleMarks"];
@@ -844,6 +868,9 @@ function continuityPlanFromRenderArgs(args: {
     hasReferencePicture: hasReferencePicture || Boolean(args.ledger.hasPortrait),
     hasPortrait: args.ledger.hasPortrait ?? hasReferencePicture,
     ...(args.ledger.voiceId ? { voiceId: args.ledger.voiceId } : {}),
+    ...((args.promptStyle ?? args.ledger.promptStyle)
+      ? { promptStyle: args.promptStyle ?? args.ledger.promptStyle }
+      : {}),
     ...(args.ledger.spokenLines ? { spokenLines: args.ledger.spokenLines } : {}),
     ...(shotPrompts.length > 0 ? { shotPrompts } : {}),
     ...(args.ledger.scaleMarks ? { scaleMarks: args.ledger.scaleMarks } : {}),
@@ -871,6 +898,7 @@ function applyShotContinuity(
   shot: Record<string, unknown>,
   snapshot: ShotContinuity | undefined,
   wardrobeChanged: boolean,
+  appendProse = true,
 ) {
   if (!snapshot) return shot;
   shot.locationId = snapshot.locationId;
@@ -878,6 +906,10 @@ function applyShotContinuity(
   shot.propsInView = snapshot.propsInView;
   shot.continuityPrompt = snapshot.prompt;
   shot.wardrobeChanged = wardrobeChanged;
+  if (!appendProse) {
+    if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
+    return shot;
+  }
   const extras = [snapshot.prompt, snapshot.contractPrompt].filter(
     (part): part is string => Boolean(part && part.trim()),
   );
@@ -905,6 +937,19 @@ server.registerTool(
       "the props that belong in that room.",
     inputSchema: z.object({
       sceneDescription: z.string(),
+      promptStyle: z.enum(["legacy", "sections-v2"]).optional().describe(
+        "Omit it, or pass legacy, for today's paragraph. sections-v2 writes a sectioned prompt " +
+        "on each shot and does not append the ledger paragraph.",
+      ),
+      voiceId: z.string().optional().describe(
+        "Built-in voice, such as rex. In sections-v2 the spoken line is tagged <AUDIO_0>.",
+      ),
+      fixedSet: z.string().optional().describe(
+        "One sentence naming the fixed pieces and their sizes, used by sections-v2.",
+      ),
+      marks: z.record(z.string(), z.string()).optional().describe(
+        "Named standing positions. A beat's start.mark or end.mark looks up the sentence here.",
+      ),
       beats: z.array(z.object({
         title: z.string(),
         action: z.string().describe("What happens in this shot. {scene} and {character} are substituted."),
@@ -912,6 +957,40 @@ server.registerTool(
         locationId: z.string().optional().describe("Room this shot takes place in. Props are scoped to it."),
         wardrobeEvents: z.array(WardrobeEventSchema).optional(),
         propEvents: z.array(PropEventSchema).optional(),
+        framing: z.enum(["wide", "medium", "close", "feet-close"]).optional(),
+        shotType: z.string().optional(),
+        camera: z.enum(["locked"]).optional(),
+        durationSeconds: z.number().min(1).max(15).optional(),
+        faceAnchor: z.enum(["auto", "off"]).optional(),
+        steps: z.array(z.string()).optional(),
+        line: z.object({
+          text: z.string(),
+          delivery: z.enum(["spoken", "sung"]).optional(),
+          voiceTag: z.string().optional(),
+        }).optional(),
+        contact: z.string().optional(),
+        avoid: z.array(z.string()).optional(),
+        audio: z.string().optional(),
+        start: z.object({
+          worn: z.array(z.string()).optional(),
+          mark: z.string().optional(),
+          text: z.string().optional(),
+          door: z.string().optional(),
+          slots: z.record(z.string(), z.string().nullable()).optional(),
+          floorAt: z.array(z.object({
+            item: z.string().optional(),
+            n: z.number().optional(),
+            text: z.string(),
+          })).optional(),
+        }).optional(),
+        end: z.object({
+          worn: z.array(z.string()).optional(),
+          mark: z.string().optional(),
+          text: z.string().optional(),
+          held: z.string().optional(),
+          door: z.string().optional(),
+          slots: z.record(z.string(), z.string().nullable()).optional(),
+        }).optional(),
       })).optional().describe(
         "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only " +
         "a default shape and must not be imposed on a story the user already described.",
@@ -950,6 +1029,24 @@ server.registerTool(
       totalDurationSeconds,
       beats: args.beats,
     });
+    if (args.promptStyle === "sections-v2") {
+      const layers = (args.characters ?? []).flatMap((name) => {
+        const known = lookupCharacter(name);
+        return known?.wardrobe?.layers ?? [];
+      });
+      for (let index = 0; index < shots.length; index += 1) {
+        const beat = args.beats?.[index];
+        if (!beat) continue;
+        const shot = shots[index] as Record<string, unknown>;
+        shot.prompt = renderSectionsV2(beat, {
+          layers,
+          marks: args.marks,
+          fixedSet: args.fixedSet,
+          voiceId: args.voiceId,
+        });
+        if (beat.faceAnchor) shot.faceAnchor = beat.faceAnchor;
+      }
+    }
 
     const shotLocations = (args.beats ?? []).map((beat) => beat.locationId);
     const beatWardrobe = (args.beats ?? []).flatMap((beat, index) =>
@@ -983,6 +1080,9 @@ server.registerTool(
       props: args.props,
       wardrobeEvents,
       propEvents,
+      shotSteps: (args.beats ?? []).flatMap((beat, index) =>
+        beat.steps && beat.steps.length > 0 ? [{ shot: index + 1, steps: beat.steps }] : [],
+      ),
     });
 
     const annotated = shots.map((shot, index) =>
@@ -990,6 +1090,7 @@ server.registerTool(
         { ...shot } as Record<string, unknown>,
         snapshots[index],
         wardrobeEvents.some((event) => event.shot === index + 1),
+        args.promptStyle !== "sections-v2",
       ),
     );
     const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
@@ -1036,11 +1137,8 @@ server.registerTool(
  * wants the anchor — his hands belong to him — so hands, arms and body parts
  * count alongside the obvious wording.
  */
-const PERSON_IN_SHOT =
-  /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
-
-function mentionsPerson(text: string) {
-  return PERSON_IN_SHOT.test(text);
+function mentionsPerson(prompt: string) {
+  return shouldAnchorFace(prompt);
 }
 
 function composeShotPrompt(continuity: string | undefined, prompt: string) {
@@ -1445,6 +1543,10 @@ server.registerTool(
         "Portrait or location references: public https URLs, data URIs, or local paths. Inlined " +
         "for the API, and shrunk harder as the list grows so the request body stays within limits.",
       ),
+      baseImageUrl: z.string().optional().describe(
+        "Edit this picture instead of generating a new one. The prompt is sent word for word. " +
+        "Omit it and the still is a fresh generation, as before.",
+      ),
       characters: z.array(z.string()).optional().describe(
         "Names of characters created with create_character. Their reference images are merged " +
         "into referenceImageUrls automatically.",
@@ -1458,6 +1560,7 @@ server.registerTool(
         prompt: args.prompt,
         aspectRatio: args.aspectRatio,
         referenceImageUrls: urls.length > 0 ? urls : undefined,
+        baseImageUrl: args.baseImageUrl,
       },
       { outputDir: OUTPUT_DIR },
     );
@@ -1730,6 +1833,7 @@ type SequenceJob = {
     shots?: ShotContinuity[];
     shotSteps?: Array<{ shot: number; steps: string[] }>;
     voiceId?: string;
+    promptStyle?: "legacy" | "sections-v2";
     spokenLines?: ContinuityPlan["spokenLines"];
     humanVisionSignOff?: boolean;
     hasPortrait?: boolean;
@@ -1861,6 +1965,8 @@ async function runSequenceJob(
       firstFrameUrl?: string;
       /** Pinned closing frame, which makes this shot a bookend. */
       lastFrameUrl?: string;
+      faceAnchor?: "auto" | "off";
+      shotType?: string;
     }>;
     characters?: string[];
     continuity?: string;
@@ -1932,7 +2038,10 @@ async function runSequenceJob(
       // not "his face": measured equally well (0.500/0.639 against 0.516/0.598)
       // and it is not safe to assume everyone on screen is a man.
       const prompt = composeShotPrompt(args.continuity, shot.prompt);
-      const anchored = mentionsPerson(prompt)
+      const anchored = mentionsPerson(prompt) && shouldAnchorFace(prompt, {
+        faceAnchor: shot.faceAnchor,
+        shotType: shot.shotType,
+      })
         ? `${prompt} Keep the face exactly as the first frame shows it.`
         : prompt;
       const renderShot = () => generateGrokClip({
@@ -2129,6 +2238,8 @@ server.registerTool(
           "the start frame, because an end pin makes the model hold.",
         ),
         locationId: z.string().optional(),
+        shotType: z.string().optional(),
+        faceAnchor: z.enum(["auto", "off"]).optional(),
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot.",
@@ -2150,6 +2261,7 @@ server.registerTool(
           steps: z.array(z.string()),
         })).optional(),
         voiceId: z.string().optional(),
+        promptStyle: z.enum(["legacy", "sections-v2"]).optional(),
         spokenLines: z.array(z.object({
           shot: z.number().int().min(1),
           line: z.string(),
@@ -2205,6 +2317,9 @@ server.registerTool(
         "start pins each shot's first frame only. both also sends lastFrameUrl.",
       ),
       voiceId: z.string().optional().describe("Built-in voice id, such as rex."),
+      promptStyle: z.enum(["legacy", "sections-v2"]).optional().describe(
+        "sections-v2 refuses a voiced shot whose prompt has no <AUDIO_0>. The default only warns.",
+      ),
       audioTrackFadeOutSeconds: z.number().min(0).max(30).default(1.5),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever " +
@@ -2325,6 +2440,7 @@ server.registerTool(
           propEvents: resumeJob.ledger.propEvents,
           shotSteps: resumeJob.ledger.shotSteps,
           voiceId: resumeJob.ledger.voiceId,
+          promptStyle: resumeJob.ledger.promptStyle,
           spokenLines: resumeJob.ledger.spokenLines,
           humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
           hasPortrait: resumeJob.ledger.hasPortrait,
@@ -2336,6 +2452,7 @@ server.registerTool(
     const continuityPlan = continuityPlanFromRenderArgs({
       shots: args.shots,
       characters: args.characters,
+      promptStyle: args.promptStyle,
       ledger: ledgerForGate
         ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId }
         : undefined,
@@ -2452,6 +2569,7 @@ server.registerTool(
               shots: (args.ledger.shots ?? resumeJob.ledger?.shots) as ShotContinuity[] | undefined,
               shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
               voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+              promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
               spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
               humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
               hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
@@ -2471,6 +2589,7 @@ server.registerTool(
             shots: args.ledger.shots as ShotContinuity[] | undefined,
             shotSteps: args.ledger.shotSteps,
             voiceId: args.voiceId ?? args.ledger.voiceId,
+            promptStyle: args.promptStyle ?? args.ledger.promptStyle,
             spokenLines: args.ledger.spokenLines,
             humanVisionSignOff: args.ledger.humanVisionSignOff,
             hasPortrait: args.ledger.hasPortrait,
@@ -2718,6 +2837,7 @@ server.registerTool(
         shots: boardedShots,
         aspectRatio: args.aspectRatio,
         look: args.look,
+        scene: locationScene(args.characters),
         cast: args.cast,
         maxCostUsd: args.maxCostUsd,
         confirm: decision === "spend",

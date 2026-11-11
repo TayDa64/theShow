@@ -104,6 +104,8 @@ export type RenderGateResult = {
   /** Style notes never change this. */
   tier2: "style-only";
   vision: VisionGate;
+  /** Present only when a check had something to say and did not block. */
+  warnings?: string[];
 };
 
 function layerType(layer: WardrobeLayer) {
@@ -173,7 +175,8 @@ function nounFor(layer: WardrobeLayer) {
 }
 
 function singularNoun(layer: WardrobeLayer) {
-  return nounFor(layer).replace(/ shoes$/, " shoe");
+  // "street shoes" and a layer whose id is just "shoes" both become "shoe".
+  return nounFor(layer).replace(/shoes$/i, "shoe");
 }
 
 export function expandWardrobeEventToSteps(event: WardrobeEvent, plan: ContinuityPlan): string[] {
@@ -194,7 +197,8 @@ export function expandWardrobeEventToSteps(event: WardrobeEvent, plan: Continuit
   }
 
   const steps: string[] = [];
-  if (/\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
+  const alreadyOpen = layer.closure === "open" || layer.closure === "slip-on" || layer.closure === "none";
+  if (!alreadyOpen && /\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
     steps.push(`unbuttons ${item}`);
   }
   steps.push(`removes ${item}`);
@@ -632,6 +636,7 @@ function gateShell(
     message?: string;
     tier1?: { score: number; pass: boolean };
     vision?: VisionGate;
+    warnings?: string[];
   },
 ): RenderGateResult {
   return {
@@ -644,6 +649,7 @@ function gateShell(
     ...(partial.tier1 ? { tier1: partial.tier1 } : {}),
     tier2: "style-only",
     vision: partial.vision ?? "not-required",
+    ...(partial.warnings && partial.warnings.length > 0 ? { warnings: partial.warnings } : {}),
   };
 }
 
@@ -689,6 +695,7 @@ export function gateRenderSequence(input: RenderGateInput): RenderGateResult {
   // When only a plan was passed, same path. Pull tier metadata either way.
   const tier1 = weighted?.tier1;
   const vision = weighted?.vision ?? "not-required";
+  const warnings = weighted?.warnings ?? [];
 
   if (result.ok) {
     return gateShell({
@@ -698,6 +705,7 @@ export function gateRenderSequence(input: RenderGateInput): RenderGateResult {
       violations: [],
       tier1,
       vision,
+      warnings,
     });
   }
 
@@ -711,6 +719,7 @@ export function gateRenderSequence(input: RenderGateInput): RenderGateResult {
         "Shot contracts failed validation; overrideValidation is set, so rendering may proceed.",
       tier1,
       vision,
+      warnings,
     });
   }
 
@@ -722,6 +731,7 @@ export function gateRenderSequence(input: RenderGateInput): RenderGateResult {
     message: RENDER_BLOCKED_BY_CONTRACT,
     tier1,
     vision,
+    warnings,
   });
 }
 

@@ -591,3 +591,35 @@ describe('wardrobe lock when the picture is a portrait and not a location base',
     expect(withNeither[0].prompt).not.toMatch(/clothing exactly as the reference/i);
   });
 });
+
+describe('the hero frame names the photos in the order they are sent', () => {
+  it('calls the first photo the person and the second photo the room', async () => {
+    const generateStill = fakeStill();
+    await boardFilm(
+      {
+        shots: SHOTS,
+        aspectRatio: '16:9',
+        confirm: true,
+        cast: 'One man, grey beard',
+        look: 'Halfway Station hall',
+      },
+      {
+        outputDir: dir,
+        baseImageUrl: '/refs/hall.jpg',
+        referenceImageUrls: ['/refs/portrait.jpg'],
+        generateStill,
+      },
+    );
+    const hero = generateStill.mock.calls[0][0] as { prompt: string; baseImageUrl?: string; referenceImageUrls?: string[] };
+    expect(hero.referenceImageUrls).toEqual(['/refs/portrait.jpg']);
+    expect(hero.baseImageUrl).toBe('/refs/hall.jpg');
+    expect(hero.prompt).toContain('person from the first photo');
+    expect(hero.prompt).toContain('room in the second photo, Halfway Station hall');
+    expect(hero.prompt).toContain('second photo is the room');
+    expect(hero.prompt).not.toMatch(/\boffice\b/i);
+    expect(hero.prompt).not.toMatch(/\bdusk\b/i);
+    expect(hero.prompt).not.toMatch(/the city/i);
+    const again = generateStill.mock.calls[0][1] as { filename?: string };
+    expect(again.filename).toMatch(/^board-hero-/);
+  });
+});

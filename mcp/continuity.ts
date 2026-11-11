@@ -178,6 +178,11 @@ export type ContinuityPlan = {
   shotSteps?: Array<{ shot: number; steps: string[] }>;
   /** Built-in voice id sent with the clip, such as rex. */
   voiceId?: string;
+  /**
+   * "sections-v2" requires `<AUDIO_0>` in every voiced prompt.
+   * Omitted or "legacy" only warns, so an older prompt still renders.
+   */
+  promptStyle?: "legacy" | "sections-v2";
   /** Exact words that must appear in the shot prompt. */
   spokenLines?: Array<{ shot: number; line: string }>;
   /** Prompts that will be sent, checked against spoken lines and closure words. */

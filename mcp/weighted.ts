@@ -34,6 +34,8 @@ export type WeightedCheck = {
   violations: ContractViolation[];
   vision: VisionGate;
   tier1?: { score: number; pass: boolean };
+  /** Non-blocking notes. Empty when there is nothing to say. */
+  warnings: string[];
 };
 
 function violation(
@@ -72,6 +74,7 @@ function closureWords(layer: WardrobeLayer): string[] {
  */
 export function evaluateWeighted(plan: ContinuityPlan): WeightedCheck {
   const violations: ContractViolation[] = [];
+  const warnings: string[] = [];
   const shots = replayContinuity(plan);
   const initialProps = (plan.props ?? []).map((prop) => ({ ...prop }));
   const pendingVision: string[] = [];
@@ -211,6 +214,18 @@ export function evaluateWeighted(plan: ContinuityPlan): WeightedCheck {
       "A spoken line needs a voice id, such as rex.",
     ));
   }
+  if (plan.voiceId?.trim()) {
+    for (const entry of plan.shotPrompts ?? []) {
+      if (entry.prompt.includes("<AUDIO_0>")) continue;
+      const message =
+        `Shot ${entry.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      if (plan.promptStyle === "sections-v2") {
+        violations.push(violation("voice", entry.shot, message));
+      } else {
+        warnings.push(message);
+      }
+    }
+  }
 
   for (const character of plan.characters) {
     for (const layer of character.wardrobe?.layers ?? []) {
@@ -282,5 +297,5 @@ export function evaluateWeighted(plan: ContinuityPlan): WeightedCheck {
     ));
   }
 
-  return { violations, vision, ...(tier1 ? { tier1 } : {}) };
+  return { violations, vision, warnings, ...(tier1 ? { tier1 } : {}) };
 }

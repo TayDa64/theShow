@@ -42346,6 +42346,26 @@ var StdioServerTransport = class {
   }
 };
 
+// mcp/beats.ts
+function resolveBeatShotType(beat, index) {
+  const named = beat.framing?.trim() || beat.shotType?.trim();
+  if (named) return named;
+  return index === 0 ? "wide" : "medium";
+}
+function durationFromLine(text, delivery = "spoken") {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const wordsPerSecond = delivery === "sung" ? 2 : 3;
+  return Math.min(15, Math.max(4, Math.ceil(words / wordsPerSecond)));
+}
+function resolveBeatDuration(beat, evenSplitSeconds) {
+  if (typeof beat.durationSeconds === "number" && Number.isFinite(beat.durationSeconds)) {
+    return Math.min(15, Math.max(1, Math.round(beat.durationSeconds)));
+  }
+  const line = beat.line?.text?.trim();
+  if (line) return durationFromLine(line, beat.line?.delivery === "sung" ? "sung" : "spoken");
+  return evenSplitSeconds;
+}
+
 // mcp/grok-auth.ts
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -42577,6 +42597,135 @@ async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
   });
   if (!again.ok) return { ok: false, code: "expired", reason: again.reason };
   return { ...second, refreshed: true };
+}
+
+// mcp/promptSections.ts
+var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
+function shouldAnchorFace(prompt, opts) {
+  if (opts?.faceAnchor === "off") return false;
+  if (opts?.shotType === "feet-close") return false;
+  return PERSON_IN_SHOT.test(prompt);
+}
+function ensurePeriod(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (/[.!?]$/.test(trimmed)) return trimmed;
+  return `${trimmed}.`;
+}
+function sentenceCase(text) {
+  const body = text.trim().replace(/[.]+$/, "");
+  if (!body) return "";
+  return `${body.charAt(0).toUpperCase()}${body.slice(1)}.`;
+}
+function layerById(layers, id) {
+  const key = id.trim().toLowerCase();
+  return layers.find((layer) => layer.id.toLowerCase() === key);
+}
+function wearPhrase(layer) {
+  const item = layer.item.trim();
+  if ((layer.type ?? "clothing") === "footwear") return `${item} on both feet`;
+  if (layer.closure === "open") return `an open ${item}`;
+  if (/s$/i.test(item) && !/ss$/i.test(item)) return item;
+  return `a ${item}`;
+}
+function wearsSentence(ids, layers) {
+  if (!ids || ids.length === 0) return void 0;
+  const phrases = ids.map((id) => {
+    const layer = layerById(layers, id);
+    return layer ? wearPhrase(layer) : id;
+  });
+  return `He wears ${phrases.join("; ")}.`;
+}
+function doorSentence(door) {
+  if (!door?.trim()) return void 0;
+  const value = door.trim().toLowerCase();
+  if (value === "closed" || value === "shut") return "The door is shut.";
+  if (value === "open") {
+    return "The door is fully open, swung in against the wall at the frame's left.";
+  }
+  return ensurePeriod(`The door is ${door.trim()}`);
+}
+function hangerSentence(slots, layers) {
+  if (!slots) return void 0;
+  const labels = Object.values(slots).map((id) => {
+    if (!id) return "empty";
+    return layerById(layers, id)?.item ?? id;
+  });
+  if (labels.length === 0) return void 0;
+  return `Hangers from the door side: ${labels.join(", ")}.`;
+}
+function floorSentence(floorAt) {
+  const text = floorAt?.map((entry2) => entry2.text.trim()).filter(Boolean).join("; ");
+  if (!text) return void 0;
+  return `Floor: ${ensurePeriod(text)}`;
+}
+function positionSentence(state, marks) {
+  if (!state) return void 0;
+  const written = state.text?.trim() || (state.mark ? marks?.[state.mark]?.trim() : void 0);
+  if (!written) return void 0;
+  return ensurePeriod(written);
+}
+function shotLine(beat) {
+  const framing = (beat.framing ?? beat.shotType ?? "wide").trim();
+  if (framing === "wide" && beat.camera === "locked") {
+    return "WIDE SHOT of the whole room, locked-off camera at chest height, framed as the first frame, never moving.";
+  }
+  const label = framing === "wide" ? "WIDE SHOT" : framing === "medium" ? "MEDIUM SHOT" : framing === "feet-close" ? "CLOSE-UP of his feet" : "CLOSE-UP";
+  if (beat.camera === "locked") {
+    return `${label}, locked-off camera, framed as the first frame, never moving.`;
+  }
+  return `${label}.`;
+}
+function lineSentence(line, voiceId) {
+  const text = line?.text?.trim();
+  if (!text) return void 0;
+  const sung = line?.delivery === "sung";
+  const verb = sung ? "sings" : "speaks";
+  const manner = sung ? "softly and warmly, at an easy natural pace" : "briskly and warmly, at a natural pace";
+  const quoted = text.replace(/^"|"$/g, "");
+  const spoken = /[.!?,]$/.test(quoted) ? quoted : `${quoted}.`;
+  const tag = line?.voiceTag?.trim() || (voiceId?.trim() ? "<AUDIO_0>" : "");
+  const voice = tag ? `, in the voice from ${tag}` : "";
+  return `As he moves he ${verb} once, ${manner}, never sped up${voice}: "${spoken}"`;
+}
+function heldSentence(state, steps, layers) {
+  if (!state?.held?.trim()) return void 0;
+  const holding = [...steps ?? []].reverse().find((step) => /\bholds?\b/i.test(step));
+  if (holding) return ensurePeriod(holding);
+  const layer = layerById(layers, state.held);
+  const name = layer?.short?.trim() || layer?.item.trim() || state.held.trim();
+  return `He holds the ${name}.`;
+}
+function stateSentences(state, ctx, opts) {
+  if (!state) return "";
+  const parts = [
+    positionSentence(state, ctx.marks),
+    wearsSentence(state.worn, ctx.layers),
+    opts.includeSet ? doorSentence(state.door) : void 0,
+    hangerSentence(state.slots, ctx.layers),
+    opts.includeSet ? floorSentence(state.floorAt) : void 0,
+    opts.includeSet && ctx.fixedSet?.trim() ? `Fixed set: ${ensurePeriod(ctx.fixedSet)}` : void 0,
+    heldSentence(state, opts.steps, ctx.layers)
+  ].filter((part) => Boolean(part));
+  return parts.join(" ");
+}
+function renderSectionsV2(beat, ctx) {
+  const steps = (beat.steps ?? []).map((step) => step.trim()).filter(Boolean);
+  const actionBody = [
+    steps.length > 0 ? steps.map((step, index) => `${index + 1}) ${ensurePeriod(step)}`).join(" ") : "",
+    lineSentence(beat.line, ctx.voiceId) ?? ""
+  ].filter(Boolean).join(" ");
+  const avoid = beat.avoid?.map((item) => item.trim()).filter(Boolean)[0];
+  const parts = [
+    shotLine(beat),
+    beat.start ? `START: ${stateSentences(beat.start, ctx, { includeSet: true, steps })}` : "",
+    actionBody ? `ACTION: ${actionBody}` : "",
+    beat.end ? `END: ${stateSentences(beat.end, ctx, { includeSet: false, steps })}` : "",
+    beat.contact?.trim() ? `CONTACT: ${sentenceCase(beat.contact)}` : "",
+    avoid ? `AVOID: ${ensurePeriod(avoid)}` : "",
+    beat.audio?.trim() ? `AUDIO: ${ensurePeriod(beat.audio)}` : ""
+  ].filter(Boolean);
+  return parts.join(" ");
 }
 
 // mcp/media.ts
@@ -43425,6 +43574,12 @@ async function findExistingStill(dir, stem) {
   }
   return void 0;
 }
+function heroPrompt(input2) {
+  const named = (input2.scene ?? input2.look)?.trim().replace(/\.$/, "");
+  const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
+  const cast = input2.cast?.trim() ? castForPicture(input2.cast) : "";
+  return `Place the person from the first photo into ${where}. ` + cast + `The first photo supplies the person and nothing else; its own background is discarded. The second photo is the room and it does not change: keep its walls, its furniture, its windows and the view through them exactly as they are, and keep its own light. Photoreal, single held frame, no motion blur, no text, no watermark.`;
+}
 async function boardFilm(input2, deps) {
   const aspectRatio = input2.aspectRatio ?? "16:9";
   const usable = input2.shots.filter((shot) => shotPrompt(shot).length > 0);
@@ -43449,7 +43604,9 @@ async function boardFilm(input2, deps) {
     };
   }
   const heroRefsForStem = deps.baseImageUrl ? deps.referenceImageUrls ?? [] : [];
-  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash2("sha1").update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}`).digest("hex").slice(0, 16)}` : void 0;
+  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash2("sha1").update(
+    `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}|${input2.look ?? ""}|${input2.scene ?? ""}`
+  ).digest("hex").slice(0, 16)}` : void 0;
   const planned = planBoardFrames({
     shots: usable,
     aspectRatio,
@@ -43508,7 +43665,7 @@ async function boardFilm(input2, deps) {
     const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
-        prompt: `Place the person from the second photo into this office. ${input2.cast?.trim() ? castForPicture(input2.cast) : ""}${input2.look?.trim() ? `${input2.look.trim()} ` : ""}The first photo is the room and it does not change: its walls, its furniture, its windows and the city through them stay exactly as they are, and its own dusk light is the light of this frame. The second photo supplies the person and nothing else - its own background is discarded. Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: heroPrompt(input2),
         aspectRatio,
         baseImageUrl: setting,
         referenceImageUrls: [subject]
@@ -43634,7 +43791,7 @@ function sameWorn(a, b) {
   const right = [...b].map((id) => id.trim()).filter(Boolean).sort();
   return left.length === right.length && left.every((id, i) => id === right[i]);
 }
-function layerById(layers, id) {
+function layerById2(layers, id) {
   const key = id.trim().toLowerCase();
   return layers.find((layer) => layer.id.toLowerCase() === key);
 }
@@ -43702,7 +43859,7 @@ function applyWardrobeEvent(runtimes, props, event, locationId, warnings) {
     );
     return;
   }
-  const layer = layerById(wardrobe.layers, event.layer);
+  const layer = layerById2(wardrobe.layers, event.layer);
   if (!layer) {
     warnings.push(
       `Wardrobe event on shot ${event.shot} names unknown layer "${event.layer}" for ${runtime.name}.`
@@ -43821,7 +43978,7 @@ function checklistFor(runtime, props, warnings) {
     staged,
     adjustments: [...runtime.adjustments.entries()].map(([layerId, note]) => ({
       layerId,
-      item: layerById(wardrobe.layers, layerId)?.item ?? layerId,
+      item: layerById2(wardrobe.layers, layerId)?.item ?? layerId,
       note
     })),
     warnings: []
@@ -43887,7 +44044,7 @@ function wardrobePrompt(opts) {
   const named = /* @__PURE__ */ new Set();
   for (const event of opts.eventsThisShot) {
     const runtime = pickCharacter(opts.runtimes, event);
-    const item = runtime?.wardrobe ? layerById(runtime.wardrobe.layers, event.layer)?.item ?? event.layer : event.layer;
+    const item = runtime?.wardrobe ? layerById2(runtime.wardrobe.layers, event.layer)?.item ?? event.layer : event.layer;
     const who = runtime?.name ?? event.character ?? "the character";
     parts.push(describeChange(event, who, item) + ".");
     named.add(who.toLowerCase());
@@ -44250,6 +44407,7 @@ function closureWords(layer) {
 }
 function evaluateWeighted(plan) {
   const violations = [];
+  const warnings = [];
   const shots = replayContinuity(plan);
   const initialProps = (plan.props ?? []).map((prop) => ({ ...prop }));
   const pendingVision = [];
@@ -44380,6 +44538,17 @@ function evaluateWeighted(plan) {
       "A spoken line needs a voice id, such as rex."
     ));
   }
+  if (plan.voiceId?.trim()) {
+    for (const entry2 of plan.shotPrompts ?? []) {
+      if (entry2.prompt.includes("<AUDIO_0>")) continue;
+      const message = `Shot ${entry2.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      if (plan.promptStyle === "sections-v2") {
+        violations.push(violation("voice", entry2.shot, message));
+      } else {
+        warnings.push(message);
+      }
+    }
+  }
   for (const character of plan.characters) {
     for (const layer of character.wardrobe?.layers ?? []) {
       const banned = closureWords(layer);
@@ -44444,7 +44613,7 @@ function evaluateWeighted(plan) {
       `Tier 1 score ${tier1.score.toFixed(2)} is under ${TIER1_PASS_SCORE.toFixed(2)}.`
     ));
   }
-  return { violations, vision, ...tier1 ? { tier1 } : {} };
+  return { violations, vision, warnings, ...tier1 ? { tier1 } : {} };
 }
 
 // mcp/contracts.ts
@@ -44506,7 +44675,7 @@ function nounFor(layer) {
   return layer.id.replace(/-/g, " ");
 }
 function singularNoun(layer) {
-  return nounFor(layer).replace(/ shoes$/, " shoe");
+  return nounFor(layer).replace(/shoes$/i, "shoe");
 }
 function expandWardrobeEventToSteps(event, plan) {
   const layer = findLayer(plan, event.layer);
@@ -44523,7 +44692,8 @@ function expandWardrobeEventToSteps(event, plan) {
     return [`removes both ${item}`];
   }
   const steps = [];
-  if (/\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
+  const alreadyOpen = layer.closure === "open" || layer.closure === "slip-on" || layer.closure === "none";
+  if (!alreadyOpen && /\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
     steps.push(`unbuttons ${item}`);
   }
   steps.push(`removes ${item}`);
@@ -44863,7 +45033,8 @@ function gateShell(partial2) {
     tier0: partial2.status === "pass" ? "pass" : "fail",
     ...partial2.tier1 ? { tier1: partial2.tier1 } : {},
     tier2: "style-only",
-    vision: partial2.vision ?? "not-required"
+    vision: partial2.vision ?? "not-required",
+    ...partial2.warnings && partial2.warnings.length > 0 ? { warnings: partial2.warnings } : {}
   };
 }
 function decideSpend(confirm, gate) {
@@ -44901,6 +45072,7 @@ function gateRenderSequence(input2) {
   const weighted = input2.plan ? evaluateWeighted(input2.plan) : void 0;
   const tier1 = weighted?.tier1;
   const vision = weighted?.vision ?? "not-required";
+  const warnings = weighted?.warnings ?? [];
   if (result.ok) {
     return gateShell({
       ok: true,
@@ -44908,7 +45080,8 @@ function gateRenderSequence(input2) {
       status: "pass",
       violations: [],
       tier1,
-      vision
+      vision,
+      warnings
     });
   }
   if (input2.overrideValidation) {
@@ -44919,7 +45092,8 @@ function gateRenderSequence(input2) {
       violations: result.violations,
       message: "Shot contracts failed validation; overrideValidation is set, so rendering may proceed.",
       tier1,
-      vision
+      vision,
+      warnings
     });
   }
   return gateShell({
@@ -44929,7 +45103,8 @@ function gateRenderSequence(input2) {
     violations: result.violations,
     message: RENDER_BLOCKED_BY_CONTRACT,
     tier1,
-    vision
+    vision,
+    warnings
   });
 }
 function runPreVideoGate(input2) {
@@ -45104,6 +45279,15 @@ function mergeCharacterReferences(characters, referenceImageUrls) {
   const merged = [...referenceImageUrls ?? [], ...fromCharacters];
   return { urls: Array.from(new Set(merged)), missing };
 }
+function locationScene(characters) {
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known?.description?.trim()) continue;
+    if (!/\b(location|place|set|environment|interior|exterior)\b/i.test(known.role ?? "")) continue;
+    return known.description.trim();
+  }
+  return void 0;
+}
 function findLocationBase(characters) {
   for (const name of characters ?? []) {
     const known = lookupCharacter(name);
@@ -45173,8 +45357,8 @@ function planShots(opts) {
     return beats.map((beat, i) => ({
       shotNumber: i + 1,
       title: beat.title,
-      shotType: i === 0 ? "wide" : "medium",
-      durationSeconds: per,
+      shotType: resolveBeatShotType(beat, i),
+      durationSeconds: resolveBeatDuration(beat, per),
       action: beat.action.replace(/\{scene\}/g, scene2).replace(/\{character\}/g, cast2[0]),
       continuityNotes: beat.note ?? "",
       characters: cast2.filter(() => true),
@@ -45488,7 +45672,8 @@ function buildContinuityLedger(input2) {
     propEvents: input2.propEvents,
     shotLocations: input2.shotLocations,
     shotCount: input2.shotCount,
-    hasReferencePicture
+    hasReferencePicture,
+    ...input2.shotSteps && input2.shotSteps.length > 0 ? { shotSteps: input2.shotSteps } : {}
   };
   const snapshots = replayContinuity(plan);
   const contracts = deriveContracts(plan);
@@ -45524,6 +45709,7 @@ function continuityPlanFromRenderArgs(args) {
     hasReferencePicture: hasReferencePicture || Boolean(args.ledger.hasPortrait),
     hasPortrait: args.ledger.hasPortrait ?? hasReferencePicture,
     ...args.ledger.voiceId ? { voiceId: args.ledger.voiceId } : {},
+    ...args.promptStyle ?? args.ledger.promptStyle ? { promptStyle: args.promptStyle ?? args.ledger.promptStyle } : {},
     ...args.ledger.spokenLines ? { spokenLines: args.ledger.spokenLines } : {},
     ...shotPrompts.length > 0 ? { shotPrompts } : {},
     ...args.ledger.scaleMarks ? { scaleMarks: args.ledger.scaleMarks } : {},
@@ -45544,13 +45730,17 @@ async function refuseIfSessionWillNotLast(estimatedJobMs) {
     code: session.code === "expired" ? "session-too-short" : session.code
   });
 }
-function applyShotContinuity(shot, snapshot, wardrobeChanged) {
+function applyShotContinuity(shot, snapshot, wardrobeChanged, appendProse = true) {
   if (!snapshot) return shot;
   shot.locationId = snapshot.locationId;
   shot.wardrobeChecklist = snapshot.checklists;
   shot.propsInView = snapshot.propsInView;
   shot.continuityPrompt = snapshot.prompt;
   shot.wardrobeChanged = wardrobeChanged;
+  if (!appendProse) {
+    if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
+    return shot;
+  }
   const extras = [snapshot.prompt, snapshot.contractPrompt].filter(
     (part) => Boolean(part && part.trim())
   );
@@ -45574,13 +45764,59 @@ server.registerTool(
     description: "Plan multi-shot storyboard for a scene. Accepts optional wardrobe events and a per-location prop ledger so each shot's prompt describes only what is worn and the props that belong in that room.",
     inputSchema: external_exports.object({
       sceneDescription: external_exports.string(),
+      promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional().describe(
+        "Omit it, or pass legacy, for today's paragraph. sections-v2 writes a sectioned prompt on each shot and does not append the ledger paragraph."
+      ),
+      voiceId: external_exports.string().optional().describe(
+        "Built-in voice, such as rex. In sections-v2 the spoken line is tagged <AUDIO_0>."
+      ),
+      fixedSet: external_exports.string().optional().describe(
+        "One sentence naming the fixed pieces and their sizes, used by sections-v2."
+      ),
+      marks: external_exports.record(external_exports.string(), external_exports.string()).optional().describe(
+        "Named standing positions. A beat's start.mark or end.mark looks up the sentence here."
+      ),
       beats: external_exports.array(external_exports.object({
         title: external_exports.string(),
         action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
         note: external_exports.string().optional().describe("Continuity requirement carried into the prompt."),
         locationId: external_exports.string().optional().describe("Room this shot takes place in. Props are scoped to it."),
         wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
-        propEvents: external_exports.array(PropEventSchema).optional()
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        framing: external_exports.enum(["wide", "medium", "close", "feet-close"]).optional(),
+        shotType: external_exports.string().optional(),
+        camera: external_exports.enum(["locked"]).optional(),
+        durationSeconds: external_exports.number().min(1).max(15).optional(),
+        faceAnchor: external_exports.enum(["auto", "off"]).optional(),
+        steps: external_exports.array(external_exports.string()).optional(),
+        line: external_exports.object({
+          text: external_exports.string(),
+          delivery: external_exports.enum(["spoken", "sung"]).optional(),
+          voiceTag: external_exports.string().optional()
+        }).optional(),
+        contact: external_exports.string().optional(),
+        avoid: external_exports.array(external_exports.string()).optional(),
+        audio: external_exports.string().optional(),
+        start: external_exports.object({
+          worn: external_exports.array(external_exports.string()).optional(),
+          mark: external_exports.string().optional(),
+          text: external_exports.string().optional(),
+          door: external_exports.string().optional(),
+          slots: external_exports.record(external_exports.string(), external_exports.string().nullable()).optional(),
+          floorAt: external_exports.array(external_exports.object({
+            item: external_exports.string().optional(),
+            n: external_exports.number().optional(),
+            text: external_exports.string()
+          })).optional()
+        }).optional(),
+        end: external_exports.object({
+          worn: external_exports.array(external_exports.string()).optional(),
+          mark: external_exports.string().optional(),
+          text: external_exports.string().optional(),
+          held: external_exports.string().optional(),
+          door: external_exports.string().optional(),
+          slots: external_exports.record(external_exports.string(), external_exports.string().nullable()).optional()
+        }).optional()
       })).optional().describe(
         "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
       ),
@@ -45615,6 +45851,24 @@ server.registerTool(
       totalDurationSeconds,
       beats: args.beats
     });
+    if (args.promptStyle === "sections-v2") {
+      const layers = (args.characters ?? []).flatMap((name) => {
+        const known = lookupCharacter(name);
+        return known?.wardrobe?.layers ?? [];
+      });
+      for (let index = 0; index < shots.length; index += 1) {
+        const beat = args.beats?.[index];
+        if (!beat) continue;
+        const shot = shots[index];
+        shot.prompt = renderSectionsV2(beat, {
+          layers,
+          marks: args.marks,
+          fixedSet: args.fixedSet,
+          voiceId: args.voiceId
+        });
+        if (beat.faceAnchor) shot.faceAnchor = beat.faceAnchor;
+      }
+    }
     const shotLocations = (args.beats ?? []).map((beat) => beat.locationId);
     const beatWardrobe = (args.beats ?? []).flatMap(
       (beat, index) => stampShotNumbers(beat.wardrobeEvents, index + 1)
@@ -45645,13 +45899,17 @@ server.registerTool(
       locations: args.locations,
       props: args.props,
       wardrobeEvents,
-      propEvents
+      propEvents,
+      shotSteps: (args.beats ?? []).flatMap(
+        (beat, index) => beat.steps && beat.steps.length > 0 ? [{ shot: index + 1, steps: beat.steps }] : []
+      )
     });
     const annotated = shots.map(
       (shot, index) => applyShotContinuity(
         { ...shot },
         snapshots[index],
-        wardrobeEvents.some((event) => event.shot === index + 1)
+        wardrobeEvents.some((event) => event.shot === index + 1),
+        args.promptStyle !== "sections-v2"
       )
     );
     const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
@@ -45678,9 +45936,8 @@ server.registerTool(
     };
   }
 );
-var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
-function mentionsPerson(text) {
-  return PERSON_IN_SHOT.test(text);
+function mentionsPerson(prompt) {
+  return shouldAnchorFace(prompt);
 }
 function composeShotPrompt(continuity, prompt) {
   const anchor2 = continuity?.trim();
@@ -45972,6 +46229,9 @@ server.registerTool(
       referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
         "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
       ),
+      baseImageUrl: external_exports.string().optional().describe(
+        "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before."
+      ),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
       )
@@ -45983,7 +46243,8 @@ server.registerTool(
       {
         prompt: args.prompt,
         aspectRatio: args.aspectRatio,
-        referenceImageUrls: urls.length > 0 ? urls : void 0
+        referenceImageUrls: urls.length > 0 ? urls : void 0,
+        baseImageUrl: args.baseImageUrl
       },
       { outputDir: OUTPUT_DIR }
     );
@@ -46208,7 +46469,10 @@ async function runSequenceJob(job, args) {
       const shot = args.shots[i];
       const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
       const prompt = composeShotPrompt(args.continuity, shot.prompt);
-      const anchored = mentionsPerson(prompt) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
+      const anchored = mentionsPerson(prompt) && shouldAnchorFace(prompt, {
+        faceAnchor: shot.faceAnchor,
+        shotType: shot.shotType
+      }) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
       const renderShot = () => generateGrokClip({
         prompt: anchored,
         durationSeconds: shot.durationSeconds,
@@ -46349,7 +46613,9 @@ server.registerTool(
         lastFrameUrl: external_exports.string().optional().describe(
           'Pinned closing frame for this shot. Used only when pin is "both". The default pin is the start frame, because an end pin makes the model hold.'
         ),
-        locationId: external_exports.string().optional()
+        locationId: external_exports.string().optional(),
+        shotType: external_exports.string().optional(),
+        faceAnchor: external_exports.enum(["auto", "off"]).optional()
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot."
@@ -46368,6 +46634,7 @@ server.registerTool(
           steps: external_exports.array(external_exports.string())
         })).optional(),
         voiceId: external_exports.string().optional(),
+        promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional(),
         spokenLines: external_exports.array(external_exports.object({
           shot: external_exports.number().int().min(1),
           line: external_exports.string()
@@ -46420,6 +46687,9 @@ server.registerTool(
         "start pins each shot's first frame only. both also sends lastFrameUrl."
       ),
       voiceId: external_exports.string().optional().describe("Built-in voice id, such as rex."),
+      promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional().describe(
+        "sections-v2 refuses a voiced shot whose prompt has no <AUDIO_0>. The default only warns."
+      ),
       audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
@@ -46504,6 +46774,7 @@ server.registerTool(
       propEvents: resumeJob.ledger.propEvents,
       shotSteps: resumeJob.ledger.shotSteps,
       voiceId: resumeJob.ledger.voiceId,
+      promptStyle: resumeJob.ledger.promptStyle,
       spokenLines: resumeJob.ledger.spokenLines,
       humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
       hasPortrait: resumeJob.ledger.hasPortrait,
@@ -46514,6 +46785,7 @@ server.registerTool(
     const continuityPlan = continuityPlanFromRenderArgs({
       shots: args.shots,
       characters: args.characters,
+      promptStyle: args.promptStyle,
       ledger: ledgerForGate ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId } : void 0
     });
     const contractGate = gateRenderSequence({
@@ -46614,6 +46886,7 @@ server.registerTool(
           shots: args.ledger.shots ?? resumeJob.ledger?.shots,
           shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
           voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+          promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
           spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
           humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
           hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
@@ -46632,6 +46905,7 @@ server.registerTool(
             shots: args.ledger.shots,
             shotSteps: args.ledger.shotSteps,
             voiceId: args.voiceId ?? args.ledger.voiceId,
+            promptStyle: args.promptStyle ?? args.ledger.promptStyle,
             spokenLines: args.ledger.spokenLines,
             humanVisionSignOff: args.ledger.humanVisionSignOff,
             hasPortrait: args.ledger.hasPortrait,
@@ -46818,6 +47092,7 @@ server.registerTool(
         shots: boardedShots,
         aspectRatio: args.aspectRatio,
         look: args.look,
+        scene: locationScene(args.characters),
         cast: args.cast,
         maxCostUsd: args.maxCostUsd,
         confirm: decision === "spend"

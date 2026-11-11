@@ -366,6 +366,20 @@ export type BoardFilmDeps = {
  * `maxCostUsd` refuses rather than spends, and the returned `shots` are ready to
  * paste straight into render_sequence with both frames filled in.
  */
+function heroPrompt(input: { cast?: string; look?: string; scene?: string }): string {
+  const named = (input.scene ?? input.look)?.trim().replace(/\.$/, "");
+  const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
+  const cast = input.cast?.trim() ? castForPicture(input.cast) : "";
+  return (
+    `Place the person from the first photo into ${where}. ` +
+    cast +
+    `The first photo supplies the person and nothing else; its own background is discarded. ` +
+    `The second photo is the room and it does not change: keep its walls, its furniture, its ` +
+    `windows and the view through them exactly as they are, and keep its own light. ` +
+    `Photoreal, single held frame, no motion blur, no text, no watermark.`
+  );
+}
+
 export async function boardFilm(
   input: {
     shots: BoardShotInput[];
@@ -375,6 +389,8 @@ export async function boardFilm(
     cast?: string;
     maxCostUsd?: number;
     confirm?: boolean;
+    /** The real room, when the caller has one. Never a hardcoded office. */
+    scene?: string;
   },
   deps: BoardFilmDeps,
 ): Promise<BoardFilmResult> {
@@ -407,7 +423,9 @@ export async function boardFilm(
   const heroRefsForStem = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   const heroStem = heroRefsForStem.length > 0
     ? `board-hero-${createHash("sha1")
-        .update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`)
+        .update(
+          `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}|${input.look ?? ""}|${input.scene ?? ""}`,
+        )
         .digest("hex")
         .slice(0, 16)}`
     : undefined;
@@ -499,25 +517,9 @@ export async function boardFilm(
   // spends two cents building ONE hero frame first and then edits every shot
   // from that single picture.
   //
-  // Which of the two photos is the SUBJECT of that hero edit decides which one
-  // survives, and it is not a toss-up. On `/v1/images/edits` the first picture
-  // is the thing being changed and the rest are context, so:
-  //
-  //  - Portrait first ("place this person into the setting in the second
-  //    photo"): the face is perfect and the room is not. Measured, the frame
-  //    came back as the portrait's own bright living room - sofa, doorway,
-  //    trees in daylight - because the portrait's background is part of the
-  //    subject an edit is inclined to keep. The office was reduced to a hint.
-  //  - Office first ("place the person from the second photo into this
-  //    office"): the room is exact (skyline structure correlation 0.97 against
-  //    0.02-0.08 the other way round) and the person is still the person.
-  //    The office is the thing that must not change, because a redrawn room is
-  //    what makes two shots look like two different films; a face has a
-  //    portrait pinned on every frame afterwards to correct it. Measured on
-  //    three reps, the tan coat survived all three.
-  //
-  // So the office is the base and the portrait is the reference, whichever the
-  // caller passed. Garments are never named in the text - see mcp/cast.ts.
+  // The wire order is portrait first, room second (grokVideo puts reference
+  // images ahead of the base). The words have to name that same order. The
+  // room is whatever scene the caller described, not a fixed office at dusk.
   let boardBase = deps.baseImageUrl;
   const heroRefs = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
@@ -525,15 +527,7 @@ export async function boardFilm(
     const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
-        prompt:
-          `Place the person from the second photo into this office. ` +
-          `${input.cast?.trim() ? castForPicture(input.cast) : ""}` +
-          `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
-          `The first photo is the room and it does not change: its walls, its furniture, its ` +
-          `windows and the city through them stay exactly as they are, and its own dusk light is ` +
-          `the light of this frame. The second photo supplies the person and nothing else - its ` +
-          `own background is discarded. ` +
-          `Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: heroPrompt(input),
         aspectRatio,
         baseImageUrl: setting,
         referenceImageUrls: [subject],
