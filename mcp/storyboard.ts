@@ -51,15 +51,26 @@ export type BoardShotInput = {
    * change was named as an event rather than in prose.
    */
   wardrobeChanged?: boolean;
+  /**
+   * When true, the board plans an extra still at the midpoint of this shot so
+   * the beat is not pinned only at its two ends.
+   */
+  middleKeyframe?: boolean;
 };
 
+export type BoardFrameRole = "opening" | "middle" | "boundary" | "closing";
+
 export type BoardFrame = {
-  /** 1-based position in the film's frame sequence: shots + 1 boundaries. */
+  /** 0-based position in the planned frame sequence. */
   index: number;
   /** What the still should show. */
   prompt: string;
   /** Content-addressed file stem, so a re-run recognises this frame. */
   stem: string;
+  /** Opening, shared boundary, optional midpoint, or closing frame. */
+  role: BoardFrameRole;
+  /** 1-based shot this frame primarily belongs to. */
+  shot: number;
 };
 
 export type BoardedShot = {
@@ -73,6 +84,9 @@ export type BoardedShot = {
   /** Which board frames those are, so a caller can see the shared boundary. */
   firstFrameIndex: number;
   lastFrameIndex: number;
+  /** Optional midpoint still, when the shot asked for a middle keyframe. */
+  middleFrameUrl?: string;
+  middleFrameIndex?: number;
 };
 
 export type BoardedFrame = {
@@ -195,12 +209,35 @@ export function planBoardFrames(opts: {
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
 
-  return Array.from({ length: prompts.length + 1 }, (_, index) => {
+  type FrameSpec = {
+    role: BoardFrameRole;
+    shot: number;
+    incoming?: number;
+    outgoing?: number;
+  };
+
+  const specs: FrameSpec[] = [{ role: "opening", shot: 1, incoming: 0 }];
+  for (let i = 0; i < shots.length; i += 1) {
+    if (shots[i].middleKeyframe) {
+      specs.push({ role: "middle", shot: i + 1, incoming: i, outgoing: i });
+    }
+    if (i < shots.length - 1) {
+      specs.push({ role: "boundary", shot: i + 2, incoming: i + 1, outgoing: i });
+    } else {
+      specs.push({ role: "closing", shot: i + 1, outgoing: i });
+    }
+  }
+
+  return specs.map((spec, index) => {
     let prompt: string;
-    if (index === 0) {
+    if (spec.role === "opening") {
       prompt = `Opening frame of shot 1. ${prompts[0]}`;
-    } else if (index === prompts.length) {
-      prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
+    } else if (spec.role === "closing") {
+      prompt = `Closing frame of shot ${prompts.length}. ${prompts[prompts.length - 1]} The beat has just resolved.`;
+    } else if (spec.role === "middle") {
+      prompt =
+        `Middle frame of shot ${spec.shot}. ${prompts[spec.shot - 1]} ` +
+        "This is neither the start nor the end of the shot; the beat is underway.";
     } else {
       // A boundary belongs to TWO shots, and the wording used to describe it
       // as both at once — "the last frame of shot k and the first frame of
@@ -217,22 +254,20 @@ export function planBoardFrames(opts: {
       // owner: measured on the same pair, the face came out 0.219 and 0.211 of
       // the frame wide, and one of three renders put it out of shot entirely,
       // which is what "close on his hands" was asking for.
+      const incoming = spec.incoming ?? index;
+      const outgoing = spec.outgoing ?? incoming - 1;
       prompt =
-        `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ` +
-        `${prompts[index]} ` +
-        `Shot ${index} travels in to arrive at this picture, so its move ends where this frame ` +
-        `begins — the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) ` +
+        `The opening frame of shot ${incoming + 1}, which is also the closing frame of shot ${outgoing + 1}. ` +
+        `${prompts[incoming]} ` +
+        `Shot ${outgoing + 1} travels in to arrive at this picture, so its move ends where this frame ` +
+        `begins — the camera is already where shot ${incoming + 1} wants it (${prompts[outgoing].trim()}) ` +
         "Hold the same light, wardrobe and room across the boundary.";
     }
 
     // A wardrobe change has to be asked for by name. Without this the picture
     // wins by default, which is what was wanted; with it, a shot that says "he
     // has taken the coat off" is obeyed rather than quietly reverted.
-    const shotForFrame = index === 0
-      ? shots[0]
-      : index === prompts.length
-        ? shots[prompts.length - 1]
-        : shots[index];
+    const shotForFrame = shots[spec.shot - 1] ?? shots[0];
     const asksForChange =
       /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt)
       || Boolean(shotForFrame?.wardrobeChanged);
@@ -248,7 +283,22 @@ export function planBoardFrames(opts: {
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem };
+    return { index, prompt: full, stem, role: spec.role, shot: spec.shot };
+  });
+}
+
+/** First, optional middle, and last frame indexes for each shot in a planned board. */
+export function shotFrameSlots(shots: BoardShotInput[]): Array<{ first: number; middle?: number; last: number }> {
+  let cursor = 0;
+  return shots.map((shot) => {
+    const first = cursor;
+    let middle: number | undefined;
+    if (shot.middleKeyframe) {
+      cursor += 1;
+      middle = cursor;
+    }
+    cursor += 1;
+    return { first, middle, last: cursor };
   });
 }
 
@@ -372,7 +422,9 @@ export async function boardFilm(
     perStillUsd: STILL_USD,
     basis:
       `${planned.length} frames for ${usable.length} shots ` +
-      `(${usable.length} + 1 shared boundaries)` +
+      (usable.some((shot) => shot.middleKeyframe)
+        ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)`
+        : `(${usable.length} + 1 shared boundaries)`) +
       (heroStills ? `, plus one hero frame` : "") +
       `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.` +
@@ -533,10 +585,13 @@ export async function boardFilm(
 
   const shots: BoardedShot[] = [];
   const gaps: number[] = [];
+  const slots = shotFrameSlots(usable);
   usable.forEach((shot, i) => {
-    const first = paths.get(i);
-    const last = paths.get(i + 1);
-    if (!first || !last) {
+    const slot = slots[i];
+    const first = paths.get(slot.first);
+    const last = paths.get(slot.last);
+    const middle = slot.middle !== undefined ? paths.get(slot.middle) : undefined;
+    if (!first || !last || (shot.middleKeyframe && !middle)) {
       gaps.push(i + 1);
       return;
     }
@@ -546,8 +601,11 @@ export async function boardFilm(
       durationSeconds: shot.durationSeconds ?? 8,
       firstFrameUrl: first,
       lastFrameUrl: last,
-      firstFrameIndex: i,
-      lastFrameIndex: i + 1,
+      firstFrameIndex: slot.first,
+      lastFrameIndex: slot.last,
+      ...(middle && slot.middle !== undefined
+        ? { middleFrameUrl: middle, middleFrameIndex: slot.middle }
+        : {}),
     });
   });
 

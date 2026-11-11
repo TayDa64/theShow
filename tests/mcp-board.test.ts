@@ -251,6 +251,27 @@ describe('the boarded film cuts on shared frames', () => {
     expect(new Set(board.shots.map((s) => s.lastFrameUrl)).size).toBe(3);
   });
 
+  it('boards a midpoint still when a shot asks for a middle keyframe', async () => {
+    const board = await boardFilm(
+      {
+        shots: [
+          { prompt: 'Tay stands by the door.', durationSeconds: 8 },
+          { prompt: 'Tay unbuttons and removes his coat.', durationSeconds: 8, middleKeyframe: true },
+        ],
+        confirm: true,
+      },
+      { generateStill: fakeStill(), outputDir: dir },
+    );
+
+    expect(board.frames).toHaveLength(4);
+    expect(board.shots[1].middleFrameUrl).toBeDefined();
+    expect(board.shots[1].firstFrameUrl).toBe(board.shots[0].lastFrameUrl);
+    expect(board.shots[1].middleFrameUrl).not.toBe(board.shots[1].firstFrameUrl);
+    expect(board.shots[1].middleFrameUrl).not.toBe(board.shots[1].lastFrameUrl);
+    expect(board.shots[1].middleFrameIndex).toBeGreaterThan(board.shots[1].firstFrameIndex);
+    expect(board.shots[1].middleFrameIndex).toBeLessThan(board.shots[1].lastFrameIndex);
+  });
+
   it('hands back shots in the exact shape render_sequence takes', async () => {
     const board = await boardFilm(
       { shots: SHOTS, confirm: true },

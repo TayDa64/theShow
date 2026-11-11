@@ -380,3 +380,19 @@ describe('the last-frame fallback keeps the LAST frame', () => {
     expect(mediaSource).toContain('"-vf", "reverse"');
   });
 });
+
+describe('shot contract validation before a render', () => {
+  it('refuses to start render_sequence when contracts fail, unless overrideValidation is set', () => {
+    const handler = serverSource.slice(
+      serverSource.indexOf('"render_sequence"'),
+      serverSource.indexOf('"check_sequence"'),
+    );
+    expect(handler).toContain('overrideValidation');
+    expect(handler).toContain('gateRenderSequence');
+    expect(handler).toContain('RENDER_BLOCKED_BY_CONTRACT');
+    const gateIndex = handler.indexOf('gateRenderSequence');
+    const jobIndex = handler.indexOf('const job: SequenceJob');
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(gateIndex).toBeLessThan(jobIndex);
+  });
+});

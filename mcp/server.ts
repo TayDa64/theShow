@@ -32,12 +32,21 @@ import {
   characterFromRecord,
   replayContinuity,
   type CharacterWardrobe,
+  type ContinuityPlan,
   type LocationRecord,
   type PropEvent,
   type PropRecord,
   type ShotContinuity,
   type WardrobeEvent,
 } from "./continuity.ts";
+import {
+  RENDER_BLOCKED_BY_CONTRACT,
+  gateRenderSequence,
+  promptFromContract,
+  deriveContracts,
+  runPreVideoGate,
+  type ShotContract,
+} from "./contracts.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -116,6 +125,22 @@ const PropEventSchema = z.object({
 const LocationSchema = z.object({
   id: z.string(),
   name: z.string(),
+});
+
+const ShotStateSchema = z.object({
+  worn: z.array(z.string()),
+  holders: z.record(z.string(), z.string()),
+  counts: z.record(z.string(), z.number()).default({}),
+});
+
+const ShotContractSchema = z.object({
+  shot: z.number().int().min(1),
+  requires: ShotStateSchema,
+  steps: z.array(z.string()),
+  ensures: ShotStateSchema,
+  invariants: z.array(z.string()),
+  forbidden: z.array(z.string()),
+  footwear: z.array(z.string()).optional(),
 });
 
 /**
@@ -731,7 +756,7 @@ function buildContinuityLedger(input: {
     const known = lookupCharacter(name);
     return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
   });
-  const snapshots = replayContinuity({
+  const plan = {
     characters,
     locations: input.locations,
     props: input.props,
@@ -740,8 +765,52 @@ function buildContinuityLedger(input: {
     shotLocations: input.shotLocations,
     shotCount: input.shotCount,
     hasReferencePicture,
-  });
-  return { characters, hasReferencePicture, snapshots };
+  };
+  const snapshots = replayContinuity(plan);
+  const contracts = deriveContracts(plan);
+  return {
+    characters,
+    hasReferencePicture,
+    snapshots: snapshots.map((shot, index) => ({
+      ...shot,
+      contractPrompt: contracts[index] ? promptFromContract(contracts[index]) : undefined,
+    })),
+    contracts,
+    plan,
+  };
+}
+
+function continuityPlanFromRenderArgs(args: {
+  shots: Array<{ locationId?: string }>;
+  characters?: string[];
+  ledger?: {
+    locations?: LocationRecord[];
+    props?: PropRecord[];
+    wardrobeEvents?: WardrobeEvent[];
+    propEvents?: PropEvent[];
+    shotSteps?: Array<{ shot: number; steps: string[] }>;
+  };
+}): ContinuityPlan | undefined {
+  if (!args.ledger) return undefined;
+  const characterNames = args.characters ?? [];
+  const characters = characterNames
+    .map((name) => lookupCharacter(name))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .map((entry) => characterFromRecord(entry));
+  return {
+    characters,
+    locations: args.ledger.locations,
+    props: args.ledger.props,
+    wardrobeEvents: args.ledger.wardrobeEvents,
+    propEvents: args.ledger.propEvents,
+    shotLocations: args.shots.map((shot) => shot.locationId),
+    shotCount: args.shots.length,
+    shotSteps: args.ledger.shotSteps,
+    hasReferencePicture: characterNames.some((name) => {
+      const known = lookupCharacter(name);
+      return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+    }),
+  };
 }
 
 function applyShotContinuity(
@@ -755,15 +824,19 @@ function applyShotContinuity(
   shot.propsInView = snapshot.propsInView;
   shot.continuityPrompt = snapshot.prompt;
   shot.wardrobeChanged = wardrobeChanged;
-  if (snapshot.prompt) {
+  const extras = [snapshot.prompt, snapshot.contractPrompt].filter(
+    (part): part is string => Boolean(part && part.trim()),
+  );
+  if (extras.length > 0) {
+    const extra = extras.join(" ");
     if (typeof shot.action === "string") {
-      shot.action = annotateAction(shot.action, snapshot.prompt);
+      shot.action = annotateAction(shot.action, extra);
     }
     if (typeof shot.prompt === "string") {
-      shot.prompt = annotateAction(shot.prompt, snapshot.prompt);
+      shot.prompt = annotateAction(shot.prompt, extra);
     }
     const notes = typeof shot.continuityNotes === "string" ? shot.continuityNotes : "";
-    shot.continuityNotes = [notes, snapshot.prompt].filter((part) => part.trim()).join(" ");
+    shot.continuityNotes = [notes, extra].filter((part) => part.trim()).join(" ");
   }
   if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
   return shot;
@@ -1885,6 +1958,7 @@ server.registerTool(
           "it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. " +
           "board_film fills this in for a whole film.",
         ),
+        locationId: z.string().optional(),
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot.",
@@ -1901,9 +1975,20 @@ server.registerTool(
         wardrobeEvents: z.array(WardrobeEventSchema).optional(),
         propEvents: z.array(PropEventSchema).optional(),
         shots: z.array(z.any()).optional(),
+        shotSteps: z.array(z.object({
+          shot: z.number().int().min(1),
+          steps: z.array(z.string()),
+        })).optional(),
       }).optional().describe(
         "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed " +
         "film keeps the same rooms and props. Does not by itself spend money or call vision.",
+      ),
+      contracts: z.array(ShotContractSchema).optional().describe(
+        "Optional per-shot state-file contracts. When omitted they are derived from ledger.",
+      ),
+      overrideValidation: z.boolean().default(false).describe(
+        "When true, start the render even if the shot contracts fail validation. The default " +
+        "is to refuse rather than spend on a plan the ledger already knows is inconsistent.",
       ),
       firstFrameUrl: z.string().optional().describe(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
@@ -2031,6 +2116,27 @@ server.registerTool(
         : count;
     }, 0);
 
+    const continuityPlan = continuityPlanFromRenderArgs(args);
+    const contractGate = gateRenderSequence({
+      plan: continuityPlan,
+      contracts: args.contracts as ShotContract[] | undefined,
+      overrideValidation: args.overrideValidation,
+    });
+
+    if (args.confirm && contractGate.blocked) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            error: RENDER_BLOCKED_BY_CONTRACT,
+            message: contractGate.message,
+            violations: contractGate.violations,
+          }, null, 2),
+        }],
+      };
+    }
+
     if (!args.confirm) {
       return {
         content: [{
@@ -2072,6 +2178,9 @@ server.registerTool(
             next:
               "Show this to the user. Call again with confirm: true only after they approve. Do not " +
               "set confirm without an explicit yes.",
+            ...(contractGate.violations.length > 0
+              ? { contractValidation: contractGate }
+              : {}),
           }, null, 2),
         }],
       };
@@ -2208,6 +2317,9 @@ server.registerTool(
         wardrobeChanged: z.boolean().optional(),
         wardrobeEvents: z.array(WardrobeEventSchema).optional(),
         propEvents: z.array(PropEventSchema).optional(),
+        middleKeyframe: z.boolean().optional().describe(
+          "Plan an extra still at the midpoint of this shot, so the beat is not pinned only at its ends.",
+        ),
       })).min(1).max(12).describe(
         "Shots in order. N shots produce N+1 stills, because the boundary between two shots is " +
         "one picture shared by both.",
@@ -2321,8 +2433,24 @@ server.registerTool(
 
     // A gate that reports what it refused to spend has to say so plainly: the
     // one thing this tool must never do is spend past the caller's ceiling.
+    const contractValidation = runPreVideoGate({
+      plan: {
+        characters: (args.characters ?? [])
+          .map((name) => lookupCharacter(name))
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+          .map((entry) => characterFromRecord(entry)),
+        locations: args.locations,
+        props: args.props,
+        wardrobeEvents,
+        propEvents,
+        shotLocations,
+        shotCount: args.shots.length,
+      },
+    });
+
     const payload = {
       ...board,
+      contractValidation,
       continuity: {
         locations: args.locations ?? [],
         props: args.props ?? [],

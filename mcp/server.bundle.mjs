@@ -43177,23 +43177,51 @@ function planBoardFrames(opts) {
   const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
   const still = " Single held frame, no motion blur, no text, no watermark.";
-  return Array.from({ length: prompts.length + 1 }, (_, index) => {
-    let prompt;
-    if (index === 0) {
-      prompt = `Opening frame of shot 1. ${prompts[0]}`;
-    } else if (index === prompts.length) {
-      prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
-    } else {
-      prompt = `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ${prompts[index]} Shot ${index} travels in to arrive at this picture, so its move ends where this frame begins \u2014 the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) Hold the same light, wardrobe and room across the boundary.`;
+  const specs = [{ role: "opening", shot: 1, incoming: 0 }];
+  for (let i = 0; i < shots.length; i += 1) {
+    if (shots[i].middleKeyframe) {
+      specs.push({ role: "middle", shot: i + 1, incoming: i, outgoing: i });
     }
-    const shotForFrame = index === 0 ? shots[0] : index === prompts.length ? shots[prompts.length - 1] : shots[index];
+    if (i < shots.length - 1) {
+      specs.push({ role: "boundary", shot: i + 2, incoming: i + 1, outgoing: i });
+    } else {
+      specs.push({ role: "closing", shot: i + 1, outgoing: i });
+    }
+  }
+  return specs.map((spec, index) => {
+    let prompt;
+    if (spec.role === "opening") {
+      prompt = `Opening frame of shot 1. ${prompts[0]}`;
+    } else if (spec.role === "closing") {
+      prompt = `Closing frame of shot ${prompts.length}. ${prompts[prompts.length - 1]} The beat has just resolved.`;
+    } else if (spec.role === "middle") {
+      prompt = `Middle frame of shot ${spec.shot}. ${prompts[spec.shot - 1]} This is neither the start nor the end of the shot; the beat is underway.`;
+    } else {
+      const incoming = spec.incoming ?? index;
+      const outgoing = spec.outgoing ?? incoming - 1;
+      prompt = `The opening frame of shot ${incoming + 1}, which is also the closing frame of shot ${outgoing + 1}. ${prompts[incoming]} Shot ${outgoing + 1} travels in to arrive at this picture, so its move ends where this frame begins \u2014 the camera is already where shot ${incoming + 1} wants it (${prompts[outgoing].trim()}) Hold the same light, wardrobe and room across the boundary.`;
+    }
+    const shotForFrame = shots[spec.shot - 1] ?? shots[0];
     const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt) || Boolean(shotForFrame?.wardrobeChanged);
     const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem };
+    return { index, prompt: full, stem, role: spec.role, shot: spec.shot };
+  });
+}
+function shotFrameSlots(shots) {
+  let cursor = 0;
+  return shots.map((shot) => {
+    const first = cursor;
+    let middle;
+    if (shot.middleKeyframe) {
+      cursor += 1;
+      middle = cursor;
+    }
+    cursor += 1;
+    return { first, middle, last: cursor };
   });
 }
 async function findExistingStill(dir, stem) {
@@ -43257,7 +43285,7 @@ async function boardFilm(input2, deps) {
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
+    basis: `${planned.length} frames for ${usable.length} shots ` + (usable.some((shot) => shot.middleKeyframe) ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)` : `(${usable.length} + 1 shared boundaries)`) + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43347,10 +43375,13 @@ async function boardFilm(input2, deps) {
   }
   const shots = [];
   const gaps = [];
+  const slots = shotFrameSlots(usable);
   usable.forEach((shot, i) => {
-    const first = paths.get(i);
-    const last = paths.get(i + 1);
-    if (!first || !last) {
+    const slot = slots[i];
+    const first = paths.get(slot.first);
+    const last = paths.get(slot.last);
+    const middle = slot.middle !== void 0 ? paths.get(slot.middle) : void 0;
+    if (!first || !last || shot.middleKeyframe && !middle) {
       gaps.push(i + 1);
       return;
     }
@@ -43360,8 +43391,9 @@ async function boardFilm(input2, deps) {
       durationSeconds: shot.durationSeconds ?? 8,
       firstFrameUrl: first,
       lastFrameUrl: last,
-      firstFrameIndex: i,
-      lastFrameIndex: i + 1
+      firstFrameIndex: slot.first,
+      lastFrameIndex: slot.last,
+      ...middle && slot.middle !== void 0 ? { middleFrameUrl: middle, middleFrameIndex: slot.middle } : {}
     });
   });
   const complete = gaps.length === 0;
@@ -43984,6 +44016,387 @@ async function loadAllCharacters() {
   return [...newest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// mcp/contracts.ts
+var MAX_STEPS_PER_SHOT = 3;
+var RENDER_BLOCKED_BY_CONTRACT = "render_sequence refused to start because the shot contracts failed validation. Pass overrideValidation: true to proceed anyway.";
+function layerType2(layer) {
+  return layer.type ?? "clothing";
+}
+function allLayers(plan) {
+  return plan.characters.flatMap((character) => character.wardrobe?.layers ?? []);
+}
+function findLayer(plan, id) {
+  const key = id.trim().toLowerCase();
+  return allLayers(plan).find((layer) => layer.id.toLowerCase() === key);
+}
+function sortIds(ids) {
+  return [...ids].map((id) => id.trim()).filter(Boolean).sort();
+}
+function sameIds(a, b) {
+  const left = sortIds(a);
+  const right = sortIds(b);
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+function sameRecord(a, b) {
+  const keys = /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a[key] ?? "") !== (b[key] ?? "")) return false;
+  }
+  return true;
+}
+function sameShotState(a, b) {
+  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders);
+}
+function isHangerDest(to, plan) {
+  if (!to?.trim()) return false;
+  if (/hanger/i.test(to)) return true;
+  const prop = resolveProp(plan.props ?? [], to);
+  return Boolean(prop && /hanger/i.test(`${prop.id} ${prop.name}`));
+}
+function hangerLike(prop) {
+  return /hanger/i.test(`${prop.id} ${prop.name}`);
+}
+function nounFor(layer) {
+  return layer.id.replace(/-/g, " ");
+}
+function singularNoun(layer) {
+  return nounFor(layer).replace(/ shoes$/, " shoe");
+}
+function expandWardrobeEventToSteps(event, plan) {
+  const layer = findLayer(plan, event.layer);
+  if (!layer) return [`${event.action} ${event.layer}`];
+  const item = layer.item;
+  const type = layerType2(layer);
+  if (event.action === "adjust") {
+    return [event.note?.trim() || `adjusts ${item}`];
+  }
+  if (event.action === "putOn") {
+    return [type === "footwear" ? `puts on both ${item}` : `puts on ${item}`];
+  }
+  if (type === "footwear") {
+    return [`removes both ${item}`];
+  }
+  const steps = [];
+  if (/\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
+    steps.push(`unbuttons ${item}`);
+  }
+  steps.push(`removes ${item}`);
+  if (isHangerDest(event.to, plan)) {
+    steps.push("lifts hanger off wall");
+    steps.push(`hangs ${item} on hanger`);
+    steps.push("returns hanger to wall");
+  }
+  return steps;
+}
+function expandPropEventToSteps(event, props) {
+  const current = props.find((prop) => prop.id === event.propId);
+  const name = event.name ?? current?.name ?? event.propId;
+  const holder = event.holder ?? "";
+  if (event.action === "move" && /hanger/i.test(`${holder} ${event.placement ?? ""}`)) {
+    return ["lifts hanger off wall", `hangs ${name} on hanger`, "returns hanger to wall"];
+  }
+  if (event.action === "move") return [`moves ${name}`];
+  if (event.action === "add") return [`adds ${name}`];
+  if (event.action === "remove") return [`removes ${name} from the set`];
+  return [];
+}
+function stepsForShot(plan, shot) {
+  const named = (plan.shotSteps ?? []).find((entry) => entry.shot === shot);
+  if (named) return [...named.steps];
+  const wardrobe = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
+  const props = (plan.propEvents ?? []).filter((event) => event.shot === shot);
+  return [
+    ...wardrobe.flatMap((event) => expandWardrobeEventToSteps(event, plan)),
+    ...props.flatMap((event) => expandPropEventToSteps(event, plan.props ?? []))
+  ];
+}
+function holdersFromProps(props) {
+  const holders = {};
+  for (const prop of props) {
+    const held = props.filter((other) => other.holder === prop.id);
+    if (held.length === 0 && !hangerLike(prop)) continue;
+    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry) => entry.name).join(" and ")}`;
+  }
+  return holders;
+}
+function wornFrom(snapshot) {
+  const worn = (snapshot?.checklists ?? []).flatMap((list) => list.worn);
+  const clothing = worn.filter((layer) => layerType2(layer) === "clothing").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const shoes = worn.filter((layer) => layerType2(layer) === "footwear").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  return [...clothing, ...shoes].map((layer) => layer.id);
+}
+function stagedLayerIds(snapshot) {
+  return (snapshot?.checklists ?? []).flatMap((list) => list.staged.map((item) => item.layerId));
+}
+function countsFor(plan, snapshot, worn) {
+  const counts = {};
+  const staged = new Set(stagedLayerIds(snapshot));
+  const props = snapshot?.propsInView ?? [];
+  for (const layer of allLayers(plan)) {
+    const unit = layerType2(layer) === "footwear" ? 2 : 1;
+    const isWorn = worn.includes(layer.id);
+    const isStaged = staged.has(layer.id);
+    const matchingProps = props.filter((prop) => {
+      if (prop.id.startsWith("garment-")) return false;
+      return prop.id === layer.id || prop.name.trim().toLowerCase() === layer.item.trim().toLowerCase();
+    });
+    counts[layer.id] = (isWorn ? unit : 0) + (isStaged ? unit : 0) + (matchingProps.length > 0 && !isWorn && !isStaged ? unit : 0);
+  }
+  return counts;
+}
+function stateFromSnapshot(plan, snapshot) {
+  const worn = wornFrom(snapshot);
+  return {
+    worn,
+    holders: holdersFromProps(snapshot?.propsInView ?? []),
+    counts: countsFor(plan, snapshot, worn)
+  };
+}
+function initialSnapshot(plan) {
+  const [opening] = replayContinuity({
+    ...plan,
+    shotCount: Math.max(1, plan.shotCount),
+    wardrobeEvents: [],
+    propEvents: []
+  });
+  return opening;
+}
+function itemsInPlay(requires, ensures, layers) {
+  const ids = /* @__PURE__ */ new Set([...requires.worn, ...ensures.worn]);
+  for (const layer of layers) {
+    if ((requires.counts[layer.id] ?? 0) > 0 || (ensures.counts[layer.id] ?? 0) > 0) {
+      ids.add(layer.id);
+    }
+  }
+  return layers.filter((layer) => ids.has(layer.id));
+}
+function deriveInvariants(plan, requires, ensures) {
+  const layers = allLayers(plan);
+  const unchanged = requires.worn.filter((id) => ensures.worn.includes(id));
+  const invariants = [];
+  for (const id of unchanged) {
+    const layer = findLayer(plan, id);
+    if (!layer) continue;
+    invariants.push(`${layer.item} worn the whole shot`);
+    if (layerType2(layer) === "footwear") {
+      invariants.push(`exactly 2 ${layer.item}, on feet`);
+    }
+  }
+  for (const layer of itemsInPlay(requires, ensures, layers)) {
+    if (layerType2(layer) === "footwear") {
+      if (!unchanged.includes(layer.id)) {
+        invariants.push(`exactly 2 ${layer.item} in frame`);
+      }
+    } else {
+      invariants.push(`exactly one ${layer.item} in frame`);
+    }
+  }
+  return invariants;
+}
+function deriveForbidden(plan, requires, ensures) {
+  const layers = allLayers(plan);
+  const worn = /* @__PURE__ */ new Set([...requires.worn, ...ensures.worn]);
+  const forbidden = [];
+  const hangerPresent = Object.keys(requires.holders).concat(Object.keys(ensures.holders)).some((id) => /hanger/i.test(id));
+  for (const layer of itemsInPlay(requires, ensures, layers)) {
+    if (layerType2(layer) === "footwear") {
+      forbidden.push(`a third ${singularNoun(layer)}`);
+      forbidden.push(`only one ${singularNoun(layer)}`);
+    } else {
+      forbidden.push(`second ${nounFor(layer)}`);
+      if (hangerPresent && worn.has(layer.id)) {
+        forbidden.push(`${nounFor(layer)} on hanger`);
+      }
+    }
+  }
+  return forbidden;
+}
+function deriveContracts(plan) {
+  const start = initialSnapshot(plan);
+  const ends = replayContinuity(plan);
+  const footwear = allLayers(plan).filter((layer) => layerType2(layer) === "footwear").map((layer) => layer.id);
+  return ends.map((snapshot, index) => {
+    const requires = stateFromSnapshot(plan, index === 0 ? start : ends[index - 1]);
+    const ensures = stateFromSnapshot(plan, snapshot);
+    return {
+      shot: snapshot.shot,
+      requires,
+      steps: stepsForShot(plan, snapshot.shot),
+      ensures,
+      invariants: deriveInvariants(plan, requires, ensures),
+      forbidden: deriveForbidden(plan, requires, ensures),
+      ...footwear.length > 0 ? { footwear } : {}
+    };
+  });
+}
+function heldNames(holders) {
+  const names = [];
+  for (const value of Object.values(holders)) {
+    const match = value.match(/holding (.+)$/i);
+    if (!match) continue;
+    names.push(...match[1].split(/ and /i).map((part) => part.trim().toLowerCase()));
+  }
+  return names;
+}
+function wornOnHolder(state) {
+  const held = heldNames(state.holders);
+  if (held.length === 0) return [];
+  return state.worn.filter((id) => {
+    const needle = id.replace(/-/g, " ").toLowerCase();
+    return held.some((name) => name.includes(needle) || name.includes(id.toLowerCase()));
+  });
+}
+function footwearIdsOf(contract) {
+  if (contract.footwear && contract.footwear.length > 0) return contract.footwear;
+  return [.../* @__PURE__ */ new Set([...contract.requires.worn, ...contract.ensures.worn])].filter((id) => /shoe/i.test(id));
+}
+function countViolations(contract) {
+  const found = [];
+  const footwear = footwearIdsOf(contract);
+  const unitFor = (id) => footwear.includes(id) ? 2 : 1;
+  for (const state of [contract.requires, contract.ensures]) {
+    const held = wornOnHolder(state);
+    if (held.length > 0) {
+      found.push({
+        code: "worn-and-held",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} has ${held.join(", ")} both worn and on a holder.`
+      });
+    }
+    for (const [id, count] of Object.entries(state.counts ?? {})) {
+      const unit = unitFor(id);
+      if (count > unit) {
+        found.push({
+          code: "duplicate-garment",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} of ${id}, which is more than the ${unit} that should exist.`
+        });
+      }
+    }
+  }
+  for (const id of footwear) {
+    for (const state of [contract.requires, contract.ensures]) {
+      const count = state.counts?.[id];
+      if (count === void 0) continue;
+      if (count !== 0 && count !== 2) {
+        found.push({
+          code: "footwear-count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} ${id}, but footwear is a pair and must be 0 or 2.`
+        });
+      }
+    }
+  }
+  for (const invariant of contract.invariants) {
+    const match = invariant.match(/exactly\s+(\d+)\s+(.+?)(?:,|$)/i);
+    if (!match) continue;
+    const count = Number(match[1]);
+    const label = match[2].toLowerCase();
+    if (/shoe/i.test(label) && count !== 2) {
+      found.push({
+        code: "footwear-count",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariant "${invariant}" uses a footwear count that is not a pair.`
+      });
+    }
+  }
+  return found;
+}
+function validateContracts(contracts) {
+  const violations = [];
+  for (const contract of contracts) {
+    if (contract.steps.length > MAX_STEPS_PER_SHOT) {
+      violations.push({
+        code: "too-many-steps",
+        shot: contract.shot,
+        suggestSplit: true,
+        message: `Shot ${contract.shot} has ${contract.steps.length} steps, which is more than ${MAX_STEPS_PER_SHOT}. Split it so no shot has more than ${MAX_STEPS_PER_SHOT} steps. Suggested split after step ${MAX_STEPS_PER_SHOT}.`
+      });
+    }
+    violations.push(...countViolations(contract));
+  }
+  const ordered = [...contracts].sort((a, b) => a.shot - b.shot);
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1];
+    const current = ordered[index];
+    if (sameShotState(current.requires, previous.ensures)) continue;
+    const appeared = current.requires.worn.filter((id) => !previous.ensures.worn.includes(id));
+    const missing = previous.ensures.worn.filter((id) => !current.requires.worn.includes(id));
+    const extras = [
+      appeared.length > 0 ? `Reappeared or newly required: ${appeared.join(", ")}.` : "",
+      missing.length > 0 ? `Missing from this start: ${missing.join(", ")}.` : ""
+    ].filter(Boolean).join(" ");
+    violations.push({
+      code: "requires-mismatch",
+      shot: current.shot,
+      message: `Shot ${current.shot} requires does not match shot ${previous.shot} ensures.` + (extras ? ` ${extras}` : "")
+    });
+  }
+  return { ok: violations.length === 0, violations };
+}
+function validateContractsAgainstPlan(plan, contracts) {
+  const derived2 = deriveContracts(plan);
+  const authored = contracts ?? derived2;
+  const result = validateContracts(authored);
+  if (!contracts) return result;
+  for (const contract of contracts) {
+    const expected = derived2.find((entry) => entry.shot === contract.shot);
+    if (!expected) continue;
+    if (sameShotState(contract.requires, expected.requires) && sameShotState(contract.ensures, expected.ensures)) {
+      continue;
+    }
+    result.violations.push({
+      code: "ledger-mismatch",
+      shot: contract.shot,
+      message: `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger.`
+    });
+  }
+  return { ok: result.violations.length === 0, violations: result.violations };
+}
+function promptFromContract(contract) {
+  const parts = [];
+  if (contract.invariants.length > 0) {
+    parts.push(contract.invariants.join(" "));
+  }
+  if (contract.steps.length > 0) {
+    parts.push(`Steps in order: ${contract.steps.join("; ")}.`);
+  }
+  if (contract.forbidden.length > 0) {
+    parts.push(`Do not show: ${contract.forbidden.join("; ")}.`);
+  } else {
+    parts.push(
+      "Do not show anything that contradicts this shot's required start state, end state, or invariants."
+    );
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+function gateRenderSequence(input2) {
+  if (!input2.plan && !input2.contracts) {
+    return { ok: true, blocked: false, violations: [] };
+  }
+  const result = input2.plan ? validateContractsAgainstPlan(input2.plan, input2.contracts) : validateContracts(input2.contracts ?? []);
+  if (result.ok) {
+    return { ok: true, blocked: false, violations: [] };
+  }
+  if (input2.overrideValidation) {
+    return {
+      ok: false,
+      blocked: false,
+      violations: result.violations,
+      message: "Shot contracts failed validation; overrideValidation is set, so rendering may proceed."
+    };
+  }
+  return {
+    ok: false,
+    blocked: true,
+    violations: result.violations,
+    message: RENDER_BLOCKED_BY_CONTRACT
+  };
+}
+function runPreVideoGate(input2) {
+  return gateRenderSequence(input2);
+}
+
 // mcp/server.ts
 import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
@@ -44056,6 +44469,20 @@ var PropEventSchema = external_exports.object({
 var LocationSchema = external_exports.object({
   id: external_exports.string(),
   name: external_exports.string()
+});
+var ShotStateSchema = external_exports.object({
+  worn: external_exports.array(external_exports.string()),
+  holders: external_exports.record(external_exports.string(), external_exports.string()),
+  counts: external_exports.record(external_exports.string(), external_exports.number()).default({})
+});
+var ShotContractSchema = external_exports.object({
+  shot: external_exports.number().int().min(1),
+  requires: ShotStateSchema,
+  steps: external_exports.array(external_exports.string()),
+  ensures: ShotStateSchema,
+  invariants: external_exports.array(external_exports.string()),
+  forbidden: external_exports.array(external_exports.string()),
+  footwear: external_exports.array(external_exports.string()).optional()
 });
 var characterStore = /* @__PURE__ */ new Map();
 async function rememberCharacter(args) {
@@ -44501,7 +44928,7 @@ function buildContinuityLedger(input2) {
     const known = lookupCharacter(name);
     return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
   });
-  const snapshots = replayContinuity({
+  const plan = {
     characters,
     locations: input2.locations,
     props: input2.props,
@@ -44510,8 +44937,38 @@ function buildContinuityLedger(input2) {
     shotLocations: input2.shotLocations,
     shotCount: input2.shotCount,
     hasReferencePicture
-  });
-  return { characters, hasReferencePicture, snapshots };
+  };
+  const snapshots = replayContinuity(plan);
+  const contracts = deriveContracts(plan);
+  return {
+    characters,
+    hasReferencePicture,
+    snapshots: snapshots.map((shot, index) => ({
+      ...shot,
+      contractPrompt: contracts[index] ? promptFromContract(contracts[index]) : void 0
+    })),
+    contracts,
+    plan
+  };
+}
+function continuityPlanFromRenderArgs(args) {
+  if (!args.ledger) return void 0;
+  const characterNames = args.characters ?? [];
+  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
+  return {
+    characters,
+    locations: args.ledger.locations,
+    props: args.ledger.props,
+    wardrobeEvents: args.ledger.wardrobeEvents,
+    propEvents: args.ledger.propEvents,
+    shotLocations: args.shots.map((shot) => shot.locationId),
+    shotCount: args.shots.length,
+    shotSteps: args.ledger.shotSteps,
+    hasReferencePicture: characterNames.some((name) => {
+      const known = lookupCharacter(name);
+      return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+    })
+  };
 }
 function applyShotContinuity(shot, snapshot, wardrobeChanged) {
   if (!snapshot) return shot;
@@ -44520,15 +44977,19 @@ function applyShotContinuity(shot, snapshot, wardrobeChanged) {
   shot.propsInView = snapshot.propsInView;
   shot.continuityPrompt = snapshot.prompt;
   shot.wardrobeChanged = wardrobeChanged;
-  if (snapshot.prompt) {
+  const extras = [snapshot.prompt, snapshot.contractPrompt].filter(
+    (part) => Boolean(part && part.trim())
+  );
+  if (extras.length > 0) {
+    const extra = extras.join(" ");
     if (typeof shot.action === "string") {
-      shot.action = annotateAction(shot.action, snapshot.prompt);
+      shot.action = annotateAction(shot.action, extra);
     }
     if (typeof shot.prompt === "string") {
-      shot.prompt = annotateAction(shot.prompt, snapshot.prompt);
+      shot.prompt = annotateAction(shot.prompt, extra);
     }
     const notes = typeof shot.continuityNotes === "string" ? shot.continuityNotes : "";
-    shot.continuityNotes = [notes, snapshot.prompt].filter((part) => part.trim()).join(" ");
+    shot.continuityNotes = [notes, extra].filter((part) => part.trim()).join(" ");
   }
   if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
   return shot;
@@ -45223,7 +45684,8 @@ server.registerTool(
         ),
         lastFrameUrl: external_exports.string().optional().describe(
           "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
-        )
+        ),
+        locationId: external_exports.string().optional()
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot."
@@ -45236,9 +45698,19 @@ server.registerTool(
         props: external_exports.array(PropRecordSchema).optional(),
         wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
         propEvents: external_exports.array(PropEventSchema).optional(),
-        shots: external_exports.array(external_exports.any()).optional()
+        shots: external_exports.array(external_exports.any()).optional(),
+        shotSteps: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          steps: external_exports.array(external_exports.string())
+        })).optional()
       }).optional().describe(
         "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed film keeps the same rooms and props. Does not by itself spend money or call vision."
+      ),
+      contracts: external_exports.array(ShotContractSchema).optional().describe(
+        "Optional per-shot state-file contracts. When omitted they are derived from ledger."
+      ),
+      overrideValidation: external_exports.boolean().default(false).describe(
+        "When true, start the render even if the shot contracts fail validation. The default is to refuse rather than spend on a plan the ledger already knows is inconsistent."
       ),
       firstFrameUrl: external_exports.string().optional().describe(
         "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
@@ -45330,6 +45802,25 @@ server.registerTool(
       const next = args.shots[i + 1];
       return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
     }, 0);
+    const continuityPlan = continuityPlanFromRenderArgs(args);
+    const contractGate = gateRenderSequence({
+      plan: continuityPlan,
+      contracts: args.contracts,
+      overrideValidation: args.overrideValidation
+    });
+    if (args.confirm && contractGate.blocked) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            error: RENDER_BLOCKED_BY_CONTRACT,
+            message: contractGate.message,
+            violations: contractGate.violations
+          }, null, 2)
+        }]
+      };
+    }
     if (!args.confirm) {
       return {
         content: [{
@@ -45361,7 +45852,8 @@ server.registerTool(
               isEstimate: true
             },
             ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
-            next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
+            next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes.",
+            ...contractGate.violations.length > 0 ? { contractValidation: contractGate } : {}
           }, null, 2)
         }]
       };
@@ -45463,7 +45955,10 @@ server.registerTool(
         continuityPrompt: external_exports.string().optional(),
         wardrobeChanged: external_exports.boolean().optional(),
         wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
-        propEvents: external_exports.array(PropEventSchema).optional()
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        middleKeyframe: external_exports.boolean().optional().describe(
+          "Plan an extra still at the midpoint of this shot, so the beat is not pinned only at its ends."
+        )
       })).min(1).max(12).describe(
         "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
       ),
@@ -45551,8 +46046,20 @@ server.registerTool(
         generateStill: async (job, opts) => generateGrokStill(job, opts)
       }
     );
+    const contractValidation = runPreVideoGate({
+      plan: {
+        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry)),
+        locations: args.locations,
+        props: args.props,
+        wardrobeEvents,
+        propEvents,
+        shotLocations,
+        shotCount: args.shots.length
+      }
+    });
     const payload = {
       ...board,
+      contractValidation,
       continuity: {
         locations: args.locations ?? [],
         props: args.props ?? [],

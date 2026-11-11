@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-shot state-file contracts derived from the continuity ledger: requires, atomic steps,
+  ensures, invariants, and forbidden items. A validator rejects more than three steps, a
+  garment that is both worn and hanging, duplicate garment counts, footwear counts that are
+  not a pair, and a shot whose start does not match the previous shot's end. `render_sequence`
+  refuses to start when validation fails unless `overrideValidation` is set. Boarding can
+  plan an optional middle keyframe per shot. A sample Tay coat-and-shoes montage shows the
+  split plan passing and the old single-shot hang failing. The vision auditor stays a stub.
 - Wardrobe layers on a character record, named clothing events (remove, put on, adjust), and a
   per-location prop ledger. `plan_storyboard` and `board_film` replay those events into each shot's
   checklist so prompts describe what is worn and the props that belong in that room. A removed

@@ -132,6 +132,8 @@ export type ShotContinuity = {
   propsInView: PropRecord[];
   prompt: string;
   warnings: string[];
+  /** Contract wording (invariants, steps, forbidden) folded into this shot's prompt. */
+  contractPrompt?: string;
 };
 
 export type ContinuityPlan = {
@@ -145,6 +147,8 @@ export type ContinuityPlan = {
   shotCount: number;
   /** True when board frames will be edited from a reference picture. */
   hasReferencePicture?: boolean;
+  /** Optional atomic steps for a shot; when omitted, events expand into physical actions. */
+  shotSteps?: Array<{ shot: number; steps: string[] }>;
 };
 
 function sameWorn(a: string[], b: string[]) {
@@ -615,6 +619,13 @@ export type ContinuityAuditInput = {
   shotIndex: number;
   framePaths: string[];
   expected: ShotContinuity;
+  /** Optional per-shot contract a later vision implementation should check frames against. */
+  contract?: {
+    shot: number;
+    steps: string[];
+    invariants: string[];
+    forbidden: string[];
+  };
 };
 
 export type ContinuityAuditor = {
