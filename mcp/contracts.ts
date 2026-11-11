@@ -24,12 +24,17 @@ import {
   type WardrobeEvent,
   type WardrobeLayer,
 } from "./continuity.ts";
+import { evaluateWeighted, type VisionGate } from "./weighted.ts";
 
 export const MAX_STEPS_PER_SHOT = 3;
 
 export const RENDER_BLOCKED_BY_CONTRACT =
   "render_sequence refused to start because the shot contracts failed validation. " +
   "Pass overrideValidation: true to proceed anyway.";
+
+export const RENDER_UNCHECKED =
+  "render_sequence refused to start because no continuity ledger or shot contracts were provided. " +
+  "A plan with nothing to check is unchecked, and unchecked does not spend.";
 
 export type ShotState = {
   worn: string[];
@@ -55,7 +60,19 @@ export type ContractViolation = {
     | "worn-and-held"
     | "duplicate-garment"
     | "footwear-count"
-    | "ledger-mismatch";
+    | "ledger-mismatch"
+    | "unchecked"
+    | "count"
+    | "contact"
+    | "set-geometry"
+    | "garment-integrity"
+    | "wardrobe-unchecked"
+    | "scale"
+    | "speech-verbatim"
+    | "voice"
+    | "vision-unchecked"
+    | "closure"
+    | "tier1-score";
   shot: number;
   message: string;
   suggestSplit?: boolean;
@@ -72,11 +89,21 @@ export type RenderGateInput = {
   overrideValidation?: boolean;
 };
 
+export type GateStatus = "pass" | "fail" | "unchecked" | "override";
+
 export type RenderGateResult = {
   ok: boolean;
   blocked: boolean;
+  status: GateStatus;
   violations: ContractViolation[];
   message?: string;
+  /** Tier 0 failed when status is fail, unchecked, or override. */
+  tier0: "pass" | "fail";
+  /** Present only when the plan carried tier 1 measurements. */
+  tier1?: { score: number; pass: boolean };
+  /** Style notes never change this. */
+  tier2: "style-only";
+  vision: VisionGate;
 };
 
 function layerType(layer: WardrobeLayer) {
@@ -110,8 +137,24 @@ function sameRecord(a: Record<string, string>, b: Record<string, string>) {
   return true;
 }
 
+function sameCounts(a: Record<string, number> | undefined, b: Record<string, number> | undefined) {
+  const left = a ?? {};
+  const right = b ?? {};
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] ?? 0) !== (right[key] ?? 0)) return false;
+  }
+  return true;
+}
+
 export function sameShotState(a: ShotState, b: ShotState) {
-  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders);
+  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders) && sameCounts(a.counts, b.counts);
+}
+
+function sameTextList(a: string[] | undefined, b: string[] | undefined) {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 function isHangerDest(to: string | undefined, plan: ContinuityPlan) {
@@ -156,9 +199,8 @@ export function expandWardrobeEventToSteps(event: WardrobeEvent, plan: Continuit
   }
   steps.push(`removes ${item}`);
   if (isHangerDest(event.to, plan)) {
-    steps.push("lifts hanger off wall");
-    steps.push(`hangs ${item} on hanger`);
-    steps.push("returns hanger to wall");
+    // The hanger stays on the rail. Lifting it off is where a second hanger appears.
+    steps.push(`hangs ${item} on the empty hanger; the hanger stays on the rail`);
   }
   return steps;
 }
@@ -168,7 +210,7 @@ function expandPropEventToSteps(event: PropEvent, props: PropRecord[]): string[]
   const name = event.name ?? current?.name ?? event.propId;
   const holder = event.holder ?? "";
   if (event.action === "move" && /hanger/i.test(`${holder} ${event.placement ?? ""}`)) {
-    return ["lifts hanger off wall", `hangs ${name} on hanger`, "returns hanger to wall"];
+    return [`hangs ${name} on the empty hanger; the hanger stays on the rail`];
   }
   if (event.action === "move") return [`moves ${name}`];
   if (event.action === "add") return [`adds ${name}`];
@@ -384,7 +426,8 @@ function countViolations(contract: ShotContract): ContractViolation[] {
       });
     }
 
-    for (const [id, count] of Object.entries(state.counts ?? {})) {
+    for (const id of new Set([...Object.keys(state.counts ?? {}), ...state.worn])) {
+      const count = state.counts?.[id] ?? 0;
       const unit = unitFor(id);
       if (count > unit) {
         found.push({
@@ -393,6 +436,24 @@ function countViolations(contract: ShotContract): ContractViolation[] {
           message:
             `Shot ${contract.shot} counts ${count} of ${id}, which is more than the ${unit} ` +
             `that should exist.`,
+        });
+        continue;
+      }
+      if (count !== 0 && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message:
+            `Shot ${contract.shot} counts ${count} of ${id}. A garment is ${unit} or it is absent.`,
+        });
+        continue;
+      }
+      if (state.worn.includes(id) && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message:
+            `Shot ${contract.shot} wears ${id} but counts ${count}, not ${unit}.`,
         });
       }
     }
@@ -414,9 +475,11 @@ function countViolations(contract: ShotContract): ContractViolation[] {
   }
 
   for (const invariant of contract.invariants) {
-    const match = invariant.match(/exactly\s+(\d+)\s+(.+?)(?:,|$)/i);
+    const match = invariant.match(/exactly\s+(\d+|one|two|three|four|a|an)\s+(.+?)(?:,|$)/i);
     if (!match) continue;
-    const count = Number(match[1]);
+    const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, a: 1, an: 1 };
+    const raw = match[1].toLowerCase();
+    const count = words[raw] ?? Number(raw);
     const label = match[2].toLowerCase();
     if (/shoe/i.test(label) && count !== 2) {
       found.push({
@@ -424,6 +487,16 @@ function countViolations(contract: ShotContract): ContractViolation[] {
         shot: contract.shot,
         message:
           `Shot ${contract.shot} invariant "${invariant}" uses a footwear count that is not a pair.`,
+      });
+      continue;
+    }
+    if (!/shoe/i.test(label) && count !== 1) {
+      found.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message:
+          `Shot ${contract.shot} invariant "${invariant}" counts a garment as ${count}. ` +
+          "A garment stays one whole piece.",
       });
     }
   }
@@ -479,24 +552,43 @@ export function validateContractsAgainstPlan(
   const derived = deriveContracts(plan);
   const authored = contracts ?? derived;
   const result = validateContracts(authored);
-  if (!contracts) return result;
 
-  for (const contract of contracts) {
+  for (const contract of contracts ?? []) {
     const expected = derived.find((entry) => entry.shot === contract.shot);
     if (!expected) continue;
-    if (
-      sameShotState(contract.requires, expected.requires) &&
-      sameShotState(contract.ensures, expected.ensures)
-    ) {
-      continue;
+    const stateMatches = sameShotState(contract.requires, expected.requires)
+      && sameShotState(contract.ensures, expected.ensures);
+    const textMatches = sameTextList(contract.steps, expected.steps)
+      && sameTextList(contract.invariants, expected.invariants)
+      && sameTextList(contract.forbidden, expected.forbidden);
+    if (!stateMatches || !textMatches) {
+      result.violations.push({
+        code: "ledger-mismatch",
+        shot: contract.shot,
+        message:
+          `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger ` +
+          "(worn, holders, counts, steps, invariants, or forbidden).",
+      });
     }
-    result.violations.push({
-      code: "ledger-mismatch",
-      shot: contract.shot,
-      message:
-        `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger.`,
-    });
+
+    for (const layer of allLayers(plan)) {
+      const inPlay = contract.requires.worn.includes(layer.id)
+        || contract.ensures.worn.includes(layer.id)
+        || (contract.requires.counts?.[layer.id] ?? 0) > 0
+        || (contract.ensures.counts?.[layer.id] ?? 0) > 0;
+      if (!inPlay) continue;
+      if (contract.invariants.some((line) => line.includes(layer.item))) continue;
+      result.violations.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message:
+          `Shot ${contract.shot} invariants do not name "${layer.item}" verbatim.`,
+      });
+    }
   }
+
+  const weighted = evaluateWeighted(plan);
+  result.violations.push(...weighted.violations);
 
   return { ok: result.violations.length === 0, violations: result.violations };
 }
@@ -531,35 +623,106 @@ export function attachContractPrompts(plan: ContinuityPlan, shots: ShotContinuit
   }));
 }
 
+function gateShell(
+  partial: {
+    ok: boolean;
+    blocked: boolean;
+    status: GateStatus;
+    violations: ContractViolation[];
+    message?: string;
+    tier1?: { score: number; pass: boolean };
+    vision?: VisionGate;
+  },
+): RenderGateResult {
+  return {
+    ok: partial.ok,
+    blocked: partial.blocked,
+    status: partial.status,
+    violations: partial.violations,
+    ...(partial.message ? { message: partial.message } : {}),
+    tier0: partial.status === "pass" ? "pass" : "fail",
+    ...(partial.tier1 ? { tier1: partial.tier1 } : {}),
+    tier2: "style-only",
+    vision: partial.vision ?? "not-required",
+  };
+}
+
+export function decideSpend(confirm: boolean, gate: RenderGateResult): "estimate" | "refused" | "spend" {
+  if (!confirm) return "estimate";
+  if (gate.blocked || gate.status === "unchecked" || gate.status === "fail") return "refused";
+  if (gate.status === "pass" || gate.status === "override") return "spend";
+  const unreachable: never = gate.status;
+  return unreachable;
+}
+
 export function gateRenderSequence(input: RenderGateInput): RenderGateResult {
   if (!input.plan && !input.contracts) {
-    return { ok: true, blocked: false, violations: [] };
+    const unchecked: ContractViolation = {
+      code: "unchecked",
+      shot: 0,
+      message: RENDER_UNCHECKED,
+    };
+    if (input.overrideValidation) {
+      return gateShell({
+        ok: false,
+        blocked: false,
+        status: "override",
+        violations: [unchecked],
+        message: "No ledger or contracts were provided; overrideValidation is set, so rendering may proceed.",
+      });
+    }
+    return gateShell({
+      ok: false,
+      blocked: true,
+      status: "unchecked",
+      violations: [unchecked],
+      message: RENDER_UNCHECKED,
+    });
   }
 
   const result = input.plan
     ? validateContractsAgainstPlan(input.plan, input.contracts)
     : validateContracts(input.contracts ?? []);
+  const weighted = input.plan ? evaluateWeighted(input.plan) : undefined;
+  // validateContractsAgainstPlan already appends weighted violations. When the
+  // caller passed contracts and a plan, those violations are in `result`.
+  // When only a plan was passed, same path. Pull tier metadata either way.
+  const tier1 = weighted?.tier1;
+  const vision = weighted?.vision ?? "not-required";
 
   if (result.ok) {
-    return { ok: true, blocked: false, violations: [] };
+    return gateShell({
+      ok: true,
+      blocked: false,
+      status: "pass",
+      violations: [],
+      tier1,
+      vision,
+    });
   }
 
   if (input.overrideValidation) {
-    return {
+    return gateShell({
       ok: false,
       blocked: false,
+      status: "override",
       violations: result.violations,
       message:
         "Shot contracts failed validation; overrideValidation is set, so rendering may proceed.",
-    };
+      tier1,
+      vision,
+    });
   }
 
-  return {
+  return gateShell({
     ok: false,
     blocked: true,
+    status: "fail",
     violations: result.violations,
     message: RENDER_BLOCKED_BY_CONTRACT,
-  };
+    tier1,
+    vision,
+  });
 }
 
 /** Pre-video hook used by board_film and render_sequence. */

@@ -43,8 +43,11 @@ jobs:
       - run: npm run build
       - run: '! grep -R "GEMINI_API_KEY" dist/assets'
 
-  test-ffmpeg:
+  test:
     runs-on: ubuntu-latest
+    env:
+      GROK_AUTH_FILE: /nonexistent/theshow-test-auth.json
+      THESHOW_FORBID_HOME_AUTH: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,9 +55,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run test:ffmpeg
+      - name: refuse paid credentials and a home auth store
+        run: |
+          test -z "${XAI_API_KEY:-}"
+          test -z "${GROK_API_KEY:-}"
+          test -z "${GEMINI_API_KEY:-}"
+          test ! -e "$HOME/.grok/auth.json"
+      - run: npm test
 
-  test-rate-limit:
+  bundle:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,29 +72,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run test:rate-limit
-
-  test-veo-chain:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run test:veo-chain
-
-  test-storage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run test:storage
+      - run: npm run build:mcp
+      - run: git diff --exit-code -- mcp/server.bundle.mjs
 
   all-green:
     runs-on: ubuntu-latest
@@ -93,9 +81,7 @@ jobs:
       - typecheck
       - lint
       - build
-      - test-ffmpeg
-      - test-rate-limit
-      - test-veo-chain
-      - test-storage
+      - test
+      - bundle
     steps:
       - run: echo 'All required jobs passed.'

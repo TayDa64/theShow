@@ -33,6 +33,14 @@ export type GrokClipJob = {
   lastFrameUrl?: string;
   /** 480p, 720p, or 1080p. Unset let the API pick a low default (~848x480). */
   resolution?: string;
+  /**
+   * "start" pins the first frame only. An end-frame pin makes the model arrive
+   * early and then hold, so end pinning is opt-in via "both".
+   * Unset keeps the previous bookend behaviour when lastFrameUrl is present.
+   */
+  pin?: "start" | "both";
+  /** Built-in voice id, such as rex. Sent as reference_audios[].voice_id. */
+  voiceId?: string;
 };
 
 /** Why a call stopped, so callers can decide between a retry, a hint and a hard error. */
@@ -313,7 +321,11 @@ export async function generateGrokClip(
   // output looks soft. It also changes the price: at 1 second, 720p billed
   // 0.14 and 1080p billed 0.25, so it is a real quality/cost dial, not a hint.
   if (job.resolution) body.resolution = job.resolution;
-  if (job.firstFrameUrl && job.lastFrameUrl) {
+  if (job.voiceId?.trim()) {
+    body.reference_audios = [{ voice_id: job.voiceId.trim() }];
+  }
+  const sendLastFrame = Boolean(job.lastFrameUrl) && job.pin !== "start";
+  if (job.firstFrameUrl && sendLastFrame && job.lastFrameUrl) {
     // Bookend: pin both ends. They share one request body, so budget the pair.
     // `image` is the first frame; there is no `first_frame` key, the API ignores
     // it (measured: 0.14 correlation, the same as an unpinned render).
@@ -322,7 +334,7 @@ export async function generateGrokClip(
     body.last_frame = { url: pair.last };
   } else if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
-  } else if (job.lastFrameUrl) {
+  } else if (sendLastFrame && job.lastFrameUrl) {
     body.last_frame = { url: await toApiImageRef(job.lastFrameUrl) };
   }
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {

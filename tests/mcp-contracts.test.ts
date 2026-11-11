@@ -77,15 +77,14 @@ describe('deriving contracts from the ledger', () => {
     ]);
   });
 
-  it('expands a remove-to-hanger event into the physical steps that used to be implied', () => {
+  it('hangs a coat on the rail without lifting the hanger off it', () => {
     const contracts = deriveContracts(oldSingleShotCoatPlan());
     const coatShot = contracts.find((entry) => entry.shot === 2);
-    expect(coatShot?.steps.length).toBeGreaterThan(MAX_STEPS_PER_SHOT);
+    expect(coatShot?.steps.length).toBeLessThanOrEqual(MAX_STEPS_PER_SHOT);
     expect(coatShot?.steps.join(' ')).toMatch(/unbuttons/i);
     expect(coatShot?.steps.join(' ')).toMatch(/removes/i);
-    expect(coatShot?.steps.join(' ')).toMatch(/lifts hanger/i);
-    expect(coatShot?.steps.join(' ')).toMatch(/hangs/i);
-    expect(coatShot?.steps.join(' ')).toMatch(/returns hanger/i);
+    expect(coatShot?.steps.join(' ')).toMatch(/hanger stays on the rail/i);
+    expect(coatShot?.steps.join(' ')).not.toMatch(/lifts hanger off wall/i);
   });
 
   it('marks unchanged layers as worn the whole shot and counts footwear as a pair', () => {
@@ -114,7 +113,9 @@ describe('the contract validator', () => {
   });
 
   it('rejects more than three steps and suggests a split', () => {
-    const derived = deriveContracts(oldSingleShotCoatPlan());
+    const plan = oldSingleShotCoatPlan();
+    plan.shotSteps = [{ shot: 2, steps: ['one', 'two', 'three', 'four'] }];
+    const derived = deriveContracts(plan);
     const result = validateContracts(derived);
     expect(result.ok).toBe(false);
     const tooMany = result.violations.find((entry) => entry.code === 'too-many-steps');
@@ -231,6 +232,7 @@ describe('the contract prompt builder', () => {
 describe('the pre-video gate and the auditor interface', () => {
   it('blocks render_sequence when the old montage fails validation', () => {
     const plan: ContinuityPlan = oldSingleShotCoatPlan();
+    plan.shotSteps = [{ shot: 2, steps: ['one', 'two', 'three', 'four'] }];
     const gate = gateRenderSequence({ plan });
     expect(gate.ok).toBe(false);
     expect(gate.blocked).toBe(true);
@@ -251,10 +253,12 @@ describe('the pre-video gate and the auditor interface', () => {
     expect(overridden.violations.length).toBeGreaterThan(0);
   });
 
-  it('lets a film through when there is no ledger or contract to check', () => {
+  it('refuses a film when there is no ledger or contract to check', () => {
     const gate = gateRenderSequence({});
-    expect(gate.ok).toBe(true);
-    expect(gate.blocked).toBe(false);
+    expect(gate.ok).toBe(false);
+    expect(gate.blocked).toBe(true);
+    expect(gate.status).toBe('unchecked');
+    expect(gate.violations.some((entry) => entry.code === 'unchecked')).toBe(true);
   });
 
   it('keeps the vision auditor as an injectable stub that never spends', async () => {

@@ -562,3 +562,32 @@ describe('a changed hero frame invalidates the shots bought from it', () => {
     expect(again.map((f) => f.stem)).toEqual(withHero.map((f) => f.stem));
   });
 });
+
+describe('wardrobe lock when the picture is a portrait and not a location base', () => {
+  it('locks clothing from a portrait alone and flags a cast with no picture', () => {
+    const withPortrait = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+      referenceImageUrls: ['/tmp/portrait.png'],
+    });
+    expect(withPortrait[0].wardrobeUnchecked).toBeUndefined();
+    expect(withPortrait[0].prompt).toMatch(/clothing exactly as the reference/i);
+
+    const withBase = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+      baseImageUrl: '/tmp/room.png',
+    });
+    expect(withBase[0].prompt).toMatch(/clothing exactly as the reference/i);
+
+    const withNeither = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+    });
+    expect(withNeither[0].wardrobeUnchecked).toBe(true);
+    expect(withNeither[0].prompt).not.toMatch(/clothing exactly as the reference/i);
+  });
+});

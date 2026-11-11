@@ -9,7 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { resolveVideoCredential } from "./grok-auth.ts";
+import { ensureCredentialForJob, resolveVideoCredential } from "./grok-auth.ts";
 import {
   CLOSING_FRAME_MATCH_THRESHOLD,
   JOBS_DIR,
@@ -25,7 +25,7 @@ import {
   generateGrokStill,
   type GrokClipResult,
 } from "./grokVideo.ts";
-import { boardFilm, toRenderShots } from "./storyboard.ts";
+import { boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
 import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import {
   annotateAction,
@@ -41,17 +41,21 @@ import {
 } from "./continuity.ts";
 import {
   RENDER_BLOCKED_BY_CONTRACT,
+  RENDER_UNCHECKED,
+  decideSpend,
   gateRenderSequence,
   promptFromContract,
   deriveContracts,
   runPreVideoGate,
+  type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 
-const server = new McpServer({
+export const server = new McpServer({
   name: "theshow",
   version: "0.1.0",
 });
@@ -72,6 +76,9 @@ const CharacterSchema = z.object({
       type: z.enum(["clothing", "footwear"]).optional().describe(
         "Clothing and footwear stack separately. Defaults to clothing.",
       ),
+      closure: z.enum(["zip", "buttons", "open", "laced", "slip-on", "none"]).optional(),
+      mustNotHave: z.array(z.string()).optional(),
+      short: z.string().optional(),
     })).min(1),
     startState: z.object({
       worn: z.array(z.string()).describe("Layer ids worn at the start of the film."),
@@ -110,6 +117,11 @@ const PropRecordSchema = z.object({
   name: z.string(),
   placement: z.string(),
   holder: z.string().optional(),
+  fixed: z.boolean().optional(),
+  count: z.number().int().min(0).optional(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+  solid: z.boolean().optional(),
+  contact: z.enum(["hanging", "resting", "held"]).optional(),
 });
 
 const PropEventSchema = z.object({
@@ -130,7 +142,7 @@ const LocationSchema = z.object({
 const ShotStateSchema = z.object({
   worn: z.array(z.string()),
   holders: z.record(z.string(), z.string()),
-  counts: z.record(z.string(), z.number()).default({}),
+  counts: z.record(z.string(), z.number()),
 });
 
 const ShotContractSchema = z.object({
@@ -475,6 +487,7 @@ const FILM_FORM_SCHEMA = {
       description: "Location, time of day, weather, mood. One or two sentences.",
       minLength: 1,
       maxLength: 600,
+      default: undefined as string | undefined,
     },
     characters: {
       type: "string" as const,
@@ -722,7 +735,7 @@ server.registerTool(
         text: JSON.stringify({
           ...entry,
           storage: folder,
-          referenceImages: entry.referenceImageUrls.length,
+          referenceImages: (entry.referenceImageUrls ?? []).length,
           ...(warnings ? { warnings } : {}),
           message:
             `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by ` +
@@ -737,6 +750,13 @@ server.registerTool(
 
 function stampShotNumbers<T extends { shot?: number }>(events: T[] | undefined, shot: number): T[] {
   return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? shot }));
+}
+
+/** Ledger events persisted or checked as a plan always carry a shot number. */
+function eventsWithShot<T extends { shot?: number }>(
+  events: readonly T[] | undefined,
+): Array<T & { shot: number }> {
+  return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? 1 }));
 }
 
 function buildContinuityLedger(input: {
@@ -781,15 +801,23 @@ function buildContinuityLedger(input: {
 }
 
 function continuityPlanFromRenderArgs(args: {
-  shots: Array<{ locationId?: string }>;
+  shots: Array<{ locationId?: string; prompt?: string }>;
   characters?: string[];
   ledger?: {
     locations?: LocationRecord[];
     props?: PropRecord[];
-    wardrobeEvents?: WardrobeEvent[];
-    propEvents?: PropEvent[];
+    wardrobeEvents?: Array<Omit<WardrobeEvent, "shot"> & { shot?: number }>;
+    propEvents?: Array<Omit<PropEvent, "shot"> & { shot?: number }>;
     shotSteps?: Array<{ shot: number; steps: string[] }>;
-  };
+    voiceId?: string;
+    spokenLines?: ContinuityPlan["spokenLines"];
+    shotPrompts?: ContinuityPlan["shotPrompts"];
+    scaleMarks?: ContinuityPlan["scaleMarks"];
+    bodyClearance?: ContinuityPlan["bodyClearance"];
+    humanVisionSignOff?: boolean;
+    tier1?: ContinuityPlan["tier1"];
+    hasPortrait?: boolean;
+  } | null;
 }): ContinuityPlan | undefined {
   if (!args.ledger) return undefined;
   const characterNames = args.characters ?? [];
@@ -797,20 +825,46 @@ function continuityPlanFromRenderArgs(args: {
     .map((name) => lookupCharacter(name))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
     .map((entry) => characterFromRecord(entry));
+  const hasReferencePicture = characterNames.some((name) => {
+    const known = lookupCharacter(name);
+    return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+  });
+  const shotPrompts = args.ledger.shotPrompts ?? args.shots
+    .map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? "" }))
+    .filter((entry) => entry.prompt.trim().length > 0);
   return {
     characters,
     locations: args.ledger.locations,
     props: args.ledger.props,
-    wardrobeEvents: args.ledger.wardrobeEvents,
-    propEvents: args.ledger.propEvents,
+    wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+    propEvents: eventsWithShot(args.ledger.propEvents),
     shotLocations: args.shots.map((shot) => shot.locationId),
     shotCount: args.shots.length,
     shotSteps: args.ledger.shotSteps,
-    hasReferencePicture: characterNames.some((name) => {
-      const known = lookupCharacter(name);
-      return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
-    }),
+    hasReferencePicture: hasReferencePicture || Boolean(args.ledger.hasPortrait),
+    hasPortrait: args.ledger.hasPortrait ?? hasReferencePicture,
+    ...(args.ledger.voiceId ? { voiceId: args.ledger.voiceId } : {}),
+    ...(args.ledger.spokenLines ? { spokenLines: args.ledger.spokenLines } : {}),
+    ...(shotPrompts.length > 0 ? { shotPrompts } : {}),
+    ...(args.ledger.scaleMarks ? { scaleMarks: args.ledger.scaleMarks } : {}),
+    ...(args.ledger.bodyClearance ? { bodyClearance: args.ledger.bodyClearance } : {}),
+    ...(args.ledger.humanVisionSignOff ? { humanVisionSignOff: true } : {}),
+    ...(args.ledger.tier1 ? { tier1: args.ledger.tier1 } : {}),
   };
+}
+
+function refusal(payload: Record<string, unknown>) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
+}
+
+async function refuseIfSessionWillNotLast(estimatedJobMs: number) {
+  const session = await ensureCredentialForJob(estimatedJobMs);
+  if (session.ok) return undefined;
+  return refusal({
+    action: "refused",
+    error: session.reason,
+    code: session.code === "expired" ? "session-too-short" : session.code,
+  });
 }
 
 function applyShotContinuity(
@@ -1017,8 +1071,11 @@ type VideoJob = {
   model?: string;
   referenceImageUrls?: string[];
   firstFrameUrl?: string;
-  /** Pinned final frame. With firstFrameUrl as well, the shot is bookended. */
+  /** Pinned final frame. Sent only when pin is "both" (or unset, for older callers). */
   lastFrameUrl?: string;
+  pin?: "start" | "both";
+  voiceId?: string;
+  resolution?: string;
 };
 
 /** Uniform shape so callers can read optional fields without narrowing gymnastics. */
@@ -1033,7 +1090,9 @@ server.registerTool(
     description:
       "Generate a single video clip with reference images and optional first-frame continuity. " +
       "Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or " +
-      "falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
+      "falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription. " +
+      "Spends only after confirm, and only when the continuity gate passes. Pin defaults to the " +
+      "start frame: an end-frame pin holds the pose and has to be asked for.",
     inputSchema: z.object({
       prompt: z.string(),
       characters: z.array(z.string()).optional().describe(
@@ -1055,11 +1114,37 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          "Image to pin as the last rendered frame: public https URL, a data URI, or a local path " +
-          "from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to " +
-          "the next shot lands on identical pixels instead of two near-misses. Use the next shot's " +
-          "firstFrameUrl as this frame and the join is the same picture.",
+          "Image to pin as the last rendered frame. Ignored unless pin is \"both\". An end pin " +
+          "makes the model reach the pose early and then hold.",
         ),
+      pin: z.enum(["start", "both"]).default("start").describe(
+        "start pins the first frame only. both also pins lastFrameUrl.",
+      ),
+      voiceId: z.string().optional().describe(
+        "Built-in voice id, such as rex. Sent as reference_audios[].voice_id.",
+      ),
+      ledger: z.object({
+        locations: z.array(LocationSchema).optional(),
+        props: z.array(PropRecordSchema).optional(),
+        wardrobeEvents: z.array(WardrobeEventSchema).optional(),
+        propEvents: z.array(PropEventSchema).optional(),
+        shotSteps: z.array(z.object({
+          shot: z.number().int().min(1),
+          steps: z.array(z.string()),
+        })).optional(),
+        voiceId: z.string().optional(),
+        spokenLines: z.array(z.object({ shot: z.number().int(), line: z.string() })).optional(),
+        humanVisionSignOff: z.boolean().optional(),
+        hasPortrait: z.boolean().optional(),
+      }).optional().describe(
+        "Continuity ledger for this clip. Without a ledger or contracts the gate is unchecked " +
+        "and confirm cannot spend.",
+      ),
+      contracts: z.array(ShotContractSchema).optional(),
+      overrideValidation: z.boolean().default(false),
+      confirm: z.boolean().default(false).describe(
+        "Must be true to spend. Call once without it for the estimate.",
+      ),
       durationSeconds: z.number().min(1).max(15).default(8),
       aspectRatio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
       resolution: z.enum(["480p", "720p", "1080p"]).default("720p").describe(
@@ -1072,8 +1157,48 @@ server.registerTool(
     }),
   },
   async (args) => {
-    const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
-    const job: VideoJob = { ...rest };
+    const {
+      waitForCompletion,
+      timeoutSeconds,
+      characters,
+      ledger,
+      contracts,
+      overrideValidation,
+      confirm,
+      pin,
+      voiceId,
+      ...rest
+    } = args;
+    const gate = gateRenderSequence({
+      plan: continuityPlanFromRenderArgs({
+        shots: [{ prompt: args.prompt, locationId: undefined }],
+        characters,
+        ledger: ledger ? { ...ledger, voiceId: voiceId ?? ledger.voiceId } : undefined,
+      }),
+      contracts: contracts as ShotContract[] | undefined,
+      overrideValidation,
+    });
+    const decision = decideSpend(confirm, gate);
+    if (decision !== "spend") {
+      const estimate = Math.round(args.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
+      return refusal({
+        action: decision === "estimate" ? "estimate-only" : "refused",
+        willRender: false,
+        estimate: { totalUsd: estimate, resolution: args.resolution, isEstimate: true },
+        contractValidation: gate,
+        message: decision === "estimate"
+          ? "Nothing was spent. Call again with confirm: true only after the gate passes and the user approves."
+          : (gate.message ?? RENDER_BLOCKED_BY_CONTRACT),
+      });
+    }
+    const sessionRefusal = await refuseIfSessionWillNotLast(args.durationSeconds * 1000);
+    if (sessionRefusal) return sessionRefusal;
+
+    const job: VideoJob = {
+      ...rest,
+      pin,
+      voiceId: voiceId ?? ledger?.voiceId,
+    };
 
     const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
     job.referenceImageUrls = urls.length > 0 ? urls : undefined;
@@ -1105,7 +1230,9 @@ server.registerTool(
       "Extend an existing clip from its last frame, producing one longer continuous take. " +
       "Requires a clip of 2-15 seconds and an extension of 2-10 seconds. " +
       "Only available with an XAI_API_KEY: the subscription session proxy does not expose the " +
-      "extensions route, so on the session path this reports that clearly instead of guessing.",
+      "extensions route, so on the session path this reports that clearly instead of guessing. " +
+      "There is no continuity ledger on an extension, so confirm spends only when overrideValidation " +
+      "is set. Otherwise the gate is unchecked and nothing is bought.",
     inputSchema: z.object({
       videoUrl: z.string().describe("Public https URL of the source clip (2-15 seconds)."),
       prompt: z.string(),
@@ -1113,9 +1240,25 @@ server.registerTool(
       model: z.string().default("grok-imagine-video"),
       waitForCompletion: z.boolean().default(true),
       timeoutSeconds: z.number().min(10).max(600).default(240),
+      confirm: z.boolean().default(false),
+      overrideValidation: z.boolean().default(false),
     }),
   },
   async (args) => {
+    const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
+    if (decideSpend(args.confirm, extensionGate) !== "spend") {
+      return refusal({
+        action: args.confirm ? "refused" : "estimate-only",
+        willRender: false,
+        contractValidation: extensionGate,
+        message: args.confirm
+          ? (extensionGate.message ?? RENDER_UNCHECKED)
+          : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation.",
+      });
+    }
+    const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1000);
+    if (extensionSession) return extensionSession;
+
     const resolved = resolveVideoCredential();
     if (resolved.ok === false) {
       return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
@@ -1386,13 +1529,17 @@ server.registerTool(
       ),
       audioTrackUrl: z.string().optional().describe(
         "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, " +
-        "or a local path such as a chat attachment. Looped if shorter than the film, trimmed to " +
-        "its length, and faded out at the end. Mixed under the clips' own audio, never replacing it.",
+        "or a local path such as a chat attachment. It must cover the whole film. A shorter bed " +
+        "is refused. Volume 0 omits it.",
       ),
-      audioTrackVolume: z.number().min(0.01).max(4).default(0.25).describe(
-        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video.",
+      audioTrackVolume: z.number().min(0).max(4).default(0.25).describe(
+        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video; 0 omits the bed.",
       ),
       audioTrackFadeOutSeconds: z.number().min(0).max(30).default(1.5),
+      clipAudio: z.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes each clip's own audio. mute drops it and keeps the bed or silence. " +
+        "replace drops it so the bed is the soundtrack.",
+      ),
     }),
   },
   async (args) => {
@@ -1408,6 +1555,7 @@ server.registerTool(
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
       audioTrackVolume: args.audioTrackVolume,
       audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      clipAudio: args.clipAudio,
     });
     const durationSeconds = await probeDuration(result.path);
     const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
@@ -1447,10 +1595,13 @@ async function main() {
   console.error("theShow MCP server running on stdio (enhanced test build)");
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const entry = process.argv[1];
+if (entry && import.meta.url === pathToFileURL(entry).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
 
 /**
  * Render a whole shot sequence as one continuous chain.
@@ -1552,6 +1703,9 @@ type SequenceJob = {
     audioTrackFile?: string;
     audioTrackVolume?: number;
     audioTrackFadeOutSeconds?: number;
+    clipAudio?: "keep" | "mute" | "replace";
+    pin?: "start" | "both";
+    voiceId?: string;
     assemble: boolean;
   };
   /** The frame the first shot chained from, kept so a repair of shot 1 can match it. */
@@ -1574,6 +1728,14 @@ type SequenceJob = {
     wardrobeEvents: WardrobeEvent[];
     propEvents: PropEvent[];
     shots?: ShotContinuity[];
+    shotSteps?: Array<{ shot: number; steps: string[] }>;
+    voiceId?: string;
+    spokenLines?: ContinuityPlan["spokenLines"];
+    humanVisionSignOff?: boolean;
+    hasPortrait?: boolean;
+    scaleMarks?: ContinuityPlan["scaleMarks"];
+    bodyClearance?: ContinuityPlan["bodyClearance"];
+    tier1?: ContinuityPlan["tier1"];
   };
 };
 
@@ -1600,7 +1762,7 @@ async function persistJob(job: SequenceJob) {
   }
 }
 
-async function loadJobsFromDisk() {
+export async function loadJobsFromDisk() {
   try {
     const files = await readdir(JOBS_DIR);
     for (const name of files) {
@@ -1711,6 +1873,9 @@ async function runSequenceJob(
     audioTrackFile?: string;
     audioTrackVolume?: number;
     audioTrackFadeOutSeconds?: number;
+    clipAudio?: "keep" | "mute" | "replace";
+    pin?: "start" | "both";
+    voiceId?: string;
     timeoutSecondsPerShot: number;
     /**
      * Shots already rendered by an earlier job, in order, kept on the front of
@@ -1778,6 +1943,8 @@ async function runSequenceJob(
         model: args.model,
         firstFrameUrl: shotFirstFrame,
         lastFrameUrl: shot.lastFrameUrl,
+        pin: args.pin ?? "start",
+        voiceId: args.voiceId,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       // Retry an API failure it owns, then degrade rather than stop the film.
@@ -1814,6 +1981,8 @@ async function runSequenceJob(
           resolution: args.resolution,
           model: args.model,
           firstFrameUrl: shotFirstFrame,
+          pin: "start",
+          voiceId: args.voiceId,
           referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
         }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
         if (result.status === "completed") {
@@ -1836,6 +2005,7 @@ async function runSequenceJob(
         framePath: undefined as string | undefined,
         lastFrameUrl: shot.lastFrameUrl,
         lastFramePath: localImagePath(shot.lastFrameUrl),
+        closingFrameAgreement: undefined as number | undefined,
         prompt: shot.prompt,
         durationSeconds: shot.durationSeconds,
       };
@@ -1907,6 +2077,7 @@ async function runSequenceJob(
         audioTrackFile: args.audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio,
       });
       job.filmPath = assembled.path;
       job.fileUrl = `file://${assembled.path}`;
@@ -1954,9 +2125,8 @@ server.registerTool(
           "shot renders from the frame the user actually approved.",
         ),
         lastFrameUrl: z.string().optional().describe(
-          "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if " +
-          "it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. " +
-          "board_film fills this in for a whole film.",
+          "Pinned closing frame for this shot. Used only when pin is \"both\". The default pin is " +
+          "the start frame, because an end pin makes the model hold.",
         ),
         locationId: z.string().optional(),
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
@@ -1979,6 +2149,30 @@ server.registerTool(
           shot: z.number().int().min(1),
           steps: z.array(z.string()),
         })).optional(),
+        voiceId: z.string().optional(),
+        spokenLines: z.array(z.object({
+          shot: z.number().int().min(1),
+          line: z.string(),
+        })).optional(),
+        humanVisionSignOff: z.boolean().optional(),
+        hasPortrait: z.boolean().optional(),
+        scaleMarks: z.array(z.object({
+          shot: z.number().int().min(1),
+          bodyH: z.number(),
+          tolPct: z.number(),
+          measuredBodyH: z.number().optional(),
+        })).optional(),
+        bodyClearance: z.array(z.object({
+          shot: z.number().int().min(1),
+          solidId: z.string(),
+          clear: z.boolean(),
+        })).optional(),
+        tier1: z.object({
+          freezeRun: z.number(),
+          speechCoverage: z.number(),
+          joinSsim: z.number(),
+          motionNatural: z.number(),
+        }).optional(),
       }).optional().describe(
         "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed " +
         "film keeps the same rooms and props. Does not by itself spend money or call vision.",
@@ -2003,7 +2197,14 @@ server.registerTool(
         "Optional music, narration or ambience for the finished film, mixed under the clips' own " +
         "audio. https URL, file:// URL, or a local path such as a chat attachment.",
       ),
-      audioTrackVolume: z.number().min(0.01).max(4).default(0.25),
+      audioTrackVolume: z.number().min(0).max(4).default(0.25),
+      clipAudio: z.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes clip audio. mute drops it. replace uses only the bed.",
+      ),
+      pin: z.enum(["start", "both"]).default("start").describe(
+        "start pins each shot's first frame only. both also sends lastFrameUrl.",
+      ),
+      voiceId: z.string().optional().describe("Built-in voice id, such as rex."),
       audioTrackFadeOutSeconds: z.number().min(0).max(30).default(1.5),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever " +
@@ -2116,7 +2317,29 @@ server.registerTool(
         : count;
     }, 0);
 
-    const continuityPlan = continuityPlanFromRenderArgs(args);
+    const ledgerForGate = args.ledger ?? (resumeJob?.ledger
+      ? {
+          locations: resumeJob.ledger.locations,
+          props: resumeJob.ledger.props,
+          wardrobeEvents: resumeJob.ledger.wardrobeEvents,
+          propEvents: resumeJob.ledger.propEvents,
+          shotSteps: resumeJob.ledger.shotSteps,
+          voiceId: resumeJob.ledger.voiceId,
+          spokenLines: resumeJob.ledger.spokenLines,
+          humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
+          hasPortrait: resumeJob.ledger.hasPortrait,
+          scaleMarks: resumeJob.ledger.scaleMarks,
+          bodyClearance: resumeJob.ledger.bodyClearance,
+          tier1: resumeJob.ledger.tier1,
+        }
+      : undefined);
+    const continuityPlan = continuityPlanFromRenderArgs({
+      shots: args.shots,
+      characters: args.characters,
+      ledger: ledgerForGate
+        ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId }
+        : undefined,
+    });
     const contractGate = gateRenderSequence({
       plan: continuityPlan,
       contracts: args.contracts as ShotContract[] | undefined,
@@ -2132,6 +2355,7 @@ server.registerTool(
             error: RENDER_BLOCKED_BY_CONTRACT,
             message: contractGate.message,
             violations: contractGate.violations,
+            contractValidation: contractGate,
           }, null, 2),
         }],
       };
@@ -2178,13 +2402,14 @@ server.registerTool(
             next:
               "Show this to the user. Call again with confirm: true only after they approve. Do not " +
               "set confirm without an explicit yes.",
-            ...(contractGate.violations.length > 0
-              ? { contractValidation: contractGate }
-              : {}),
+            contractValidation: contractGate,
           }, null, 2),
         }],
       };
     }
+
+    const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
+    if (sessionRefusal) return sessionRefusal;
 
     const job: SequenceJob = {
       id: sequenceJobId(),
@@ -2206,6 +2431,9 @@ server.registerTool(
         audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio,
+        pin: args.pin,
+        voiceId: args.voiceId,
         assemble: args.assemble,
       },
       ...(resumeJob ? {
@@ -2219,9 +2447,17 @@ server.registerTool(
           ? {
               locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
               props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
-              wardrobeEvents: args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents ?? [],
-              propEvents: args.ledger.propEvents ?? resumeJob.ledger?.propEvents ?? [],
-              shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+              wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
+              propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
+              shots: (args.ledger.shots ?? resumeJob.ledger?.shots) as ShotContinuity[] | undefined,
+              shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
+              voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+              spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
+              humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
+              hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
+              scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
+              bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
+              tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1,
             }
           : resumeJob.ledger,
       } : {
@@ -2230,9 +2466,17 @@ server.registerTool(
           ledger: {
             locations: args.ledger.locations ?? [],
             props: args.ledger.props ?? [],
-            wardrobeEvents: args.ledger.wardrobeEvents ?? [],
-            propEvents: args.ledger.propEvents ?? [],
-            shots: args.ledger.shots,
+            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+            propEvents: eventsWithShot(args.ledger.propEvents),
+            shots: args.ledger.shots as ShotContinuity[] | undefined,
+            shotSteps: args.ledger.shotSteps,
+            voiceId: args.voiceId ?? args.ledger.voiceId,
+            spokenLines: args.ledger.spokenLines,
+            humanVisionSignOff: args.ledger.humanVisionSignOff,
+            hasPortrait: args.ledger.hasPortrait,
+            scaleMarks: args.ledger.scaleMarks,
+            bodyClearance: args.ledger.bodyClearance,
+            tier1: args.ledger.tier1,
           },
         } : {}),
       }),
@@ -2256,6 +2500,9 @@ server.registerTool(
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
       audioTrackVolume: args.audioTrackVolume,
       audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      clipAudio: args.clipAudio,
+      pin: args.pin,
+      voiceId: args.voiceId ?? ledgerForGate?.voiceId,
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : undefined,
       resumeFramePath,
@@ -2408,31 +2655,10 @@ server.registerTool(
       };
     });
 
-    const board = await boardFilm(
-      {
-        shots: boardedShots,
-        aspectRatio: args.aspectRatio,
-        look: args.look,
-        cast: args.cast,
-        maxCostUsd: args.maxCostUsd,
-        confirm: args.confirm,
-      },
-      {
-        outputDir: OUTPUT_DIR,
-        // A base image and a reference set compete for the same body, and the
-        // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself.
-        referenceImageUrls: urls.length > 0
-          ? urls.filter((url) => url !== baseImageUrl)
-          : undefined,
-        baseImageUrl,
-        // Injected so tests can board a whole film without reaching the network.
-        generateStill: async (job, opts) => generateGrokStill(job, opts),
-      },
-    );
-
-    // A gate that reports what it refused to spend has to say so plainly: the
-    // one thing this tool must never do is spend past the caller's ceiling.
+    const referenceImageUrls = urls.length > 0
+      ? urls.filter((url) => url !== baseImageUrl)
+      : undefined;
+    const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
     const contractValidation = runPreVideoGate({
       plan: {
         characters: (args.characters ?? [])
@@ -2445,8 +2671,68 @@ server.registerTool(
         propEvents,
         shotLocations,
         shotCount: args.shots.length,
+        hasReferencePicture: Boolean(baseImageUrl) || hasPortrait,
+        hasPortrait,
+        shotPrompts: boardedShots
+          .map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? shot.action ?? "" }))
+          .filter((entry) => entry.prompt.trim().length > 0),
       },
     });
+    const framePreview = planBoardFrames({
+      shots: boardedShots,
+      aspectRatio: args.aspectRatio,
+      look: args.look,
+      cast: args.cast,
+      baseImageUrl,
+      referenceImageUrls,
+    });
+    if (framePreview.some((frame) => frame.wardrobeUnchecked)) {
+      contractValidation.violations.push({
+        code: "wardrobe-unchecked",
+        shot: framePreview.find((frame) => frame.wardrobeUnchecked)?.shot ?? 1,
+        message:
+          "This board names a cast and has neither a portrait nor a base picture, so wardrobe is unchecked.",
+      });
+      contractValidation.ok = false;
+      contractValidation.blocked = true;
+      contractValidation.status = "fail";
+      contractValidation.tier0 = "fail";
+      contractValidation.message = RENDER_BLOCKED_BY_CONTRACT;
+    }
+    const decision = decideSpend(args.confirm, contractValidation);
+    if (decision === "refused") {
+      return refusal({
+        action: "refused",
+        willSpend: false,
+        contractValidation,
+        message: contractValidation.message ?? RENDER_BLOCKED_BY_CONTRACT,
+      });
+    }
+    if (decision === "spend") {
+      const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
+      if (sessionRefusal) return sessionRefusal;
+    }
+
+    const board = await boardFilm(
+      {
+        shots: boardedShots,
+        aspectRatio: args.aspectRatio,
+        look: args.look,
+        cast: args.cast,
+        maxCostUsd: args.maxCostUsd,
+        confirm: decision === "spend",
+      },
+      {
+        outputDir: OUTPUT_DIR,
+        // A base image and a reference set compete for the same body, and the
+        // base is worth more: it holds the room. Keep the portraits that are
+        // not the base itself.
+        referenceImageUrls,
+        baseImageUrl,
+        // Injected so tests can board a whole film without reaching the network.
+        generateStill: async (job, opts) => generateGrokStill(job, opts),
+      },
+    );
 
     const payload = {
       ...board,
@@ -2505,6 +2791,7 @@ server.registerTool(
       ),
       durationSeconds: z.number().min(1).max(15).optional(),
       confirm: z.boolean().default(false),
+      overrideValidation: z.boolean().default(false),
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
     }),
   },
@@ -2612,6 +2899,27 @@ server.registerTool(
         }],
       };
     }
+
+    const repairGate = gateRenderSequence({
+      plan: original.ledger
+        ? continuityPlanFromRenderArgs({
+            shots: original.shots.map((shot) => ({ prompt: shot.prompt })),
+            characters: original.settings?.characters,
+            ledger: original.ledger,
+          })
+        : undefined,
+      overrideValidation: args.overrideValidation,
+    });
+    if (decideSpend(true, repairGate) !== "spend") {
+      return refusal({
+        action: "refused",
+        willRender: false,
+        contractValidation: repairGate,
+        message: repairGate.message ?? RENDER_UNCHECKED,
+      });
+    }
+    const repairSession = await refuseIfSessionWillNotLast(duration * 1000);
+    if (repairSession) return repairSession;
 
     const settings = original.settings;
     const job: SequenceJob = {

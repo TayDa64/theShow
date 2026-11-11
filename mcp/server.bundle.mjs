@@ -21802,9 +21802,9 @@ var memo = {
     if (!bucket)
       return empty;
     handoff = void 0;
-    const entry = { value: empty, issues: null };
-    bucket.set(payload.value, entry);
-    open.push(entry);
+    const entry2 = { value: empty, issues: null };
+    bucket.set(payload.value, entry2);
+    open.push(entry2);
     return empty;
   },
   guard(inst) {
@@ -21878,16 +21878,16 @@ var memo = {
         const depth = open.length;
         const result = base(payload, ctx);
         handoff = void 0;
-        const entry = open.length > depth ? open.pop() : void 0;
+        const entry2 = open.length > depth ? open.pop() : void 0;
         if (result instanceof Promise) {
           return result.then((r) => {
-            if (entry)
-              entry.issues = r.issues.length ? cloneIssues(r.issues) : NO_ISSUES;
+            if (entry2)
+              entry2.issues = r.issues.length ? cloneIssues(r.issues) : NO_ISSUES;
             return r;
           });
         }
-        if (entry)
-          entry.issues = result.issues.length ? cloneIssues(result.issues) : NO_ISSUES;
+        if (entry2)
+          entry2.issues = result.issues.length ? cloneIssues(result.issues) : NO_ISSUES;
         return result;
       };
       inst._zod.parse = wrapped;
@@ -32301,42 +32301,42 @@ function extractDefs(ctx, schema) {
   if (ctx.external && ctx.sharedDefsExtractedFor === ctx.external)
     return;
   const idToSchema = /* @__PURE__ */ new Map();
-  for (const entry of ctx.seen.entries()) {
-    const id = ctx.metadataRegistry.get(entry[0])?.id;
+  for (const entry2 of ctx.seen.entries()) {
+    const id = ctx.metadataRegistry.get(entry2[0])?.id;
     if (id) {
       const existing = idToSchema.get(id);
-      if (existing && existing !== entry[0]) {
+      if (existing && existing !== entry2[0]) {
         throw new Error(`Duplicate schema id "${id}" detected during JSON Schema conversion. Two different schemas cannot share the same id when converted together.`);
       }
-      idToSchema.set(id, entry[0]);
+      idToSchema.set(id, entry2[0]);
     }
   }
-  const makeURI = (entry) => {
+  const makeURI = (entry2) => {
     const defsSegment = ctx.target === "draft-2020-12" ? "$defs" : "definitions";
     if (ctx.external) {
-      const externalId = ctx.external.registry.get(entry[0])?.id;
+      const externalId = ctx.external.registry.get(entry2[0])?.id;
       const uriGenerator = ctx.external.uri ?? ((id2) => id2);
       if (externalId) {
         return { ref: uriGenerator(externalId) };
       }
-      const id = entry[1].defId ?? entry[1].schema.id ?? `schema${ctx.counter++}`;
-      entry[1].defId = id;
+      const id = entry2[1].defId ?? entry2[1].schema.id ?? `schema${ctx.counter++}`;
+      entry2[1].defId = id;
       return { defId: id, ref: `${uriGenerator("__shared")}#/${defsSegment}/${encodeJSONPointerSegment(id)}` };
     }
     const uriPrefix = `#`;
     const defUriPrefix = `${uriPrefix}/${defsSegment}/`;
-    if (entry[1] === root && !entry[1].schema.id) {
+    if (entry2[1] === root && !entry2[1].schema.id) {
       return { ref: uriPrefix };
     }
-    const defId = entry[1].schema.id ?? `__schema${ctx.counter++}`;
+    const defId = entry2[1].schema.id ?? `__schema${ctx.counter++}`;
     return { defId, ref: defUriPrefix + encodeJSONPointerSegment(defId) };
   };
-  const extractToDef = (entry) => {
-    if (entry[1].schema.$ref) {
+  const extractToDef = (entry2) => {
+    if (entry2[1].schema.$ref) {
       return;
     }
-    const seen = entry[1];
-    const { ref, defId } = makeURI(entry);
+    const seen = entry2[1];
+    const { ref, defId } = makeURI(entry2);
     seen.def = { ...seen.schema };
     if (defId)
       seen.defId = defId;
@@ -32347,8 +32347,8 @@ function extractDefs(ctx, schema) {
     schema2.$ref = ref;
   };
   if (ctx.cycles === "throw") {
-    for (const entry of ctx.seen.entries()) {
-      const seen = entry[1];
+    for (const entry2 of ctx.seen.entries()) {
+      const seen = entry2[1];
       if (seen.cycle) {
         throw new Error(`Cycle detected: #/${seen.cycle?.join("/")}/<root>
 
@@ -32356,31 +32356,31 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
     }
   }
-  for (const entry of ctx.seen.entries()) {
-    const seen = entry[1];
-    if (schema === entry[0]) {
-      extractToDef(entry);
+  for (const entry2 of ctx.seen.entries()) {
+    const seen = entry2[1];
+    if (schema === entry2[0]) {
+      extractToDef(entry2);
       continue;
     }
     if (ctx.external) {
-      const ext = ctx.external.registry.get(entry[0])?.id;
-      if (schema !== entry[0] && ext) {
-        extractToDef(entry);
+      const ext = ctx.external.registry.get(entry2[0])?.id;
+      if (schema !== entry2[0] && ext) {
+        extractToDef(entry2);
         continue;
       }
     }
-    const id = ctx.metadataRegistry.get(entry[0])?.id;
+    const id = ctx.metadataRegistry.get(entry2[0])?.id;
     if (id) {
-      extractToDef(entry);
+      extractToDef(entry2);
       continue;
     }
     if (seen.cycle) {
-      extractToDef(entry);
+      extractToDef(entry2);
       continue;
     }
     if (seen.count > 1) {
       if (ctx.reused === "ref") {
-        extractToDef(entry);
+        extractToDef(entry2);
       }
     }
   }
@@ -32562,12 +32562,12 @@ function finalize(ctx, schema) {
     });
   };
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
-    for (const entry of [...ctx.seen.entries()].reverse()) {
-      flattenRef(entry[0]);
+    for (const entry2 of [...ctx.seen.entries()].reverse()) {
+      flattenRef(entry2[0]);
     }
     if (ctx.target !== "openapi-3.0") {
-      for (const entry of ctx.seen.entries()) {
-        compactTypeUnion(entry[1].def ?? entry[1].schema);
+      for (const entry2 of ctx.seen.entries()) {
+        compactTypeUnion(entry2[1].def ?? entry2[1].schema);
       }
     }
     for (const rewrite of ctx.deferred)
@@ -32614,8 +32614,8 @@ function finalize(ctx, schema) {
     delete result.id;
   const defs = ctx.external?.defs ?? {};
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
-    for (const entry of ctx.seen.entries()) {
-      const seen = entry[1];
+    for (const entry2 of ctx.seen.entries()) {
+      const seen = entry2[1];
       if (seen.def && seen.defId) {
         if (seen.def.id === seen.defId)
           delete seen.def.id;
@@ -33227,9 +33227,9 @@ function stringifyKeyNames(bySchema, json2, visited) {
 var pendingRecords = /* @__PURE__ */ new WeakMap();
 function rewriteKeyNames(ctx) {
   const bySchema = /* @__PURE__ */ new Map();
-  for (const entry of ctx.seen.values()) {
-    if (entry.def && !bySchema.has(entry.schema))
-      bySchema.set(entry.schema, entry);
+  for (const entry2 of ctx.seen.values()) {
+    if (entry2.def && !bySchema.has(entry2.schema))
+      bySchema.set(entry2.schema, entry2);
   }
   const rewrites = /* @__PURE__ */ new Map();
   for (const record2 of pendingRecords.get(ctx) ?? []) {
@@ -33243,8 +33243,8 @@ function rewriteKeyNames(ctx) {
   }
   if (!rewrites.size)
     return;
-  for (const entry of ctx.seen.values()) {
-    for (const carrier of [entry.schema, entry.def]) {
+  for (const entry2 of ctx.seen.values()) {
+    for (const carrier of [entry2.schema, entry2.def]) {
       const rewritten = carrier && rewrites.get(carrier.propertyNames);
       if (rewritten)
         carrier.propertyNames = rewritten;
@@ -33438,8 +33438,8 @@ function toJSONSchema(input2, params) {
     const registry2 = input2;
     const ctx2 = initializeContext({ ...params, processors: allProcessors });
     const defs = {};
-    for (const entry of registry2._idmap.entries()) {
-      const [_, schema] = entry;
+    for (const entry2 of registry2._idmap.entries()) {
+      const [_, schema] = entry2;
       processSchema(schema, ctx2);
     }
     const schemas = {};
@@ -33449,8 +33449,8 @@ function toJSONSchema(input2, params) {
       defs
     };
     ctx2.external = external;
-    for (const entry of registry2._idmap.entries()) {
-      const [key, schema] = entry;
+    for (const entry2 of registry2._idmap.entries()) {
+      const [key, schema] = entry2;
       extractDefs(ctx2, schema);
       assignProp(schemas, key, finalize(ctx2, schema));
     }
@@ -42347,14 +42347,23 @@ var StdioServerTransport = class {
 };
 
 // mcp/grok-auth.ts
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var API_BASE_URL = "https://api.x.ai";
 var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
 var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
+var SESSION_MARGIN_MS = 15 * 60 * 1e3;
+function grokAuthFilePath() {
+  const fromEnv = process.env.GROK_AUTH_FILE;
+  if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
+  if (process.env.VITEST || process.env.THESHOW_FORBID_HOME_AUTH === "1") {
+    return "/nonexistent/theshow-test-auth.json";
+  }
+  return join(homedir(), ".grok", "auth.json");
+}
 function readGrokAuthFile() {
-  const path = process.env.GROK_AUTH_FILE || join(homedir(), ".grok", "auth.json");
+  const path = grokAuthFilePath();
   let raw;
   try {
     raw = readFileSync(path, "utf8");
@@ -42368,18 +42377,59 @@ function readGrokAuthFile() {
     return void 0;
   }
   if (!parsed || typeof parsed !== "object") return void 0;
-  const entries = Object.values(parsed).filter(
-    (value) => Boolean(value) && typeof value === "object"
-  );
-  const withToken = entries.filter(
-    (entry) => typeof entry.key === "string" && entry.key.length > 0
-  );
+  const record2 = parsed;
+  const withToken = Object.entries(record2).filter((pair) => {
+    const value = pair[1];
+    return Boolean(value) && typeof value === "object" && typeof value.key === "string" && value.key.length > 0;
+  });
   if (withToken.length === 0) return void 0;
-  const expiryMs = (entry) => {
-    const parsedExpiry = typeof entry.expires_at === "string" ? Date.parse(entry.expires_at) : NaN;
+  const expiryMs = (entry3) => {
+    const parsedExpiry = typeof entry3.expires_at === "string" ? Date.parse(entry3.expires_at) : NaN;
     return Number.isNaN(parsedExpiry) ? 0 : parsedExpiry;
   };
-  return withToken.sort((a, b) => expiryMs(b) - expiryMs(a))[0];
+  withToken.sort((a, b) => expiryMs(b[1]) - expiryMs(a[1]));
+  const [keyName, entry2] = withToken[0];
+  return { keyName, entry: entry2 };
+}
+function oauthTokenUrl(authKeyName) {
+  const override = process.env.GROK_OAUTH_TOKEN_URL;
+  if (typeof override === "string" && override.trim()) return override.trim();
+  const issuer = authKeyName.split("::")[0]?.trim();
+  if (!issuer || !/^https:\/\//i.test(issuer)) return void 0;
+  try {
+    const url2 = new URL(issuer);
+    if (url2.pathname.includes("/oauth2/")) {
+      const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
+      return new URL("v1/token", base).toString();
+    }
+    return new URL("/oauth/token", url2.origin).toString();
+  } catch {
+    return void 0;
+  }
+}
+function sessionCoversRender(opts) {
+  const now = opts.now ?? Date.now();
+  const margin = opts.marginMs ?? SESSION_MARGIN_MS;
+  const neededUntilMs = now + Math.max(0, opts.estimatedJobMs) + margin;
+  if (!opts.expiresAt) {
+    return {
+      ok: false,
+      neededUntilMs,
+      reason: "Grok session has no expiry, so it cannot be shown to outlast this render."
+    };
+  }
+  const expiryMs = Date.parse(opts.expiresAt);
+  if (Number.isNaN(expiryMs)) {
+    return { ok: false, neededUntilMs, reason: "Grok session expiry could not be read." };
+  }
+  if (expiryMs <= neededUntilMs) {
+    return {
+      ok: false,
+      neededUntilMs,
+      reason: `Grok session expires at ${opts.expiresAt}, which is before this render would finish plus a 15 minute margin.`
+    };
+  }
+  return { ok: true, neededUntilMs };
 }
 function resolveVideoCredential() {
   const rawKey = process.env.XAI_API_KEY;
@@ -42394,15 +42444,16 @@ function resolveVideoCredential() {
       }
     };
   }
-  const entry = readGrokAuthFile();
-  if (!entry || typeof entry.key !== "string") {
+  const stored = readGrokAuthFile();
+  const entry2 = stored?.entry;
+  if (!entry2 || typeof entry2.key !== "string") {
     return {
       ok: false,
       code: "missing",
       reason: "No credential found. Set XAI_API_KEY, or sign in with the Grok CLI (`grok login --device-code`) so ~/.grok/auth.json exists."
     };
   }
-  const expiresAt = typeof entry.expires_at === "string" ? entry.expires_at : void 0;
+  const expiresAt = typeof entry2.expires_at === "string" ? entry2.expires_at : void 0;
   if (expiresAt) {
     const expiryMs = Date.parse(expiresAt);
     if (!Number.isNaN(expiryMs) && expiryMs <= Date.now()) {
@@ -42413,17 +42464,119 @@ function resolveVideoCredential() {
       };
     }
   }
-  const who = typeof entry.email === "string" ? ` as ${entry.email}` : "";
+  const who = typeof entry2.email === "string" ? ` as ${entry2.email}` : "";
   return {
     ok: true,
     credential: {
       kind: "session",
       baseUrl: PROXY_BASE_URL,
-      token: entry.key,
+      token: entry2.key,
       source: `Grok CLI session${who}`,
       expiresAt
     }
   };
+}
+async function refreshGrokSession(opts = {}) {
+  const stored = readGrokAuthFile();
+  if (!stored || typeof stored.entry.refresh_token !== "string" || !stored.entry.refresh_token) {
+    return { ok: false, reason: "Grok session has no refresh token." };
+  }
+  const tokenUrl = oauthTokenUrl(stored.keyName);
+  if (!tokenUrl) {
+    return { ok: false, reason: "Grok session issuer has no token endpoint." };
+  }
+  const clientId = stored.keyName.split("::")[1]?.trim();
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: stored.entry.refresh_token
+  });
+  if (clientId) body.set("client_id", clientId);
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let response;
+  try {
+    response = await fetchImpl(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+  } catch {
+    return { ok: false, reason: "Grok session refresh could not reach the token endpoint." };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: `Grok session refresh was refused (HTTP ${response.status}).` };
+  }
+  let parsed;
+  try {
+    parsed = await response.json();
+  } catch {
+    return { ok: false, reason: "Grok session refresh returned an unreadable body." };
+  }
+  if (typeof parsed.access_token !== "string" || !parsed.access_token) {
+    return { ok: false, reason: "Grok session refresh did not return an access token." };
+  }
+  const now = opts.now ?? Date.now();
+  const expiresIn = Number(parsed.expires_in);
+  const expiresAt = new Date(now + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1e3 : 60 * 60 * 1e3)).toISOString();
+  const path = grokAuthFilePath();
+  let file2;
+  try {
+    file2 = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  const current = file2[stored.keyName];
+  if (!current || typeof current !== "object") {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  file2[stored.keyName] = {
+    ...current,
+    key: parsed.access_token,
+    expires_at: expiresAt,
+    ...typeof parsed.refresh_token === "string" && parsed.refresh_token ? { refresh_token: parsed.refresh_token } : {}
+  };
+  try {
+    writeFileSync(path, JSON.stringify(file2, null, 2), "utf8");
+  } catch {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  return { ok: true, expiresAt };
+}
+async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
+  const first = resolveVideoCredential();
+  if (first.ok && first.credential.kind === "api-key") return first;
+  if (first.ok) {
+    const covers = sessionCoversRender({
+      expiresAt: first.credential.expiresAt,
+      estimatedJobMs,
+      now: opts.now
+    });
+    if (covers.ok) return first;
+  } else if (first.code !== "expired") {
+    return first;
+  }
+  const refreshed = await refreshGrokSession(opts);
+  if (!refreshed.ok) {
+    if (first.ok) {
+      const covers = sessionCoversRender({
+        expiresAt: first.credential.expiresAt,
+        estimatedJobMs,
+        now: opts.now
+      });
+      if (!covers.ok) return { ok: false, code: "expired", reason: covers.reason };
+      return { ok: false, code: "expired", reason: refreshed.reason };
+    }
+    return { ok: false, code: "expired", reason: refreshed.reason };
+  }
+  const second = resolveVideoCredential();
+  if (!second.ok) return second;
+  if (second.credential.kind === "api-key") return { ...second, refreshed: true };
+  const again = sessionCoversRender({
+    expiresAt: second.credential.expiresAt,
+    estimatedJobMs,
+    now: opts.now
+  });
+  if (!again.ok) return { ok: false, code: "expired", reason: again.reason };
+  return { ...second, refreshed: true };
 }
 
 // mcp/media.ts
@@ -42613,13 +42766,33 @@ async function closingFrameAgreement(input2) {
   }
 }
 var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
+function assertBedCoversFilm(bedSeconds, filmSeconds) {
+  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
+    throw new Error(
+      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
+    );
+  }
+}
+function planClipAudioFilters(input2) {
+  const mode = input2.clipAudio ?? "keep";
+  return input2.durations.map((duration3, index) => {
+    const useClip = mode === "keep" && Boolean(input2.clipHasAudio[index]);
+    if (useClip) {
+      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
+    }
+    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration3},asetpts=PTS-STARTPTS[a${index}]`;
+  });
+}
 async function assembleClips(input2) {
   const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
   const digest = createHash("sha1").update(input2.clips.map((c) => `${c.file}:${c.trimStart ?? ""}:${c.trimEnd ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
   const outPath = join2(dir, `film-${digest}.mp4`);
   if (input2.clips.length === 0) throw new Error("No clips to assemble.");
-  if (input2.clips.length === 1) {
+  const clipAudio = input2.clipAudio ?? "keep";
+  const bedGain = input2.audioTrackVolume ?? 0.25;
+  const wantBed = Boolean(input2.audioTrackFile) && bedGain > 0;
+  if (input2.clips.length === 1 && clipAudio === "keep" && !wantBed) {
     await exec(ffmpeg, [
       "-y",
       "-hide_banner",
@@ -42690,14 +42863,12 @@ async function assembleClips(input2) {
     filters.push(
       `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
     );
-    if (withAudio[i]) {
-      filters.push(`[${i}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`);
-    } else {
-      filters.push(
-        `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${durations[i]},asetpts=PTS-STARTPTS[a${i}]`
-      );
-    }
   }
+  filters.push(...planClipAudioFilters({
+    durations,
+    clipHasAudio: withAudio,
+    clipAudio
+  }));
   let mode;
   let totalDuration = durations.reduce((sum, d) => sum + d, 0);
   if (fade === 0) {
@@ -42725,18 +42896,23 @@ async function assembleClips(input2) {
     mode = "xfade";
   }
   let audioMap = "[aout]";
-  if (input2.audioTrackFile) {
+  if (wantBed && input2.audioTrackFile) {
+    const bedSeconds = await probeDuration(input2.audioTrackFile);
+    assertBedCoversFilm(bedSeconds, totalDuration);
     const bedIndex = input2.clips.length;
-    const gain = Math.min(Math.max(input2.audioTrackVolume ?? 0.25, 0.01), 4);
+    const gain = Math.min(Math.max(bedGain, 0), 4);
     const fadeOut = Math.min(
       input2.audioTrackFadeOutSeconds ?? 1.5,
       Math.max(totalDuration / 2, 0.1)
     );
-    args.push("-stream_loop", "-1", "-i", input2.audioTrackFile);
-    filters.push(
-      `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}[bed]`
-    );
-    filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    args.push("-i", input2.audioTrackFile);
+    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+    if (clipAudio === "replace") {
+      filters.push(`${bedFilter}[aoutmix]`);
+    } else {
+      filters.push(`${bedFilter}[bed]`);
+      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    }
     audioMap = "[aoutmix]";
   }
   args.push(
@@ -42897,13 +43073,17 @@ async function generateGrokClip(job, opts) {
     aspect_ratio: job.aspectRatio || "16:9"
   };
   if (job.resolution) body.resolution = job.resolution;
-  if (job.firstFrameUrl && job.lastFrameUrl) {
+  if (job.voiceId?.trim()) {
+    body.reference_audios = [{ voice_id: job.voiceId.trim() }];
+  }
+  const sendLastFrame = Boolean(job.lastFrameUrl) && job.pin !== "start";
+  if (job.firstFrameUrl && sendLastFrame && job.lastFrameUrl) {
     const pair = await toBookendPair(job.firstFrameUrl, job.lastFrameUrl);
     body.image = { url: pair.first };
     body.last_frame = { url: pair.last };
   } else if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
-  } else if (job.lastFrameUrl) {
+  } else if (sendLastFrame && job.lastFrameUrl) {
     body.last_frame = { url: await toApiImageRef(job.lastFrameUrl) };
   }
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
@@ -43171,7 +43351,10 @@ function shotPrompt(shot) {
 function planBoardFrames(opts) {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
-  const hasPicture = Boolean(opts.baseImageUrl);
+  const hasPortrait = Boolean(opts.referenceImageUrls?.some((url2) => url2.trim()));
+  const hasBase = Boolean(opts.baseImageUrl);
+  const hasPicture = hasPortrait || hasBase;
+  const wardrobeUnchecked = !hasPicture && Boolean(opts.cast?.trim());
   const castLock = cast?.trim() ? hasPicture ? castForPicture(cast) : `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
@@ -43208,7 +43391,14 @@ function planBoardFrames(opts) {
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem, role: spec.role, shot: spec.shot };
+    return {
+      index,
+      prompt: full,
+      stem,
+      role: spec.role,
+      shot: spec.shot,
+      ...wardrobeUnchecked ? { wardrobeUnchecked: true } : {}
+    };
   });
 }
 function shotFrameSlots(shots) {
@@ -43266,6 +43456,7 @@ async function boardFilm(input2, deps) {
     look: input2.look,
     cast: input2.cast,
     baseImageUrl: deps.baseImageUrl,
+    referenceImageUrls: deps.referenceImageUrls,
     baseFingerprint: heroStem
   });
   const existing = await Promise.all(
@@ -43274,7 +43465,7 @@ async function boardFilm(input2, deps) {
       path: await findExistingStill(deps.outputDir, frame.stem)
     }))
   );
-  const missing = existing.filter((entry) => !entry.path);
+  const missing = existing.filter((entry2) => !entry2.path);
   const heroStills = deps.baseImageUrl && (deps.referenceImageUrls ?? []).length > 0 ? 1 : 0;
   const billable = missing.length + heroStills;
   const estimatedUsd = Math.round(billable * STILL_USD * 100) / 100;
@@ -43295,11 +43486,11 @@ async function boardFilm(input2, deps) {
       willSpend: false,
       aspectRatio,
       shots: [],
-      frames: existing.map((entry) => ({
-        index: entry.frame.index,
-        prompt: entry.frame.prompt,
-        path: entry.path,
-        reused: Boolean(entry.path)
+      frames: existing.map((entry2) => ({
+        index: entry2.frame.index,
+        prompt: entry2.frame.prompt,
+        path: entry2.path,
+        reused: Boolean(entry2.path)
       })),
       estimate: baseEstimate,
       maxCostUsd: input2.maxCostUsd,
@@ -43329,45 +43520,45 @@ async function boardFilm(input2, deps) {
       spentUsd += heroResult.costUsd ?? STILL_USD;
     }
   }
-  for (const entry of existing) {
-    if (entry.path) {
-      paths.set(entry.frame.index, entry.path);
+  for (const entry2 of existing) {
+    if (entry2.path) {
+      paths.set(entry2.frame.index, entry2.path);
       frames.push({
-        index: entry.frame.index,
-        prompt: entry.frame.prompt,
-        path: entry.path,
+        index: entry2.frame.index,
+        prompt: entry2.frame.prompt,
+        path: entry2.path,
         reused: true
       });
       continue;
     }
-    const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : void 0;
+    const previousFrame = entry2.frame.index > 0 ? paths.get(entry2.frame.index - 1) : void 0;
     const refs = [
       ...boardBase ? [] : deps.referenceImageUrls ?? [],
       ...boardBase ? [] : previousFrame ? [previousFrame] : []
     ];
     let result = await deps.generateStill(
       {
-        prompt: entry.frame.prompt,
+        prompt: entry2.frame.prompt,
         aspectRatio,
         baseImageUrl: boardBase,
         referenceImageUrls: refs.length > 0 ? refs : void 0
       },
-      { outputDir: deps.outputDir, filename: entry.frame.stem }
+      { outputDir: deps.outputDir, filename: entry2.frame.stem }
     );
     if (result.localPath) {
-      paths.set(entry.frame.index, result.localPath);
+      paths.set(entry2.frame.index, result.localPath);
       spentUsd += result.costUsd ?? STILL_USD;
       frames.push({
-        index: entry.frame.index,
-        prompt: entry.frame.prompt,
+        index: entry2.frame.index,
+        prompt: entry2.frame.prompt,
         path: result.localPath,
         reused: false,
         costUsd: result.costUsd
       });
     } else {
       frames.push({
-        index: entry.frame.index,
-        prompt: entry.frame.prompt,
+        index: entry2.frame.index,
+        prompt: entry2.frame.prompt,
         reused: false,
         error: result.error ?? "no image returned"
       });
@@ -43437,6 +43628,7 @@ import { basename, join as join5, sep } from "node:path";
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
 var LAYER_TYPES = ["clothing", "footwear"];
+var CLOSURE_TYPES = ["zip", "buttons", "open", "laced", "slip-on", "none"];
 function sameWorn(a, b) {
   const left = [...a].map((id) => id.trim()).filter(Boolean).sort();
   const right = [...b].map((id) => id.trim()).filter(Boolean).sort();
@@ -43457,7 +43649,7 @@ function defaultWorn(wardrobe) {
   return wardrobe.layers.map((layer) => layer.id);
 }
 function findStateImage(wardrobe, worn) {
-  return (wardrobe.stateImages ?? []).find((entry) => sameWorn(entry.worn, worn));
+  return (wardrobe.stateImages ?? []).find((entry2) => sameWorn(entry2.worn, worn));
 }
 function resolveProp(props, dest, locationId) {
   const key = dest.trim().toLowerCase();
@@ -43488,9 +43680,9 @@ function startCharacters(characters) {
 function pickCharacter(runtimes, event) {
   if (event.character?.trim()) {
     const key = event.character.trim().toLowerCase();
-    return runtimes.find((entry) => entry.name.trim().toLowerCase() === key);
+    return runtimes.find((entry2) => entry2.name.trim().toLowerCase() === key);
   }
-  const withLayers = runtimes.filter((entry) => (entry.wardrobe?.layers.length ?? 0) > 0);
+  const withLayers = runtimes.filter((entry2) => (entry2.wardrobe?.layers.length ?? 0) > 0);
   if (withLayers.length === 1) return withLayers[0];
   if (runtimes.length === 1) return runtimes[0];
   return void 0;
@@ -43611,7 +43803,7 @@ function checklistFor(runtime, props, warnings) {
   const worn = sortLayers(wardrobe.layers.filter((layer) => runtime.worn.has(layer.id)));
   const outermost = sortLayers(worn.filter((layer) => layerType(layer) === "clothing")).at(-1);
   const staged = props.filter((prop) => wardrobe.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
-    const layer = wardrobe.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
+    const layer = wardrobe.layers.find((entry2) => stagedPropId(runtime.name, entry2.id) === prop.id);
     return {
       layerId: layer?.id ?? prop.id,
       item: prop.name,
@@ -43654,7 +43846,7 @@ function checklistFor(runtime, props, warnings) {
 }
 function locationName(locations, locationId) {
   if (!locationId) return void 0;
-  return locations?.find((entry) => entry.id === locationId)?.name ?? locationId;
+  return locations?.find((entry2) => entry2.id === locationId)?.name ?? locationId;
 }
 function describeWorn(checklist) {
   if (checklist.worn.length === 0) {
@@ -43667,15 +43859,15 @@ function describeWorn(checklist) {
   const joined = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   return `${checklist.character} is wearing ${joined}`;
 }
-function describeChange(event, character, layerItem) {
+function describeChange(event, character, layerItem2) {
   if (event.action === "remove") {
-    return `${character} takes off the ${layerItem}`;
+    return `${character} takes off the ${layerItem2}`;
   }
   if (event.action === "putOn") {
-    return `${character} puts on the ${layerItem}`;
+    return `${character} puts on the ${layerItem2}`;
   }
   const note = event.note?.trim() ? `: ${event.note.trim()}` : "";
-  return `${character} adjusts the ${layerItem}${note}`;
+  return `${character} adjusts the ${layerItem2}${note}`;
 }
 function setDressingLine(props, locationId, locations) {
   if (!locationId) return "";
@@ -43683,7 +43875,7 @@ function setDressingLine(props, locationId, locations) {
   if (inView.length === 0) return "";
   const room = locationName(locations, locationId) ?? locationId;
   const items = inView.map((prop) => {
-    const holderProp = prop.holder ? props.find((entry) => entry.id === prop.holder) : void 0;
+    const holderProp = prop.holder ? props.find((entry2) => entry2.id === prop.holder) : void 0;
     const alreadyNamesHolder = holderProp ? prop.placement.toLowerCase().includes(holderProp.name.toLowerCase()) : false;
     const heldBy = holderProp && !alreadyNamesHolder ? `, on the ${holderProp.name}` : !holderProp && prop.holder ? `, held by ${prop.holder}` : "";
     return `${prop.name}${prop.placement ? `, ${prop.placement}` : ""}${heldBy}`;
@@ -43744,7 +43936,7 @@ function replayContinuity(plan) {
     const propEvents = (plan.propEvents ?? []).filter((event) => event.shot === index);
     for (const event of propEvents) applyPropEvent(props, event, warnings);
     for (const event of wardrobeEvents) applyWardrobeEvent(runtimes, props, event, locationId, warnings);
-    const checklists = runtimes.map((runtime) => checklistFor(runtime, props, warnings)).filter((entry) => Boolean(entry));
+    const checklists = runtimes.map((runtime) => checklistFor(runtime, props, warnings)).filter((entry2) => Boolean(entry2));
     const propsInView = locationId ? props.filter((prop) => prop.locationId === locationId).map((prop) => ({ ...prop })) : [];
     const wardrobeText = wardrobePrompt({
       checklists,
@@ -43761,7 +43953,7 @@ function replayContinuity(plan) {
       checklists,
       propsInView,
       prompt,
-      warnings: [...warnings, ...checklists.flatMap((entry) => entry.warnings)].filter(
+      warnings: [...warnings, ...checklists.flatMap((entry2) => entry2.warnings)].filter(
         (value, i, all) => all.indexOf(value) === i
       )
     });
@@ -43776,33 +43968,47 @@ function annotateAction(action, continuityPrompt) {
   if (body.includes(extra)) return body;
   return `${body} ${extra}`.replace(/\s+/g, " ").trim();
 }
+var ContinuityAuditFindingSchema = external_exports.object({
+  kind: external_exports.enum(["vanished", "appeared", "moved"]),
+  propId: external_exports.string().min(1),
+  locationId: external_exports.string().min(1),
+  name: external_exports.string().min(1),
+  frameNumber: external_exports.number().int().nonnegative(),
+  note: external_exports.string(),
+  thumbnailPath: external_exports.string().optional()
+});
 function parseWardrobe(raw) {
   if (!raw || typeof raw !== "object") return void 0;
   const value = raw;
   if (!Array.isArray(value.layers)) return void 0;
   const layers = [];
-  for (const entry of value.layers) {
-    if (!entry || typeof entry !== "object") continue;
-    const layer = entry;
+  for (const entry2 of value.layers) {
+    if (!entry2 || typeof entry2 !== "object") continue;
+    const layer = entry2;
     if (typeof layer.id !== "string" || !layer.id.trim()) continue;
     if (typeof layer.item !== "string" || !layer.item.trim()) continue;
     if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) continue;
     const inReference = IN_REFERENCE.includes(layer.inReference) ? layer.inReference : "visible";
     const type = LAYER_TYPES.includes(layer.type) ? layer.type : void 0;
+    const closure = CLOSURE_TYPES.includes(layer.closure) ? layer.closure : void 0;
+    const mustNotHave = Array.isArray(layer.mustNotHave) ? layer.mustNotHave.filter((word) => typeof word === "string" && word.trim().length > 0) : void 0;
     layers.push({
       id: layer.id.trim(),
       item: layer.item.trim(),
       order: layer.order,
       inReference,
-      ...type ? { type } : {}
+      ...type ? { type } : {},
+      ...typeof layer.short === "string" && layer.short.trim() ? { short: layer.short.trim() } : {},
+      ...closure ? { closure } : {},
+      ...mustNotHave && mustNotHave.length > 0 ? { mustNotHave } : {}
     });
   }
   if (layers.length === 0) return void 0;
   const worn = Array.isArray(value.startState?.worn) ? value.startState.worn.filter((id) => typeof id === "string" && id.trim().length > 0) : layers.map((layer) => layer.id);
-  const stateImages = Array.isArray(value.stateImages) ? value.stateImages.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const wornIds = Array.isArray(entry.worn) ? entry.worn.filter((id) => typeof id === "string" && Boolean(id.trim())) : [];
-    const urls = Array.isArray(entry.referenceImageUrls) ? entry.referenceImageUrls.filter((url2) => typeof url2 === "string") : [];
+  const stateImages = Array.isArray(value.stateImages) ? value.stateImages.flatMap((entry2) => {
+    if (!entry2 || typeof entry2 !== "object") return [];
+    const wornIds = Array.isArray(entry2.worn) ? entry2.worn.filter((id) => typeof id === "string" && Boolean(id.trim())) : [];
+    const urls = Array.isArray(entry2.referenceImageUrls) ? entry2.referenceImageUrls.filter((url2) => typeof url2 === "string") : [];
     return [{ worn: wornIds, referenceImageUrls: urls }];
   }) : void 0;
   return {
@@ -43921,13 +44127,13 @@ async function keepWardrobeReferences(input2) {
   const stateImages = input2.wardrobe.stateImages ?? [];
   if (stateImages.length === 0) return input2.wardrobe;
   const kept = [];
-  for (const entry of stateImages) {
+  for (const entry2 of stateImages) {
     const referenceImageUrls = await keepReferences({
       folder: input2.folder,
-      refs: entry.referenceImageUrls,
+      refs: entry2.referenceImageUrls,
       warnings: input2.warnings
     });
-    kept.push({ worn: entry.worn, referenceImageUrls });
+    kept.push({ worn: entry2.worn, referenceImageUrls });
   }
   return { ...input2.wardrobe, stateImages: kept };
 }
@@ -44006,8 +44212,8 @@ async function loadAllCharacters() {
     return [];
   }
   const newest = /* @__PURE__ */ new Map();
-  for (const entry of folders) {
-    const record2 = await readRecord(join5(root, entry));
+  for (const entry2 of folders) {
+    const record2 = await readRecord(join5(root, entry2));
     if (!record2) continue;
     const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
     const previous = newest.get(key);
@@ -44016,9 +44222,235 @@ async function loadAllCharacters() {
   return [...newest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// mcp/weighted.ts
+var TIER1_PASS_SCORE = 0.8;
+var TIER1_WEIGHTS = {
+  freezeRun: 0.4,
+  speechCoverage: 0.3,
+  joinSsim: 0.2,
+  motionNatural: 0.1
+};
+function violation(code, shot, message) {
+  return { code, shot, message };
+}
+function layerItem(layer) {
+  return layer.item.trim();
+}
+function scoreTier1(plan) {
+  const metrics = plan.tier1;
+  if (!metrics) return void 0;
+  const score = metrics.freezeRun * TIER1_WEIGHTS.freezeRun + metrics.speechCoverage * TIER1_WEIGHTS.speechCoverage + metrics.joinSsim * TIER1_WEIGHTS.joinSsim + metrics.motionNatural * TIER1_WEIGHTS.motionNatural;
+  return { score, pass: score >= TIER1_PASS_SCORE };
+}
+function closureWords(layer) {
+  const words = [...layer.mustNotHave ?? []];
+  if (layer.closure === "zip") words.push("button", "buttons", "buttoned");
+  if (layer.closure === "buttons") words.push("zip", "zipped", "zipper");
+  return words;
+}
+function evaluateWeighted(plan) {
+  const violations = [];
+  const shots = replayContinuity(plan);
+  const initialProps = (plan.props ?? []).map((prop) => ({ ...prop }));
+  const pendingVision = [];
+  for (const shot of shots) {
+    const names = /* @__PURE__ */ new Map();
+    const holders = /* @__PURE__ */ new Map();
+    for (const prop of shot.propsInView) {
+      const key = `${prop.locationId}::${prop.name.trim().toLowerCase()}`;
+      const ids = names.get(key) ?? [];
+      ids.push(prop.id);
+      names.set(key, ids);
+      if (!prop.holder) continue;
+      const held = holders.get(prop.holder) ?? [];
+      held.push(prop);
+      holders.set(prop.holder, held);
+    }
+    for (const [key, ids] of names) {
+      if (ids.length < 2) continue;
+      const name = key.split("::")[1] ?? key;
+      violations.push(violation(
+        "count",
+        shot.shot,
+        `Shot ${shot.shot} has ${ids.length} of "${name}" in the same room (${ids.join(", ")}).`
+      ));
+    }
+    for (const [holder, held] of holders) {
+      const exclusive = /hanger/i.test(holder) || held.some((prop) => prop.contact === "hanging" || prop.contact === "held");
+      if (exclusive && held.length > 1) {
+        violations.push(violation(
+          "contact",
+          shot.shot,
+          `Shot ${shot.shot} puts ${held.map((prop) => prop.name).join(" and ")} on one holder (${holder}).`
+        ));
+      }
+      const holderIsCharacter = plan.characters.some(
+        (character) => character.name.toLowerCase() === holder.toLowerCase()
+      );
+      for (const prop of held) {
+        if (holderIsCharacter && prop.contact === "hanging") {
+          violations.push(violation(
+            "contact",
+            shot.shot,
+            `Shot ${shot.shot} has ${prop.name} hanging and held by ${holder}.`
+          ));
+        }
+      }
+    }
+  }
+  for (const prop of initialProps) {
+    if (!prop.fixed) continue;
+    for (const shot of shots) {
+      if (shot.locationId && shot.locationId !== prop.locationId) continue;
+      const found = shot.propsInView.find((entry2) => entry2.id === prop.id);
+      if (!found) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} is missing in shot ${shot.shot}.`
+        ));
+        continue;
+      }
+      if (found.placement !== prop.placement) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} changed place in shot ${shot.shot}.`
+        ));
+      }
+      if (prop.bbox && found.bbox && prop.bbox.some((value, index) => value !== found.bbox?.[index])) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} changed size in shot ${shot.shot}.`
+        ));
+      }
+    }
+  }
+  for (const prop of initialProps) {
+    if (prop.bbox) pendingVision.push(`set-geometry:${prop.id}`);
+    if (prop.solid) pendingVision.push(`contact:${prop.id}`);
+  }
+  for (const event of plan.propEvents ?? []) {
+    if (event.action !== "move") continue;
+    const prop = initialProps.find((entry2) => entry2.id === event.propId);
+    if (!prop?.solid) continue;
+    const clearance = (plan.bodyClearance ?? []).find(
+      (entry2) => entry2.shot === event.shot && entry2.solidId === prop.id
+    );
+    if (clearance && clearance.clear === false) {
+      violations.push(violation(
+        "contact",
+        event.shot,
+        `Shot ${event.shot} moves ${prop.name} while the body is still in its path.`
+      ));
+    }
+  }
+  for (const mark of plan.scaleMarks ?? []) {
+    if (mark.measuredBodyH === void 0) {
+      pendingVision.push(`scale:${mark.shot}`);
+      continue;
+    }
+    const tol = Math.abs(mark.tolPct) / 100;
+    const delta = mark.bodyH === 0 ? Infinity : Math.abs(mark.measuredBodyH - mark.bodyH) / mark.bodyH;
+    if (delta > tol) {
+      violations.push(violation(
+        "scale",
+        mark.shot,
+        `Shot ${mark.shot} body height ${mark.measuredBodyH}px is outside ${mark.bodyH}px \xB1${mark.tolPct}%.`
+      ));
+    }
+  }
+  for (const spoken of plan.spokenLines ?? []) {
+    if (!spoken.line.trim()) continue;
+    const prompt = (plan.shotPrompts ?? []).find((entry2) => entry2.shot === spoken.shot)?.prompt;
+    if (!prompt || !prompt.includes(spoken.line)) {
+      violations.push(violation(
+        "speech-verbatim",
+        spoken.shot,
+        `Shot ${spoken.shot} must speak this exact line: ${spoken.line}`
+      ));
+    }
+  }
+  const hasSpeech = (plan.spokenLines ?? []).some((spoken) => spoken.line.trim().length > 0);
+  if (hasSpeech && !plan.voiceId?.trim()) {
+    violations.push(violation(
+      "voice",
+      plan.spokenLines?.[0]?.shot ?? 1,
+      "A spoken line needs a voice id, such as rex."
+    ));
+  }
+  for (const character of plan.characters) {
+    for (const layer of character.wardrobe?.layers ?? []) {
+      const banned = closureWords(layer);
+      if (banned.length === 0) continue;
+      const names = [layerItem(layer), layer.short, layer.id.replace(/-/g, " ")].filter(
+        (name) => Boolean(name && name.trim())
+      );
+      for (const prompt of plan.shotPrompts ?? []) {
+        const hay = prompt.prompt.toLowerCase();
+        for (const name of names) {
+          const at = hay.indexOf(name.toLowerCase());
+          if (at < 0) continue;
+          const window = hay.slice(Math.max(0, at - 48), at + name.length + 48);
+          for (const word of banned) {
+            if (!window.includes(word.toLowerCase())) continue;
+            violations.push(violation(
+              "closure",
+              prompt.shot,
+              `Shot ${prompt.shot} uses "${word}" next to ${layerItem(layer)}.`
+            ));
+          }
+        }
+      }
+    }
+  }
+  for (const prompt of plan.shotPrompts ?? []) {
+    if (/shrugs?/i.test(prompt.prompt) && /off (?:his|her|their) shoulders/i.test(prompt.prompt)) {
+      violations.push(violation(
+        "garment-integrity",
+        prompt.shot,
+        `Shot ${prompt.shot} shrugs a garment off both shoulders, which splits it into two pieces.`
+      ));
+    }
+  }
+  const hasLayers = plan.characters.some((character) => (character.wardrobe?.layers.length ?? 0) > 0);
+  const hasPicture = Boolean(plan.hasReferencePicture || plan.hasPortrait);
+  if (hasLayers && !hasPicture) {
+    violations.push(violation(
+      "wardrobe-unchecked",
+      1,
+      "Wardrobe is in play and neither a portrait nor a base picture is attached."
+    ));
+  }
+  let vision = "not-required";
+  if (pendingVision.length > 0) {
+    if (plan.humanVisionSignOff) {
+      vision = "human-signed-off";
+    } else {
+      vision = "fail-closed";
+      violations.push(violation(
+        "vision-unchecked",
+        1,
+        `Vision checking is still a stub, so this take is blocked until a person signs off. Pending: ${pendingVision.join(", ")}.`
+      ));
+    }
+  }
+  const tier1 = scoreTier1(plan);
+  if (tier1 && !tier1.pass) {
+    violations.push(violation(
+      "tier1-score",
+      1,
+      `Tier 1 score ${tier1.score.toFixed(2)} is under ${TIER1_PASS_SCORE.toFixed(2)}.`
+    ));
+  }
+  return { violations, vision, ...tier1 ? { tier1 } : {} };
+}
+
 // mcp/contracts.ts
 var MAX_STEPS_PER_SHOT = 3;
 var RENDER_BLOCKED_BY_CONTRACT = "render_sequence refused to start because the shot contracts failed validation. Pass overrideValidation: true to proceed anyway.";
+var RENDER_UNCHECKED = "render_sequence refused to start because no continuity ledger or shot contracts were provided. A plan with nothing to check is unchecked, and unchecked does not spend.";
 function layerType2(layer) {
   return layer.type ?? "clothing";
 }
@@ -44044,8 +44476,22 @@ function sameRecord(a, b) {
   }
   return true;
 }
+function sameCounts(a, b) {
+  const left = a ?? {};
+  const right = b ?? {};
+  const keys = /* @__PURE__ */ new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] ?? 0) !== (right[key] ?? 0)) return false;
+  }
+  return true;
+}
 function sameShotState(a, b) {
-  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders);
+  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders) && sameCounts(a.counts, b.counts);
+}
+function sameTextList(a, b) {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 function isHangerDest(to, plan) {
   if (!to?.trim()) return false;
@@ -44082,9 +44528,7 @@ function expandWardrobeEventToSteps(event, plan) {
   }
   steps.push(`removes ${item}`);
   if (isHangerDest(event.to, plan)) {
-    steps.push("lifts hanger off wall");
-    steps.push(`hangs ${item} on hanger`);
-    steps.push("returns hanger to wall");
+    steps.push(`hangs ${item} on the empty hanger; the hanger stays on the rail`);
   }
   return steps;
 }
@@ -44093,7 +44537,7 @@ function expandPropEventToSteps(event, props) {
   const name = event.name ?? current?.name ?? event.propId;
   const holder = event.holder ?? "";
   if (event.action === "move" && /hanger/i.test(`${holder} ${event.placement ?? ""}`)) {
-    return ["lifts hanger off wall", `hangs ${name} on hanger`, "returns hanger to wall"];
+    return [`hangs ${name} on the empty hanger; the hanger stays on the rail`];
   }
   if (event.action === "move") return [`moves ${name}`];
   if (event.action === "add") return [`adds ${name}`];
@@ -44101,7 +44545,7 @@ function expandPropEventToSteps(event, props) {
   return [];
 }
 function stepsForShot(plan, shot) {
-  const named = (plan.shotSteps ?? []).find((entry) => entry.shot === shot);
+  const named = (plan.shotSteps ?? []).find((entry2) => entry2.shot === shot);
   if (named) return [...named.steps];
   const wardrobe = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
   const props = (plan.propEvents ?? []).filter((event) => event.shot === shot);
@@ -44115,7 +44559,7 @@ function holdersFromProps(props) {
   for (const prop of props) {
     const held = props.filter((other) => other.holder === prop.id);
     if (held.length === 0 && !hangerLike(prop)) continue;
-    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry) => entry.name).join(" and ")}`;
+    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry2) => entry2.name).join(" and ")}`;
   }
   return holders;
 }
@@ -44263,13 +44707,30 @@ function countViolations(contract) {
         message: `Shot ${contract.shot} has ${held.join(", ")} both worn and on a holder.`
       });
     }
-    for (const [id, count] of Object.entries(state.counts ?? {})) {
+    for (const id of /* @__PURE__ */ new Set([...Object.keys(state.counts ?? {}), ...state.worn])) {
+      const count = state.counts?.[id] ?? 0;
       const unit = unitFor(id);
       if (count > unit) {
         found.push({
           code: "duplicate-garment",
           shot: contract.shot,
           message: `Shot ${contract.shot} counts ${count} of ${id}, which is more than the ${unit} that should exist.`
+        });
+        continue;
+      }
+      if (count !== 0 && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} of ${id}. A garment is ${unit} or it is absent.`
+        });
+        continue;
+      }
+      if (state.worn.includes(id) && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} wears ${id} but counts ${count}, not ${unit}.`
         });
       }
     }
@@ -44288,15 +44749,25 @@ function countViolations(contract) {
     }
   }
   for (const invariant of contract.invariants) {
-    const match = invariant.match(/exactly\s+(\d+)\s+(.+?)(?:,|$)/i);
+    const match = invariant.match(/exactly\s+(\d+|one|two|three|four|a|an)\s+(.+?)(?:,|$)/i);
     if (!match) continue;
-    const count = Number(match[1]);
+    const words = { one: 1, two: 2, three: 3, four: 4, a: 1, an: 1 };
+    const raw = match[1].toLowerCase();
+    const count = words[raw] ?? Number(raw);
     const label = match[2].toLowerCase();
     if (/shoe/i.test(label) && count !== 2) {
       found.push({
         code: "footwear-count",
         shot: contract.shot,
         message: `Shot ${contract.shot} invariant "${invariant}" uses a footwear count that is not a pair.`
+      });
+      continue;
+    }
+    if (!/shoe/i.test(label) && count !== 1) {
+      found.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariant "${invariant}" counts a garment as ${count}. A garment stays one whole piece.`
       });
     }
   }
@@ -44338,19 +44809,31 @@ function validateContractsAgainstPlan(plan, contracts) {
   const derived2 = deriveContracts(plan);
   const authored = contracts ?? derived2;
   const result = validateContracts(authored);
-  if (!contracts) return result;
-  for (const contract of contracts) {
-    const expected = derived2.find((entry) => entry.shot === contract.shot);
+  for (const contract of contracts ?? []) {
+    const expected = derived2.find((entry2) => entry2.shot === contract.shot);
     if (!expected) continue;
-    if (sameShotState(contract.requires, expected.requires) && sameShotState(contract.ensures, expected.ensures)) {
-      continue;
+    const stateMatches = sameShotState(contract.requires, expected.requires) && sameShotState(contract.ensures, expected.ensures);
+    const textMatches = sameTextList(contract.steps, expected.steps) && sameTextList(contract.invariants, expected.invariants) && sameTextList(contract.forbidden, expected.forbidden);
+    if (!stateMatches || !textMatches) {
+      result.violations.push({
+        code: "ledger-mismatch",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger (worn, holders, counts, steps, invariants, or forbidden).`
+      });
     }
-    result.violations.push({
-      code: "ledger-mismatch",
-      shot: contract.shot,
-      message: `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger.`
-    });
+    for (const layer of allLayers(plan)) {
+      const inPlay = contract.requires.worn.includes(layer.id) || contract.ensures.worn.includes(layer.id) || (contract.requires.counts?.[layer.id] ?? 0) > 0 || (contract.ensures.counts?.[layer.id] ?? 0) > 0;
+      if (!inPlay) continue;
+      if (contract.invariants.some((line) => line.includes(layer.item))) continue;
+      result.violations.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariants do not name "${layer.item}" verbatim.`
+      });
+    }
   }
+  const weighted = evaluateWeighted(plan);
+  result.violations.push(...weighted.violations);
   return { ok: result.violations.length === 0, violations: result.violations };
 }
 function promptFromContract(contract) {
@@ -44370,28 +44853,84 @@ function promptFromContract(contract) {
   }
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
+function gateShell(partial2) {
+  return {
+    ok: partial2.ok,
+    blocked: partial2.blocked,
+    status: partial2.status,
+    violations: partial2.violations,
+    ...partial2.message ? { message: partial2.message } : {},
+    tier0: partial2.status === "pass" ? "pass" : "fail",
+    ...partial2.tier1 ? { tier1: partial2.tier1 } : {},
+    tier2: "style-only",
+    vision: partial2.vision ?? "not-required"
+  };
+}
+function decideSpend(confirm, gate) {
+  if (!confirm) return "estimate";
+  if (gate.blocked || gate.status === "unchecked" || gate.status === "fail") return "refused";
+  if (gate.status === "pass" || gate.status === "override") return "spend";
+  const unreachable = gate.status;
+  return unreachable;
+}
 function gateRenderSequence(input2) {
   if (!input2.plan && !input2.contracts) {
-    return { ok: true, blocked: false, violations: [] };
+    const unchecked = {
+      code: "unchecked",
+      shot: 0,
+      message: RENDER_UNCHECKED
+    };
+    if (input2.overrideValidation) {
+      return gateShell({
+        ok: false,
+        blocked: false,
+        status: "override",
+        violations: [unchecked],
+        message: "No ledger or contracts were provided; overrideValidation is set, so rendering may proceed."
+      });
+    }
+    return gateShell({
+      ok: false,
+      blocked: true,
+      status: "unchecked",
+      violations: [unchecked],
+      message: RENDER_UNCHECKED
+    });
   }
   const result = input2.plan ? validateContractsAgainstPlan(input2.plan, input2.contracts) : validateContracts(input2.contracts ?? []);
+  const weighted = input2.plan ? evaluateWeighted(input2.plan) : void 0;
+  const tier1 = weighted?.tier1;
+  const vision = weighted?.vision ?? "not-required";
   if (result.ok) {
-    return { ok: true, blocked: false, violations: [] };
+    return gateShell({
+      ok: true,
+      blocked: false,
+      status: "pass",
+      violations: [],
+      tier1,
+      vision
+    });
   }
   if (input2.overrideValidation) {
-    return {
+    return gateShell({
       ok: false,
       blocked: false,
+      status: "override",
       violations: result.violations,
-      message: "Shot contracts failed validation; overrideValidation is set, so rendering may proceed."
-    };
+      message: "Shot contracts failed validation; overrideValidation is set, so rendering may proceed.",
+      tier1,
+      vision
+    });
   }
-  return {
+  return gateShell({
     ok: false,
     blocked: true,
+    status: "fail",
     violations: result.violations,
-    message: RENDER_BLOCKED_BY_CONTRACT
-  };
+    message: RENDER_BLOCKED_BY_CONTRACT,
+    tier1,
+    vision
+  });
 }
 function runPreVideoGate(input2) {
   return gateRenderSequence(input2);
@@ -44400,6 +44939,7 @@ function runPreVideoGate(input2) {
 // mcp/server.ts
 import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createHash as createHash4 } from "node:crypto";
 var server = new McpServer({
   name: "theshow",
@@ -44420,7 +44960,10 @@ var CharacterSchema = external_exports.object({
       inReference: external_exports.enum(["visible", "partial", "hidden"]),
       type: external_exports.enum(["clothing", "footwear"]).optional().describe(
         "Clothing and footwear stack separately. Defaults to clothing."
-      )
+      ),
+      closure: external_exports.enum(["zip", "buttons", "open", "laced", "slip-on", "none"]).optional(),
+      mustNotHave: external_exports.array(external_exports.string()).optional(),
+      short: external_exports.string().optional()
     })).min(1),
     startState: external_exports.object({
       worn: external_exports.array(external_exports.string()).describe("Layer ids worn at the start of the film.")
@@ -44455,7 +44998,12 @@ var PropRecordSchema = external_exports.object({
   locationId: external_exports.string(),
   name: external_exports.string(),
   placement: external_exports.string(),
-  holder: external_exports.string().optional()
+  holder: external_exports.string().optional(),
+  fixed: external_exports.boolean().optional(),
+  count: external_exports.number().int().min(0).optional(),
+  bbox: external_exports.tuple([external_exports.number(), external_exports.number(), external_exports.number(), external_exports.number()]).optional(),
+  solid: external_exports.boolean().optional(),
+  contact: external_exports.enum(["hanging", "resting", "held"]).optional()
 });
 var PropEventSchema = external_exports.object({
   shot: external_exports.number().int().min(1).optional(),
@@ -44473,7 +45021,7 @@ var LocationSchema = external_exports.object({
 var ShotStateSchema = external_exports.object({
   worn: external_exports.array(external_exports.string()),
   holders: external_exports.record(external_exports.string(), external_exports.string()),
-  counts: external_exports.record(external_exports.string(), external_exports.number()).default({})
+  counts: external_exports.record(external_exports.string(), external_exports.number())
 });
 var ShotContractSchema = external_exports.object({
   shot: external_exports.number().int().min(1),
@@ -44496,7 +45044,7 @@ async function rememberCharacter(args) {
     wardrobe: args.wardrobe ?? existing?.wardrobe,
     referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls
   });
-  const entry = {
+  const entry2 = {
     id: saved.id,
     name: saved.name,
     role: saved.role,
@@ -44505,8 +45053,8 @@ async function rememberCharacter(args) {
     wardrobe: saved.wardrobe,
     referenceImageUrls: saved.referenceImageUrls
   };
-  characterStore.set(key, entry);
-  return { entry, folder: saved.folder, warnings: saved.warnings };
+  characterStore.set(key, entry2);
+  return { entry: entry2, folder: saved.folder, warnings: saved.warnings };
 }
 function lookupCharacter(name) {
   const key = name.trim().toLowerCase();
@@ -44700,7 +45248,8 @@ var FILM_FORM_SCHEMA = {
       title: "Scene",
       description: "Location, time of day, weather, mood. One or two sentences.",
       minLength: 1,
-      maxLength: 600
+      maxLength: 600,
+      default: void 0
     },
     characters: {
       type: "string",
@@ -44904,14 +45453,14 @@ server.registerTool(
         isError: true
       };
     }
-    const { entry, folder, warnings } = stored;
+    const { entry: entry2, folder, warnings } = stored;
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          ...entry,
+          ...entry2,
           storage: folder,
-          referenceImages: entry.referenceImageUrls.length,
+          referenceImages: (entry2.referenceImageUrls ?? []).length,
           ...warnings ? { warnings } : {},
           message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
         }, null, 2)
@@ -44922,8 +45471,11 @@ server.registerTool(
 function stampShotNumbers(events, shot) {
   return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? shot }));
 }
+function eventsWithShot(events) {
+  return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? 1 }));
+}
 function buildContinuityLedger(input2) {
-  const characters = input2.characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
+  const characters = input2.characterNames.map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2));
   const hasReferencePicture = input2.characterNames.some((name) => {
     const known = lookupCharacter(name);
     return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
@@ -44954,21 +45506,43 @@ function buildContinuityLedger(input2) {
 function continuityPlanFromRenderArgs(args) {
   if (!args.ledger) return void 0;
   const characterNames = args.characters ?? [];
-  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
+  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2));
+  const hasReferencePicture = characterNames.some((name) => {
+    const known = lookupCharacter(name);
+    return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+  });
+  const shotPrompts = args.ledger.shotPrompts ?? args.shots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? "" })).filter((entry2) => entry2.prompt.trim().length > 0);
   return {
     characters,
     locations: args.ledger.locations,
     props: args.ledger.props,
-    wardrobeEvents: args.ledger.wardrobeEvents,
-    propEvents: args.ledger.propEvents,
+    wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+    propEvents: eventsWithShot(args.ledger.propEvents),
     shotLocations: args.shots.map((shot) => shot.locationId),
     shotCount: args.shots.length,
     shotSteps: args.ledger.shotSteps,
-    hasReferencePicture: characterNames.some((name) => {
-      const known = lookupCharacter(name);
-      return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
-    })
+    hasReferencePicture: hasReferencePicture || Boolean(args.ledger.hasPortrait),
+    hasPortrait: args.ledger.hasPortrait ?? hasReferencePicture,
+    ...args.ledger.voiceId ? { voiceId: args.ledger.voiceId } : {},
+    ...args.ledger.spokenLines ? { spokenLines: args.ledger.spokenLines } : {},
+    ...shotPrompts.length > 0 ? { shotPrompts } : {},
+    ...args.ledger.scaleMarks ? { scaleMarks: args.ledger.scaleMarks } : {},
+    ...args.ledger.bodyClearance ? { bodyClearance: args.ledger.bodyClearance } : {},
+    ...args.ledger.humanVisionSignOff ? { humanVisionSignOff: true } : {},
+    ...args.ledger.tier1 ? { tier1: args.ledger.tier1 } : {}
   };
+}
+function refusal(payload) {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+}
+async function refuseIfSessionWillNotLast(estimatedJobMs) {
+  const session = await ensureCredentialForJob(estimatedJobMs);
+  if (session.ok) return void 0;
+  return refusal({
+    action: "refused",
+    error: session.reason,
+    code: session.code === "expired" ? "session-too-short" : session.code
+  });
 }
 function applyShotContinuity(shot, snapshot, wardrobeChanged) {
   if (!snapshot) return shot;
@@ -45126,7 +45700,7 @@ var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 server.registerTool(
   "generate_controlled_clip",
   {
-    description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
+    description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription. Spends only after confirm, and only when the continuity gate passes. Pin defaults to the start frame: an end-frame pin holds the pose and has to be asked for.",
     inputSchema: external_exports.object({
       prompt: external_exports.string(),
       characters: external_exports.array(external_exports.string()).optional().describe(
@@ -45139,7 +45713,34 @@ server.registerTool(
         "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
       ),
       lastFrameUrl: external_exports.string().optional().describe(
-        "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture."
+        'Image to pin as the last rendered frame. Ignored unless pin is "both". An end pin makes the model reach the pose early and then hold.'
+      ),
+      pin: external_exports.enum(["start", "both"]).default("start").describe(
+        "start pins the first frame only. both also pins lastFrameUrl."
+      ),
+      voiceId: external_exports.string().optional().describe(
+        "Built-in voice id, such as rex. Sent as reference_audios[].voice_id."
+      ),
+      ledger: external_exports.object({
+        locations: external_exports.array(LocationSchema).optional(),
+        props: external_exports.array(PropRecordSchema).optional(),
+        wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        shotSteps: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          steps: external_exports.array(external_exports.string())
+        })).optional(),
+        voiceId: external_exports.string().optional(),
+        spokenLines: external_exports.array(external_exports.object({ shot: external_exports.number().int(), line: external_exports.string() })).optional(),
+        humanVisionSignOff: external_exports.boolean().optional(),
+        hasPortrait: external_exports.boolean().optional()
+      }).optional().describe(
+        "Continuity ledger for this clip. Without a ledger or contracts the gate is unchecked and confirm cannot spend."
+      ),
+      contracts: external_exports.array(ShotContractSchema).optional(),
+      overrideValidation: external_exports.boolean().default(false),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to spend. Call once without it for the estimate."
       ),
       durationSeconds: external_exports.number().min(1).max(15).default(8),
       aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
@@ -45152,8 +45753,45 @@ server.registerTool(
     })
   },
   async (args) => {
-    const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
-    const job = { ...rest };
+    const {
+      waitForCompletion,
+      timeoutSeconds,
+      characters,
+      ledger,
+      contracts,
+      overrideValidation,
+      confirm,
+      pin,
+      voiceId,
+      ...rest
+    } = args;
+    const gate = gateRenderSequence({
+      plan: continuityPlanFromRenderArgs({
+        shots: [{ prompt: args.prompt, locationId: void 0 }],
+        characters,
+        ledger: ledger ? { ...ledger, voiceId: voiceId ?? ledger.voiceId } : void 0
+      }),
+      contracts,
+      overrideValidation
+    });
+    const decision = decideSpend(confirm, gate);
+    if (decision !== "spend") {
+      const estimate = Math.round(args.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
+      return refusal({
+        action: decision === "estimate" ? "estimate-only" : "refused",
+        willRender: false,
+        estimate: { totalUsd: estimate, resolution: args.resolution, isEstimate: true },
+        contractValidation: gate,
+        message: decision === "estimate" ? "Nothing was spent. Call again with confirm: true only after the gate passes and the user approves." : gate.message ?? RENDER_BLOCKED_BY_CONTRACT
+      });
+    }
+    const sessionRefusal = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
+    if (sessionRefusal) return sessionRefusal;
+    const job = {
+      ...rest,
+      pin,
+      voiceId: voiceId ?? ledger?.voiceId
+    };
     const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
     job.referenceImageUrls = urls.length > 0 ? urls : void 0;
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
@@ -45174,17 +45812,30 @@ server.registerTool(
 server.registerTool(
   "extend_clip",
   {
-    description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing.",
+    description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing. There is no continuity ledger on an extension, so confirm spends only when overrideValidation is set. Otherwise the gate is unchecked and nothing is bought.",
     inputSchema: external_exports.object({
       videoUrl: external_exports.string().describe("Public https URL of the source clip (2-15 seconds)."),
       prompt: external_exports.string(),
       durationSeconds: external_exports.number().min(2).max(10).default(6),
       model: external_exports.string().default("grok-imagine-video"),
       waitForCompletion: external_exports.boolean().default(true),
-      timeoutSeconds: external_exports.number().min(10).max(600).default(240)
+      timeoutSeconds: external_exports.number().min(10).max(600).default(240),
+      confirm: external_exports.boolean().default(false),
+      overrideValidation: external_exports.boolean().default(false)
     })
   },
   async (args) => {
+    const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
+    if (decideSpend(args.confirm, extensionGate) !== "spend") {
+      return refusal({
+        action: args.confirm ? "refused" : "estimate-only",
+        willRender: false,
+        contractValidation: extensionGate,
+        message: args.confirm ? extensionGate.message ?? RENDER_UNCHECKED : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation."
+      });
+    }
+    const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
+    if (extensionSession) return extensionSession;
     const resolved = resolveVideoCredential();
     if (resolved.ok === false) {
       return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
@@ -45389,12 +46040,15 @@ server.registerTool(
         "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
       ),
       audioTrackUrl: external_exports.string().optional().describe(
-        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it."
+        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. It must cover the whole film. A shorter bed is refused. Volume 0 omits it."
       ),
-      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25).describe(
-        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video."
+      audioTrackVolume: external_exports.number().min(0).max(4).default(0.25).describe(
+        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video; 0 omits the bed."
       ),
-      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5)
+      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
+      clipAudio: external_exports.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes each clip's own audio. mute drops it and keeps the bed or silence. replace drops it so the bed is the soundtrack."
+      )
     })
   },
   async (args) => {
@@ -45408,7 +46062,8 @@ server.registerTool(
       fadeDuration: args.fadeDuration,
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
       audioTrackVolume: args.audioTrackVolume,
-      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      clipAudio: args.clipAudio
     });
     const durationSeconds = await probeDuration(result.path);
     const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
@@ -45439,10 +46094,13 @@ async function main() {
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
 }
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+var entry = process.argv[1];
+if (entry && import.meta.url === pathToFileURL(entry).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
 var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
 function ratePerSecond(resolution) {
   return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
@@ -45559,6 +46217,8 @@ async function runSequenceJob(job, args) {
         model: args.model,
         firstFrameUrl: shotFirstFrame,
         lastFrameUrl: shot.lastFrameUrl,
+        pin: args.pin ?? "start",
+        voiceId: args.voiceId,
         referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       let result = await renderShot();
@@ -45576,6 +46236,8 @@ async function runSequenceJob(job, args) {
           resolution: args.resolution,
           model: args.model,
           firstFrameUrl: shotFirstFrame,
+          pin: "start",
+          voiceId: args.voiceId,
           referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
         }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
         if (result.status === "completed") {
@@ -45585,7 +46247,7 @@ async function runSequenceJob(job, args) {
         }
       }
       const shotNumber = carried.length + i + 1;
-      const entry = {
+      const entry2 = {
         index: shotNumber,
         title: shot.title ?? `Shot ${shotNumber}`,
         status: result.status ?? "failed",
@@ -45596,11 +46258,12 @@ async function runSequenceJob(job, args) {
         framePath: void 0,
         lastFrameUrl: shot.lastFrameUrl,
         lastFramePath: localImagePath(shot.lastFrameUrl),
+        closingFrameAgreement: void 0,
         prompt: shot.prompt,
         durationSeconds: shot.durationSeconds
       };
       job.spentUsd += result.costUsd ?? 0;
-      job.shots.push(entry);
+      job.shots.push(entry2);
       if (result.status !== "completed" || !result.videoUrl) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
@@ -45609,12 +46272,12 @@ async function runSequenceJob(job, args) {
         return;
       }
       const clipPath = await resolveToLocalFile(result.videoUrl);
-      entry.localPath = clipPath;
+      entry2.localPath = clipPath;
       const pinnedClose = localImagePath(shot.lastFrameUrl);
       if (pinnedClose) {
         const agreement = await closingFrameAgreement({ clip: clipPath, frame: pinnedClose });
         if (agreement !== void 0) {
-          entry.closingFrameAgreement = agreement;
+          entry2.closingFrameAgreement = agreement;
           if (agreement < CLOSING_FRAME_MATCH_THRESHOLD) {
             degradations.push(
               `Shot ${shotNumber} was given a closing frame and ended somewhere else (match ${agreement.toFixed(2)} of 1.00), so the next shot opens on the boarded frame while this one closes elsewhere: that seam is a jump, not a chained join.`
@@ -45631,7 +46294,7 @@ async function runSequenceJob(job, args) {
         return;
       }
       previousFrame = frame.path;
-      entry.framePath = frame.path;
+      entry2.framePath = frame.path;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
       void persistJob(job);
@@ -45648,7 +46311,8 @@ async function runSequenceJob(job, args) {
         fadeDuration: args.fadeDuration,
         audioTrackFile: args.audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
-        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio
       });
       job.filmPath = assembled.path;
       job.fileUrl = `file://${assembled.path}`;
@@ -45683,7 +46347,7 @@ server.registerTool(
           "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
         ),
         lastFrameUrl: external_exports.string().optional().describe(
-          "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
+          'Pinned closing frame for this shot. Used only when pin is "both". The default pin is the start frame, because an end pin makes the model hold.'
         ),
         locationId: external_exports.string().optional()
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
@@ -45702,7 +46366,31 @@ server.registerTool(
         shotSteps: external_exports.array(external_exports.object({
           shot: external_exports.number().int().min(1),
           steps: external_exports.array(external_exports.string())
-        })).optional()
+        })).optional(),
+        voiceId: external_exports.string().optional(),
+        spokenLines: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          line: external_exports.string()
+        })).optional(),
+        humanVisionSignOff: external_exports.boolean().optional(),
+        hasPortrait: external_exports.boolean().optional(),
+        scaleMarks: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          bodyH: external_exports.number(),
+          tolPct: external_exports.number(),
+          measuredBodyH: external_exports.number().optional()
+        })).optional(),
+        bodyClearance: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          solidId: external_exports.string(),
+          clear: external_exports.boolean()
+        })).optional(),
+        tier1: external_exports.object({
+          freezeRun: external_exports.number(),
+          speechCoverage: external_exports.number(),
+          joinSsim: external_exports.number(),
+          motionNatural: external_exports.number()
+        }).optional()
       }).optional().describe(
         "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed film keeps the same rooms and props. Does not by itself spend money or call vision."
       ),
@@ -45724,7 +46412,14 @@ server.registerTool(
       audioTrackUrl: external_exports.string().optional().describe(
         "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
       ),
-      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25),
+      audioTrackVolume: external_exports.number().min(0).max(4).default(0.25),
+      clipAudio: external_exports.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes clip audio. mute drops it. replace uses only the bed."
+      ),
+      pin: external_exports.enum(["start", "both"]).default("start").describe(
+        "start pins each shot's first frame only. both also sends lastFrameUrl."
+      ),
+      voiceId: external_exports.string().optional().describe("Built-in voice id, such as rex."),
       audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
@@ -45802,7 +46497,25 @@ server.registerTool(
       const next = args.shots[i + 1];
       return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
     }, 0);
-    const continuityPlan = continuityPlanFromRenderArgs(args);
+    const ledgerForGate = args.ledger ?? (resumeJob?.ledger ? {
+      locations: resumeJob.ledger.locations,
+      props: resumeJob.ledger.props,
+      wardrobeEvents: resumeJob.ledger.wardrobeEvents,
+      propEvents: resumeJob.ledger.propEvents,
+      shotSteps: resumeJob.ledger.shotSteps,
+      voiceId: resumeJob.ledger.voiceId,
+      spokenLines: resumeJob.ledger.spokenLines,
+      humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
+      hasPortrait: resumeJob.ledger.hasPortrait,
+      scaleMarks: resumeJob.ledger.scaleMarks,
+      bodyClearance: resumeJob.ledger.bodyClearance,
+      tier1: resumeJob.ledger.tier1
+    } : void 0);
+    const continuityPlan = continuityPlanFromRenderArgs({
+      shots: args.shots,
+      characters: args.characters,
+      ledger: ledgerForGate ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId } : void 0
+    });
     const contractGate = gateRenderSequence({
       plan: continuityPlan,
       contracts: args.contracts,
@@ -45816,7 +46529,8 @@ server.registerTool(
             action: "refused",
             error: RENDER_BLOCKED_BY_CONTRACT,
             message: contractGate.message,
-            violations: contractGate.violations
+            violations: contractGate.violations,
+            contractValidation: contractGate
           }, null, 2)
         }]
       };
@@ -45853,11 +46567,13 @@ server.registerTool(
             },
             ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
             next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes.",
-            ...contractGate.violations.length > 0 ? { contractValidation: contractGate } : {}
+            contractValidation: contractGate
           }, null, 2)
         }]
       };
     }
+    const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
+    if (sessionRefusal) return sessionRefusal;
     const job = {
       id: sequenceJobId(),
       startedAt: Date.now(),
@@ -45878,6 +46594,9 @@ server.registerTool(
         audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio,
+        pin: args.pin,
+        voiceId: args.voiceId,
         assemble: args.assemble
       },
       ...resumeJob ? {
@@ -45890,9 +46609,17 @@ server.registerTool(
         ledger: args.ledger ? {
           locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
           props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
-          wardrobeEvents: args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents ?? [],
-          propEvents: args.ledger.propEvents ?? resumeJob.ledger?.propEvents ?? [],
-          shots: args.ledger.shots ?? resumeJob.ledger?.shots
+          wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
+          propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
+          shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+          shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
+          voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+          spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
+          humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
+          hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
+          scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
+          bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
+          tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
         } : resumeJob.ledger
       } : {
         startFramePath: resumeFramePath ?? args.firstFrameUrl,
@@ -45900,9 +46627,17 @@ server.registerTool(
           ledger: {
             locations: args.ledger.locations ?? [],
             props: args.ledger.props ?? [],
-            wardrobeEvents: args.ledger.wardrobeEvents ?? [],
-            propEvents: args.ledger.propEvents ?? [],
-            shots: args.ledger.shots
+            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+            propEvents: eventsWithShot(args.ledger.propEvents),
+            shots: args.ledger.shots,
+            shotSteps: args.ledger.shotSteps,
+            voiceId: args.voiceId ?? args.ledger.voiceId,
+            spokenLines: args.ledger.spokenLines,
+            humanVisionSignOff: args.ledger.humanVisionSignOff,
+            hasPortrait: args.ledger.hasPortrait,
+            scaleMarks: args.ledger.scaleMarks,
+            bodyClearance: args.ledger.bodyClearance,
+            tier1: args.ledger.tier1
           }
         } : {}
       }
@@ -45923,6 +46658,9 @@ server.registerTool(
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
       audioTrackVolume: args.audioTrackVolume,
       audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      clipAudio: args.clipAudio,
+      pin: args.pin,
+      voiceId: args.voiceId ?? ledgerForGate?.voiceId,
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : void 0,
       resumeFramePath
@@ -46026,6 +46764,55 @@ server.registerTool(
         wardrobeChanged: Boolean(shot.wardrobeChanged) || wardrobeEvents.some((event) => event.shot === index + 1)
       };
     });
+    const referenceImageUrls = urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0;
+    const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
+    const contractValidation = runPreVideoGate({
+      plan: {
+        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2)),
+        locations: args.locations,
+        props: args.props,
+        wardrobeEvents,
+        propEvents,
+        shotLocations,
+        shotCount: args.shots.length,
+        hasReferencePicture: Boolean(baseImageUrl) || hasPortrait,
+        hasPortrait,
+        shotPrompts: boardedShots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? shot.action ?? "" })).filter((entry2) => entry2.prompt.trim().length > 0)
+      }
+    });
+    const framePreview = planBoardFrames({
+      shots: boardedShots,
+      aspectRatio: args.aspectRatio,
+      look: args.look,
+      cast: args.cast,
+      baseImageUrl,
+      referenceImageUrls
+    });
+    if (framePreview.some((frame) => frame.wardrobeUnchecked)) {
+      contractValidation.violations.push({
+        code: "wardrobe-unchecked",
+        shot: framePreview.find((frame) => frame.wardrobeUnchecked)?.shot ?? 1,
+        message: "This board names a cast and has neither a portrait nor a base picture, so wardrobe is unchecked."
+      });
+      contractValidation.ok = false;
+      contractValidation.blocked = true;
+      contractValidation.status = "fail";
+      contractValidation.tier0 = "fail";
+      contractValidation.message = RENDER_BLOCKED_BY_CONTRACT;
+    }
+    const decision = decideSpend(args.confirm, contractValidation);
+    if (decision === "refused") {
+      return refusal({
+        action: "refused",
+        willSpend: false,
+        contractValidation,
+        message: contractValidation.message ?? RENDER_BLOCKED_BY_CONTRACT
+      });
+    }
+    if (decision === "spend") {
+      const sessionRefusal = await refuseIfSessionWillNotLast(6e4);
+      if (sessionRefusal) return sessionRefusal;
+    }
     const board = await boardFilm(
       {
         shots: boardedShots,
@@ -46033,30 +46820,19 @@ server.registerTool(
         look: args.look,
         cast: args.cast,
         maxCostUsd: args.maxCostUsd,
-        confirm: args.confirm
+        confirm: decision === "spend"
       },
       {
         outputDir: OUTPUT_DIR,
         // A base image and a reference set compete for the same body, and the
         // base is worth more: it holds the room. Keep the portraits that are
         // not the base itself.
-        referenceImageUrls: urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0,
+        referenceImageUrls,
         baseImageUrl,
         // Injected so tests can board a whole film without reaching the network.
         generateStill: async (job, opts) => generateGrokStill(job, opts)
       }
     );
-    const contractValidation = runPreVideoGate({
-      plan: {
-        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry)),
-        locations: args.locations,
-        props: args.props,
-        wardrobeEvents,
-        propEvents,
-        shotLocations,
-        shotCount: args.shots.length
-      }
-    });
     const payload = {
       ...board,
       contractValidation,
@@ -46086,6 +46862,7 @@ server.registerTool(
       ),
       durationSeconds: external_exports.number().min(1).max(15).optional(),
       confirm: external_exports.boolean().default(false),
+      overrideValidation: external_exports.boolean().default(false),
       timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
     })
   },
@@ -46175,6 +46952,24 @@ server.registerTool(
         }]
       };
     }
+    const repairGate = gateRenderSequence({
+      plan: original.ledger ? continuityPlanFromRenderArgs({
+        shots: original.shots.map((shot) => ({ prompt: shot.prompt })),
+        characters: original.settings?.characters,
+        ledger: original.ledger
+      }) : void 0,
+      overrideValidation: args.overrideValidation
+    });
+    if (decideSpend(true, repairGate) !== "spend") {
+      return refusal({
+        action: "refused",
+        willRender: false,
+        contractValidation: repairGate,
+        message: repairGate.message ?? RENDER_UNCHECKED
+      });
+    }
+    const repairSession = await refuseIfSessionWillNotLast(duration3 * 1e3);
+    if (repairSession) return repairSession;
     const settings = original.settings;
     const job = {
       id: sequenceJobId(),
@@ -46302,5 +47097,7 @@ server.registerTool(
   }
 );
 export {
-  resolutionFromLabel
+  loadJobsFromDisk,
+  resolutionFromLabel,
+  server
 };

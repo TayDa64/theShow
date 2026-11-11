@@ -243,7 +243,7 @@ describe('body size budgeting for a bookend', () => {
     expect(videoSource).toContain('export const INLINE_IMAGE_BUDGET_BYTES = 220 * 1024;');
     const singleCall = videoSource.slice(
       videoSource.indexOf('} else if (job.firstFrameUrl) {'),
-      videoSource.indexOf('} else if (job.lastFrameUrl) {'),
+      videoSource.indexOf('} else if (sendLastFrame && job.lastFrameUrl) {'),
     );
     // A lone frame is inlined with no tighter budget argument at all.
     expect(singleCall).toContain('toApiImageRef(job.firstFrameUrl)');

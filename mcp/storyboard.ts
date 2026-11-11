@@ -71,6 +71,11 @@ export type BoardFrame = {
   role: BoardFrameRole;
   /** 1-based shot this frame primarily belongs to. */
   shot: number;
+  /**
+   * True when this take names a cast and neither a portrait nor a location
+   * picture is attached. Callers must report it; it is not a silent pass.
+   */
+  wardrobeUnchecked?: boolean;
 };
 
 export type BoardedShot = {
@@ -167,6 +172,8 @@ export function planBoardFrames(opts: {
    * the previous one.
    */
   baseImageUrl?: string;
+  /** Portraits. A portrait without a location base still locks clothing. */
+  referenceImageUrls?: string[];
   /**
    * What the frames will actually be edited from, when that is not the same file
    * the caller passed.
@@ -192,7 +199,10 @@ export function planBoardFrames(opts: {
   // attached the cast is a description OF the picture, so the instruction is to
   // preserve it, not to re-imagine it. A shot prompt can still change something,
   // but it has to say so explicitly — see WARDROBE_CHANGE below.
-  const hasPicture = Boolean(opts.baseImageUrl);
+  const hasPortrait = Boolean(opts.referenceImageUrls?.some((url) => url.trim()));
+  const hasBase = Boolean(opts.baseImageUrl);
+  const hasPicture = hasPortrait || hasBase;
+  const wardrobeUnchecked = !hasPicture && Boolean(opts.cast?.trim());
   // When a picture is attached, the cast line is stripped of anything the
   // picture can disagree with — see mcp/cast.ts. A cast line is written once, by
   // hand, from memory; the picture is the thing that is actually true.
@@ -283,7 +293,14 @@ export function planBoardFrames(opts: {
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem, role: spec.role, shot: spec.shot };
+    return {
+      index,
+      prompt: full,
+      stem,
+      role: spec.role,
+      shot: spec.shot,
+      ...(wardrobeUnchecked ? { wardrobeUnchecked: true } : {}),
+    };
   });
 }
 
@@ -319,7 +336,12 @@ export async function findExistingStill(dir: string, stem: string): Promise<stri
 export type BoardFilmDeps = {
   /** Injected so a test never reaches the network. */
   generateStill: (
-    job: { prompt: string; aspectRatio?: string; referenceImageUrls?: string[] },
+    job: {
+      prompt: string;
+      aspectRatio?: string;
+      referenceImageUrls?: string[];
+      baseImageUrl?: string;
+    },
     opts: { outputDir: string; filename?: string },
   ) => Promise<GrokStillResult>;
   outputDir: string;
@@ -396,6 +418,7 @@ export async function boardFilm(
     look: input.look,
     cast: input.cast,
     baseImageUrl: deps.baseImageUrl,
+    referenceImageUrls: deps.referenceImageUrls,
     baseFingerprint: heroStem,
   });
 

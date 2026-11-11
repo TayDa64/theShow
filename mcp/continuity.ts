@@ -18,11 +18,19 @@
  * the prompt describes, and a removed garment becomes a prop at its destination.
  */
 
+import { z } from "zod";
+
 export const IN_REFERENCE = ["visible", "partial", "hidden"] as const;
 export type InReference = (typeof IN_REFERENCE)[number];
 
 export const LAYER_TYPES = ["clothing", "footwear"] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
+
+export const CLOSURE_TYPES = ["zip", "buttons", "open", "laced", "slip-on", "none"] as const;
+export type ClosureType = (typeof CLOSURE_TYPES)[number];
+
+export const CONTACT_KINDS = ["hanging", "resting", "held"] as const;
+export type ContactKind = (typeof CONTACT_KINDS)[number];
 
 export const WARDROBE_ACTIONS = ["remove", "putOn", "adjust"] as const;
 export type WardrobeAction = (typeof WARDROBE_ACTIONS)[number];
@@ -41,6 +49,12 @@ export type WardrobeLayer = {
    * even while a visible coat is still the outer garment.
    */
   type?: LayerType;
+  /** Short name used when a prompt mentions the garment. */
+  short?: string;
+  /** How the garment closes. A zip must not be described as buttons. */
+  closure?: ClosureType;
+  /** Words that must not appear next to this garment. */
+  mustNotHave?: string[];
 };
 
 export type WardrobeStartState = {
@@ -85,6 +99,19 @@ export type PropRecord = {
   placement: string;
   /** A character name, or another prop's id (a hanger holding a coat). */
   holder?: string;
+  /**
+   * Fixed pieces keep their count, size and place. A remove or a move is a
+   * set-geometry failure. Unset means the piece may change when an event names it.
+   */
+  fixed?: boolean;
+  /** How many of this piece belong in the room. Defaults to one. */
+  count?: number;
+  /** x, y, w, h on the wide plate. Pixel checks still need a person or a vision pass. */
+  bbox?: readonly [number, number, number, number];
+  /** A solid piece must not pass through a body or another solid. */
+  solid?: boolean;
+  /** How it touches its holder. A hanger slot is exclusive. */
+  contact?: ContactKind;
 };
 
 export type PropEvent = {
@@ -149,6 +176,35 @@ export type ContinuityPlan = {
   hasReferencePicture?: boolean;
   /** Optional atomic steps for a shot; when omitted, events expand into physical actions. */
   shotSteps?: Array<{ shot: number; steps: string[] }>;
+  /** Built-in voice id sent with the clip, such as rex. */
+  voiceId?: string;
+  /** Exact words that must appear in the shot prompt. */
+  spokenLines?: Array<{ shot: number; line: string }>;
+  /** Prompts that will be sent, checked against spoken lines and closure words. */
+  shotPrompts?: Array<{ shot: number; prompt: string }>;
+  /** Body height in pixels at a mark. Missing measurements are vision-unchecked. */
+  scaleMarks?: Array<{ shot: number; bodyH: number; tolPct: number; measuredBodyH?: number }>;
+  /**
+   * Whether the body is clear of a solid piece before that piece moves.
+   * clear: false is a contact failure. Omitting it leaves the pixel check to vision.
+   */
+  bodyClearance?: Array<{ shot: number; solidId: string; clear: boolean }>;
+  /** A person has signed the checks the vision stub cannot run. */
+  humanVisionSignOff?: boolean;
+  /** A portrait is attached, even when there is no location base. */
+  hasPortrait?: boolean;
+  /**
+   * Tier 1 measurements, each from 0 to 1. Scored when present.
+   * Absent means the take has not been measured yet, not that it passed.
+   */
+  tier1?: {
+    freezeRun: number;
+    speechCoverage: number;
+    joinSsim: number;
+    motionNatural: number;
+  };
+  /** Tier 2 notes. They never fail a take. */
+  styleNotes?: string[];
 };
 
 function sameWorn(a: string[], b: string[]) {
@@ -632,6 +688,17 @@ export type ContinuityAuditor = {
   auditShot(input: ContinuityAuditInput): Promise<ContinuityAuditFinding[]>;
 };
 
+/** Shape a real or recorded auditor must return. The default auditor never produces one. */
+export const ContinuityAuditFindingSchema = z.object({
+  kind: z.enum(["vanished", "appeared", "moved"]),
+  propId: z.string().min(1),
+  locationId: z.string().min(1),
+  name: z.string().min(1),
+  frameNumber: z.number().int().nonnegative(),
+  note: z.string(),
+  thumbnailPath: z.string().optional(),
+});
+
 export const CONTINUITY_AUDIT_UNIMPLEMENTED =
   "Post-render continuity audit is not implemented. It would sample frames from a " +
   "finished shot and compare them to the prop ledger with a vision call, flagging " +
@@ -664,12 +731,21 @@ export function parseWardrobe(raw: unknown): CharacterWardrobe | undefined {
     const type = LAYER_TYPES.includes(layer.type as LayerType)
       ? (layer.type as LayerType)
       : undefined;
+    const closure = CLOSURE_TYPES.includes(layer.closure as ClosureType)
+      ? (layer.closure as ClosureType)
+      : undefined;
+    const mustNotHave = Array.isArray(layer.mustNotHave)
+      ? layer.mustNotHave.filter((word): word is string => typeof word === "string" && word.trim().length > 0)
+      : undefined;
     layers.push({
       id: layer.id.trim(),
       item: layer.item.trim(),
       order: layer.order,
       inReference,
       ...(type ? { type } : {}),
+      ...(typeof layer.short === "string" && layer.short.trim() ? { short: layer.short.trim() } : {}),
+      ...(closure ? { closure } : {}),
+      ...(mustNotHave && mustNotHave.length > 0 ? { mustNotHave } : {}),
     });
   }
   if (layers.length === 0) return undefined;
