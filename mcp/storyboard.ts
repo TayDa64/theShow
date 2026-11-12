@@ -217,7 +217,7 @@ export function planBoardFrames(opts: {
       "through them unchanged."
     : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
-  const still = " Single held frame, no motion blur, no text, no watermark.";
+  const still = " Single held frame, sharp focus, a clean picture.";
 
   type FrameSpec = {
     role: BoardFrameRole;
@@ -284,10 +284,9 @@ export function planBoardFrames(opts: {
     const personRule = !hasPicture
       ? ""
       : asksForChange
-        ? " This shot asks for the clothing change it names; apply that change and nothing else " +
-          "about the person."
+        ? " This shot asks for the clothing change it names; apply that change and keep the rest of the person."
         : " Keep this person's face, head, beard hair and clothing exactly as the reference " +
-          "picture shows them, and never restyle them.";
+          "picture shows them.";
 
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
@@ -366,17 +365,17 @@ export type BoardFilmDeps = {
  * `maxCostUsd` refuses rather than spends, and the returned `shots` are ready to
  * paste straight into render_sequence with both frames filled in.
  */
-function heroPrompt(input: { cast?: string; look?: string; scene?: string }): string {
+export function heroPrompt(input: { cast?: string; look?: string; scene?: string }): string {
   const named = (input.scene ?? input.look)?.trim().replace(/\.$/, "");
   const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
   const cast = input.cast?.trim() ? castForPicture(input.cast) : "";
   return (
     `Place the person from the first photo into ${where}. ` +
     cast +
-    `The first photo supplies the person and nothing else; its own background is discarded. ` +
-    `The second photo is the room and it does not change: keep its walls, its furniture, its ` +
+    `The first photo supplies only the person. Its background stays out of the picture. ` +
+    `The second photo is the room and stays as it is: keep its walls, its furniture, its ` +
     `windows and the view through them exactly as they are, and keep its own light. ` +
-    `Photoreal, single held frame, no motion blur, no text, no watermark.`
+    `Photoreal, single held frame, sharp focus, a clean picture.`
   );
 }
 

@@ -487,7 +487,8 @@ describe('the picture outranks the prompt', () => {
       expect(frame.prompt).toContain('taken from the reference picture');
       expect(frame.prompt).toContain('ground truth');
       expect(frame.prompt).toContain("exactly as the reference picture shows them");
-      expect(frame.prompt).toContain('never restyle them');
+      expect(frame.prompt).not.toMatch(/\bnever\b/i);
+      expect(frame.prompt).not.toMatch(/\bno\b/i);
     }
   });
 

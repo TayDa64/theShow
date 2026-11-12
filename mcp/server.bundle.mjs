@@ -3867,7 +3867,7 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse3(serialize(uri, options), options);
+        parse4(serialize(uri, options), options);
       }
       return uri;
     }
@@ -3910,8 +3910,8 @@ var require_fast_uri = __commonJS({
     function resolveComponent(base, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse3(serialize(base, options), options);
-        relative = parse3(serialize(relative, options), options);
+        base = parse4(serialize(base, options), options);
+        relative = parse4(serialize(relative, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative.scheme) {
@@ -4229,7 +4229,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse3(uri, opts) {
+    function parse4(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -4266,7 +4266,7 @@ var require_fast_uri = __commonJS({
       resolveComponent,
       equal,
       serialize,
-      parse: parse3
+      parse: parse4
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -18437,18 +18437,18 @@ var validateAsync = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode = (_Err) => {
-  const parse3 = _parse(_Err);
+  const parse4 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse3(schema, value, ctx, finalizeParams(fn, _params));
+    return parse4(schema, value, ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
 var encode = /* @__PURE__ */ _encode($ZodRealError);
 var _decode = (_Err) => {
-  const parse3 = _parse(_Err);
+  const parse4 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse3(schema, value, _ctx, finalizeParams(fn, _params));
+    return parse4(schema, value, _ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
@@ -19943,7 +19943,7 @@ function capSize(inst, size) {
   if (!caps.length)
     return;
   const cap = Math.min(...caps.map((c) => c[0]));
-  const parse3 = inst._zod.parse;
+  const parse4 = inst._zod.parse;
   inst._zod.parse = (payload, ctx) => {
     const n = size(payload.value);
     if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
@@ -19957,7 +19957,7 @@ function capSize(inst, size) {
         }
       }
     }
-    return parse3(payload, ctx);
+    return parse4(payload, ctx);
   };
 }
 var arraySize = (input2) => Array.isArray(input2) ? input2.length : -1;
@@ -42346,6 +42346,172 @@ var StdioServerTransport = class {
   }
 };
 
+// mcp/admission.ts
+import { rm } from "node:fs/promises";
+
+// mcp/promptLint.ts
+var FORBIDDEN = [
+  /floor lamp/i,
+  /table lamp/i,
+  /amber lamp/i,
+  /wall lamp/i,
+  /\blamps?\b/i,
+  /door handle/i,
+  /\bhandle\b/i,
+  /\bknob\b/i,
+  /\blever\b/i,
+  /\bpull\b/i,
+  /door seals/i,
+  /\bgasket\b/i,
+  /weatherstripping/i,
+  /\bhinged\b/i,
+  /door's swing/i,
+  /swings the door/i,
+  /second doorway/i,
+  /extra door/i,
+  /\bno tie\b/i,
+  /\btie\b/i,
+  /\bsubtitles?\b/i,
+  /\bcaptions?\b/i,
+  /\bwatermark\b/i,
+  /\blogos?\b/i,
+  /\bmusic\b/i,
+  /\bscore\b/i,
+  /easy natural pace/i,
+  /never sped/i
+];
+var NEGATION = /\b(never|don't|do not|does not|didn't|avoid|nothing|without|n't)\b|\bno\b/i;
+function negativePhrases(negative) {
+  if (!negative?.trim()) return [];
+  const seen = /* @__PURE__ */ new Set();
+  const phrases = [];
+  for (const part of negative.split(/[\n,]+/)) {
+    const phrase = part.trim();
+    if (phrase.length < 3) continue;
+    const key = phrase.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    phrases.push(phrase);
+  }
+  return phrases;
+}
+function lintSentPrompt(prompt, negative) {
+  const hits = [];
+  for (const pattern of FORBIDDEN) {
+    const found = pattern.exec(prompt);
+    if (found) hits.push({ kind: "forbidden", match: found[0] });
+  }
+  const negation = NEGATION.exec(prompt);
+  if (negation) hits.push({ kind: "negation", match: negation[0] });
+  const haystack = prompt.toLowerCase();
+  for (const phrase of negativePhrases(negative)) {
+    if (haystack.includes(phrase.toLowerCase())) {
+      hits.push({ kind: "negative", match: phrase });
+    }
+  }
+  return hits;
+}
+function lintFailure(prompt, negative) {
+  const hits = lintSentPrompt(prompt, negative);
+  if (hits.length === 0) return { ok: true };
+  const listed = hits.map((hit) => `${hit.kind} "${hit.match}"`).join(", ");
+  return {
+    ok: false,
+    hits,
+    reason: `Prompt rejected before any paid call: ${listed}. Say what is in the frame. The negative list stays off the request.`
+  };
+}
+
+// mcp/admission.ts
+var TALL_ADULT = {
+  minLegToStature: 0.42,
+  maxShoulderToStature: 0.3,
+  minTorsoToLeg: 0.75,
+  maxTorsoToLeg: 1.35
+};
+var placedObject = external_exports.object({
+  id: external_exports.string(),
+  room: external_exports.string(),
+  label: external_exports.string().optional()
+});
+var TakeAdmissionSchema = external_exports.object({
+  priorObjects: external_exports.array(placedObject).optional(),
+  objects: external_exports.array(placedObject).optional(),
+  torsoPx: external_exports.number().optional(),
+  legPx: external_exports.number().optional(),
+  shoulderPx: external_exports.number().optional(),
+  staturePx: external_exports.number().optional(),
+  vocalEndSeconds: external_exports.number().optional(),
+  timedEndSeconds: external_exports.number().optional()
+});
+function roomKey(room) {
+  return room.trim().toLowerCase();
+}
+function reviewTake(report, negative) {
+  if (!report && !negative?.trim()) return { ok: true };
+  const failures = [];
+  const current = report?.objects ?? [];
+  const prior = report?.priorObjects;
+  if (prior) {
+    const priorById = new Map(prior.map((object3) => [object3.id, object3]));
+    for (const object3 of current) {
+      const before = priorById.get(object3.id);
+      if (!before) {
+        failures.push(
+          `Object "${object3.id}" is not in the prior frame, so this still added it.`
+        );
+        continue;
+      }
+      if (roomKey(before.room) !== roomKey(object3.room)) {
+        failures.push(
+          `Object "${object3.id}" changed rooms, from "${before.room}" to "${object3.room}".`
+        );
+      }
+    }
+  }
+  for (const phrase of negativePhrases(negative)) {
+    const needle = phrase.toLowerCase();
+    for (const object3 of current) {
+      const label = `${object3.id} ${object3.label ?? ""}`.toLowerCase();
+      if (label.includes(needle)) {
+        failures.push(
+          `Object "${object3.id}" matches a known hallucination ("${phrase}").`
+        );
+      }
+    }
+  }
+  const { torsoPx, legPx, shoulderPx, staturePx } = report ?? {};
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx < TALL_ADULT.minTorsoToLeg) {
+    failures.push("Squashed torso: torso length is short for a tall adult.");
+  }
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx > TALL_ADULT.maxTorsoToLeg) {
+    failures.push("Shortened legs: the legs are short relative to the torso.");
+  }
+  if (legPx !== void 0 && staturePx !== void 0 && staturePx > 0 && legPx / staturePx < TALL_ADULT.minLegToStature) {
+    failures.push("Shortened legs: leg length is short for a tall adult's stature.");
+  }
+  if (shoulderPx !== void 0 && staturePx !== void 0 && staturePx > 0 && shoulderPx / staturePx > TALL_ADULT.maxShoulderToStature) {
+    failures.push("Widened body: the shoulders are wide for a tall adult's stature.");
+  }
+  if (report?.vocalEndSeconds !== void 0 && report.timedEndSeconds !== void 0 && report.vocalEndSeconds > report.timedEndSeconds) {
+    failures.push(
+      `Vocal ends at ${report.vocalEndSeconds}s, past the pre-timed end of ${report.timedEndSeconds}s.`
+    );
+  }
+  if (failures.length === 0) return { ok: true };
+  return { ok: false, failures };
+}
+async function discardTake(path) {
+  if (!path) return;
+  await rm(path, { force: true });
+}
+async function acceptRenderedTake(path, report, negative) {
+  const review = reviewTake(report, negative);
+  if (review.ok) return { ok: true, path };
+  await discardTake(path);
+  return review;
+}
+
 // mcp/beats.ts
 function resolveBeatShotType(beat, index) {
   const named = beat.framing?.trim() || beat.shotType?.trim();
@@ -42366,11 +42532,421 @@ function resolveBeatDuration(beat, evenSplitSeconds) {
   return evenSplitSeconds;
 }
 
+// mcp/cutout.ts
+import { execFile as execFile2 } from "node:child_process";
+import { readFile as readFile2 } from "node:fs/promises";
+import { dirname, join as join2, parse as parse3 } from "node:path";
+import { promisify as promisify2 } from "node:util";
+
+// mcp/media.ts
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+var exec = promisify(execFile);
+var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join(homedir(), ".theshow", "media");
+var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join(homedir(), ".theshow", "jobs");
+var toolCache;
+async function binaryVersion(bin) {
+  try {
+    const { stdout, stderr } = await exec(bin, ["-hide_banner", "-version"]);
+    return `${stdout}${stderr}`;
+  } catch {
+    return void 0;
+  }
+}
+async function hasFilter(ffmpeg, filter) {
+  try {
+    const { stdout } = await exec(ffmpeg, ["-hide_banner", "-filters"]);
+    return stdout.split("\n").some((line) => line.includes(` ${filter} `));
+  } catch {
+    return false;
+  }
+}
+function resolveTools() {
+  toolCache ??= (async () => {
+    const candidates = [];
+    if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
+    candidates.push("/usr/bin/ffmpeg", "ffmpeg");
+    try {
+      const installer = await import("@ffmpeg-installer/ffmpeg");
+      const p = (installer.default ?? installer).path;
+      if (p) candidates.push(p);
+    } catch {
+    }
+    for (const candidate of candidates) {
+      const version2 = await binaryVersion(candidate);
+      if (!version2) continue;
+      const ffprobe = process.env.FFPROBE_PATH || (candidate === "ffmpeg" ? "ffprobe" : candidate.replace(/ffmpeg$/, "ffprobe"));
+      return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, "xfade") };
+    }
+    throw new Error("No working FFmpeg binary found. Set FFMPEG_PATH.");
+  })();
+  return toolCache;
+}
+async function ensureOutputDir() {
+  await mkdir(OUTPUT_DIR, { recursive: true });
+  return OUTPUT_DIR;
+}
+async function probeDuration(file2) {
+  const { ffprobe } = await resolveTools();
+  try {
+    const { stdout } = await exec(ffprobe, [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=nw=1:nk=1",
+      file2
+    ]);
+    const seconds = Number.parseFloat(stdout.trim());
+    return Number.isFinite(seconds) ? seconds : void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function probeVideoGeometry(file2) {
+  const { ffprobe } = await resolveTools();
+  try {
+    const { stdout } = await exec(ffprobe, [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "default=nw=1",
+      file2
+    ]);
+    const width = Number.parseInt(stdout.match(/width=(\d+)/)?.[1] ?? "", 10);
+    const height = Number.parseInt(stdout.match(/height=(\d+)/)?.[1] ?? "", 10);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return void 0;
+    return { width, height };
+  } catch {
+    return void 0;
+  }
+}
+async function hasAudioStream(file2) {
+  const { ffprobe } = await resolveTools();
+  try {
+    const { stdout } = await exec(ffprobe, [
+      "-v",
+      "error",
+      "-select_streams",
+      "a:0",
+      "-show_entries",
+      "stream=codec_type",
+      "-of",
+      "default=nw=1",
+      file2
+    ]);
+    return stdout.includes("codec_type=audio");
+  } catch {
+    return false;
+  }
+}
+async function extractLastFrame(input2) {
+  const { ffmpeg } = await resolveTools();
+  const dir = await ensureOutputDir();
+  const digest = createHash("sha1").update(`${input2.file}:${Date.now()}`).digest("hex").slice(0, 12);
+  const outPath = join(dir, `frame-${digest}.png`);
+  const seek = input2.seekBackSeconds ?? 0.15;
+  const attempts = [
+    // Preferred: seek near the end, decode one frame.
+    ["-y", "-hide_banner", "-loglevel", "error", "-sseof", `-${seek}`, "-i", input2.file, "-vframes", "1", "-q:v", "2", outPath],
+    // Fallback: decode from the start and keep the genuinely last frame.
+    ["-y", "-hide_banner", "-loglevel", "error", "-i", input2.file, "-update", "1", "-vf", "reverse", "-vframes", "1", outPath]
+  ];
+  let lastError;
+  for (const args of attempts) {
+    try {
+      await exec(ffmpeg, args, { maxBuffer: 16 * 1024 * 1024 });
+      const info = await stat(outPath);
+      if (info.size > 0) {
+        return { path: outPath, bytes: info.size, ffmpeg };
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(
+    `Could not extract a frame from ${input2.file}: ${lastError instanceof Error ? lastError.message : "unknown error"}`
+  );
+}
+async function closingFrameAgreement(input2) {
+  const { ffmpeg } = await resolveTools();
+  const thumb = async (args) => {
+    const { stdout } = await exec(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
+    const buf = stdout;
+    return buf.subarray(0, 32 * 32);
+  };
+  try {
+    const a = await thumb([
+      "-v",
+      "error",
+      "-sseof",
+      "-0.12",
+      "-i",
+      input2.clip,
+      "-update",
+      "1",
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=32:32,format=gray",
+      "-f",
+      "rawvideo",
+      "-"
+    ]);
+    const b = await thumb(["-v", "error", "-i", input2.frame, "-vf", "scale=32:32,format=gray", "-f", "rawvideo", "-"]);
+    if (a.length < 1024 || b.length < 1024) return void 0;
+    let ma = 0, mb = 0;
+    for (let i = 0; i < 1024; i++) {
+      ma += a[i];
+      mb += b[i];
+    }
+    ma /= 1024;
+    mb /= 1024;
+    let num = 0, da = 0, db = 0;
+    for (let i = 0; i < 1024; i++) {
+      const x = a[i] - ma, y = b[i] - mb;
+      num += x * y;
+      da += x * x;
+      db += y * y;
+    }
+    if (da === 0 || db === 0) return void 0;
+    return Math.round(num / Math.sqrt(da * db) * 1e3) / 1e3;
+  } catch {
+    return void 0;
+  }
+}
+var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
+function assertBedCoversFilm(bedSeconds, filmSeconds) {
+  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
+    throw new Error(
+      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
+    );
+  }
+}
+function planClipAudioFilters(input2) {
+  const mode = input2.clipAudio ?? "keep";
+  return input2.durations.map((duration3, index) => {
+    const useClip = mode === "keep" && Boolean(input2.clipHasAudio[index]);
+    if (useClip) {
+      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
+    }
+    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration3},asetpts=PTS-STARTPTS[a${index}]`;
+  });
+}
+async function assembleClips(input2) {
+  const { ffmpeg, hasXfade } = await resolveTools();
+  const dir = await ensureOutputDir();
+  const digest = createHash("sha1").update(input2.clips.map((c) => `${c.file}:${c.trimStart ?? ""}:${c.trimEnd ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
+  const outPath = join(dir, `film-${digest}.mp4`);
+  if (input2.clips.length === 0) throw new Error("No clips to assemble.");
+  const clipAudio = input2.clipAudio ?? "keep";
+  const bedGain = input2.audioTrackVolume ?? 0.25;
+  const wantBed = Boolean(input2.audioTrackFile) && bedGain > 0;
+  if (input2.clips.length === 1 && clipAudio === "keep" && !wantBed) {
+    await exec(ffmpeg, [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      input2.clips[0].file,
+      "-c",
+      "copy",
+      outPath
+    ], { maxBuffer: 32 * 1024 * 1024 });
+    return { path: outPath, mode: "single", hasXfade };
+  }
+  const durations = [];
+  for (const clip of input2.clips) {
+    const full = await probeDuration(clip.file);
+    if (full === void 0) throw new Error(`Could not read duration of ${clip.file}`);
+    const start = clip.trimStart ?? 0;
+    const end = clip.trimEnd ?? full;
+    durations.push(Math.max(0.1, end - start));
+  }
+  const wantsFade = input2.fadeDuration > 0;
+  const fade = wantsFade ? Math.min(input2.fadeDuration, Math.min(...durations) / 2) : 0;
+  if (!wantsFade && !hasXfade) {
+    const listPath = join(dir, `concat-${digest}.txt`);
+    const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
+    await writeFile(listPath, `${lines.join("\n")}
+`, "utf8");
+    const copyOut = join(dir, `film-copy-${digest}.mp4`);
+    try {
+      await exec(ffmpeg, [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        listPath,
+        "-c",
+        "copy",
+        copyOut
+      ], { maxBuffer: 32 * 1024 * 1024 });
+      const copied = await probeDuration(copyOut);
+      if (copied !== void 0) {
+        return { path: copyOut, mode: "concat", hasXfade };
+      }
+    } catch {
+    }
+  }
+  const args = ["-y", "-hide_banner", "-loglevel", "error"];
+  for (let i = 0; i < input2.clips.length; i++) {
+    const clip = input2.clips[i];
+    const start = clip.trimStart ?? 0;
+    const end = clip.trimEnd ?? durations[i] + start;
+    args.push("-ss", String(start), "-to", String(end), "-i", clip.file);
+  }
+  const geometry = await probeVideoGeometry(input2.clips[0].file);
+  const width = geometry?.width ?? 1280;
+  const height = geometry?.height ?? 720;
+  const fps = 24;
+  const withAudio = await Promise.all(input2.clips.map((clip) => hasAudioStream(clip.file)));
+  const filters = [];
+  const n = input2.clips.length;
+  for (let i = 0; i < n; i++) {
+    filters.push(
+      `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
+    );
+  }
+  filters.push(...planClipAudioFilters({
+    durations,
+    clipHasAudio: withAudio,
+    clipAudio
+  }));
+  let mode;
+  let totalDuration = durations.reduce((sum, d) => sum + d, 0);
+  if (fade === 0) {
+    const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
+    const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
+    filters.push(`${videoInputs}concat=n=${n}:v=1:a=0[vout]`);
+    filters.push(`${audioInputs}concat=n=${n}:v=0:a=1[aout]`);
+    mode = "concat";
+  } else {
+    let previousV = "v0";
+    let previousA = "a0";
+    let elapsed = durations[0];
+    for (let i = 1; i < n; i++) {
+      const offset = Math.max(0, elapsed - fade);
+      const isLast = i === n - 1;
+      const vLabel = isLast ? "vout" : `vx${i}`;
+      const aLabel = isLast ? "aout" : `ax${i}`;
+      filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
+      filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
+      previousV = vLabel;
+      previousA = aLabel;
+      elapsed = offset + durations[i];
+    }
+    totalDuration = elapsed;
+    mode = "xfade";
+  }
+  let audioMap = "[aout]";
+  if (wantBed && input2.audioTrackFile) {
+    const bedSeconds = await probeDuration(input2.audioTrackFile);
+    assertBedCoversFilm(bedSeconds, totalDuration);
+    const bedIndex = input2.clips.length;
+    const gain = Math.min(Math.max(bedGain, 0), 4);
+    const fadeOut = Math.min(
+      input2.audioTrackFadeOutSeconds ?? 1.5,
+      Math.max(totalDuration / 2, 0.1)
+    );
+    args.push("-i", input2.audioTrackFile);
+    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+    if (clipAudio === "replace") {
+      filters.push(`${bedFilter}[aoutmix]`);
+    } else {
+      filters.push(`${bedFilter}[bed]`);
+      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    }
+    audioMap = "[aoutmix]";
+  }
+  args.push(
+    "-filter_complex",
+    filters.join(";"),
+    "-map",
+    "[vout]",
+    "-map",
+    audioMap,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "20",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-movflags",
+    "+faststart",
+    outPath
+  );
+  await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
+  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration };
+}
+async function pathToDataUrl(file2, mime = "image/png") {
+  const buffer = await readFile(file2);
+  return `data:${mime};base64,${buffer.toString("base64")}`;
+}
+
+// mcp/cutout.ts
+var exec2 = promisify2(execFile2);
+async function featheredSubjectCutout(sourcePath) {
+  const before = await readFile2(sourcePath);
+  const parsed = parse3(sourcePath);
+  const dest = join2(dirname(sourcePath), `${parsed.name}.cutout.png`);
+  if (dest === sourcePath) {
+    return { ok: false, reason: "Cutout path collided with the original portrait." };
+  }
+  try {
+    const { ffmpeg } = await resolveTools();
+    const alpha = "255*exp(-((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2))/(2*(W*0.28)*(W*0.28)))";
+    const filter = `format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alpha}'`;
+    await exec2(ffmpeg, [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      sourcePath,
+      "-vf",
+      filter,
+      dest
+    ]);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Portrait cutout failed."
+    };
+  }
+  const after = await readFile2(sourcePath);
+  if (!after.equals(before)) {
+    return { ok: false, reason: "Portrait cutout wrote the original file." };
+  }
+  return { ok: true, path: dest };
+}
+
 // mcp/grok-auth.ts
 import { randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname2, join as join3 } from "node:path";
 var API_BASE_URL = "https://api.x.ai";
 var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
 var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
@@ -42381,7 +42957,7 @@ function grokSessionRefreshEnabled() {
 }
 var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
 function writeSessionFileAtomic(path, contents) {
-  const tmp = join(dirname(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  const tmp = join3(dirname2(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
   try {
     writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
     chmodSync(tmp, 384);
@@ -42401,7 +42977,7 @@ function grokAuthFilePath() {
   if (process.env.VITEST || process.env.THESHOW_FORBID_HOME_AUTH === "1") {
     return "/nonexistent/theshow-test-auth.json";
   }
-  return join(homedir(), ".grok", "auth.json");
+  return join3(homedir2(), ".grok", "auth.json");
 }
 function readGrokAuthFile() {
   const path = grokAuthFilePath();
@@ -42439,6 +43015,7 @@ function oauthTokenUrl(authKeyName) {
   if (!issuer || !/^https:\/\//i.test(issuer)) return void 0;
   try {
     const url2 = new URL(issuer);
+    if (url2.hostname === "auth.x.ai") return "https://auth.x.ai/oauth2/token";
     if (url2.pathname.includes("/oauth2/")) {
       const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
       return new URL("v1/token", base).toString();
@@ -42766,381 +43343,14 @@ function renderSectionsV2(beat, ctx) {
   return parts.join(" ");
 }
 
-// mcp/media.ts
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { join as join2 } from "node:path";
-import { promisify } from "node:util";
-var exec = promisify(execFile);
-var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join2(homedir2(), ".theshow", "media");
-var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join2(homedir2(), ".theshow", "jobs");
-var toolCache;
-async function binaryVersion(bin) {
-  try {
-    const { stdout, stderr } = await exec(bin, ["-hide_banner", "-version"]);
-    return `${stdout}${stderr}`;
-  } catch {
-    return void 0;
-  }
-}
-async function hasFilter(ffmpeg, filter) {
-  try {
-    const { stdout } = await exec(ffmpeg, ["-hide_banner", "-filters"]);
-    return stdout.split("\n").some((line) => line.includes(` ${filter} `));
-  } catch {
-    return false;
-  }
-}
-function resolveTools() {
-  toolCache ??= (async () => {
-    const candidates = [];
-    if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
-    candidates.push("/usr/bin/ffmpeg", "ffmpeg");
-    try {
-      const installer = await import("@ffmpeg-installer/ffmpeg");
-      const p = (installer.default ?? installer).path;
-      if (p) candidates.push(p);
-    } catch {
-    }
-    for (const candidate of candidates) {
-      const version2 = await binaryVersion(candidate);
-      if (!version2) continue;
-      const ffprobe = process.env.FFPROBE_PATH || (candidate === "ffmpeg" ? "ffprobe" : candidate.replace(/ffmpeg$/, "ffprobe"));
-      return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, "xfade") };
-    }
-    throw new Error("No working FFmpeg binary found. Set FFMPEG_PATH.");
-  })();
-  return toolCache;
-}
-async function ensureOutputDir() {
-  await mkdir(OUTPUT_DIR, { recursive: true });
-  return OUTPUT_DIR;
-}
-async function probeDuration(file2) {
-  const { ffprobe } = await resolveTools();
-  try {
-    const { stdout } = await exec(ffprobe, [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=nw=1:nk=1",
-      file2
-    ]);
-    const seconds = Number.parseFloat(stdout.trim());
-    return Number.isFinite(seconds) ? seconds : void 0;
-  } catch {
-    return void 0;
-  }
-}
-async function probeVideoGeometry(file2) {
-  const { ffprobe } = await resolveTools();
-  try {
-    const { stdout } = await exec(ffprobe, [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=width,height",
-      "-of",
-      "default=nw=1",
-      file2
-    ]);
-    const width = Number.parseInt(stdout.match(/width=(\d+)/)?.[1] ?? "", 10);
-    const height = Number.parseInt(stdout.match(/height=(\d+)/)?.[1] ?? "", 10);
-    if (!Number.isFinite(width) || !Number.isFinite(height)) return void 0;
-    return { width, height };
-  } catch {
-    return void 0;
-  }
-}
-async function hasAudioStream(file2) {
-  const { ffprobe } = await resolveTools();
-  try {
-    const { stdout } = await exec(ffprobe, [
-      "-v",
-      "error",
-      "-select_streams",
-      "a:0",
-      "-show_entries",
-      "stream=codec_type",
-      "-of",
-      "default=nw=1",
-      file2
-    ]);
-    return stdout.includes("codec_type=audio");
-  } catch {
-    return false;
-  }
-}
-async function extractLastFrame(input2) {
-  const { ffmpeg } = await resolveTools();
-  const dir = await ensureOutputDir();
-  const digest = createHash("sha1").update(`${input2.file}:${Date.now()}`).digest("hex").slice(0, 12);
-  const outPath = join2(dir, `frame-${digest}.png`);
-  const seek = input2.seekBackSeconds ?? 0.15;
-  const attempts = [
-    // Preferred: seek near the end, decode one frame.
-    ["-y", "-hide_banner", "-loglevel", "error", "-sseof", `-${seek}`, "-i", input2.file, "-vframes", "1", "-q:v", "2", outPath],
-    // Fallback: decode from the start and keep the genuinely last frame.
-    ["-y", "-hide_banner", "-loglevel", "error", "-i", input2.file, "-update", "1", "-vf", "reverse", "-vframes", "1", outPath]
-  ];
-  let lastError;
-  for (const args of attempts) {
-    try {
-      await exec(ffmpeg, args, { maxBuffer: 16 * 1024 * 1024 });
-      const info = await stat(outPath);
-      if (info.size > 0) {
-        return { path: outPath, bytes: info.size, ffmpeg };
-      }
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw new Error(
-    `Could not extract a frame from ${input2.file}: ${lastError instanceof Error ? lastError.message : "unknown error"}`
-  );
-}
-async function closingFrameAgreement(input2) {
-  const { ffmpeg } = await resolveTools();
-  const thumb = async (args) => {
-    const { stdout } = await exec(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
-    const buf = stdout;
-    return buf.subarray(0, 32 * 32);
-  };
-  try {
-    const a = await thumb([
-      "-v",
-      "error",
-      "-sseof",
-      "-0.12",
-      "-i",
-      input2.clip,
-      "-update",
-      "1",
-      "-frames:v",
-      "1",
-      "-vf",
-      "scale=32:32,format=gray",
-      "-f",
-      "rawvideo",
-      "-"
-    ]);
-    const b = await thumb(["-v", "error", "-i", input2.frame, "-vf", "scale=32:32,format=gray", "-f", "rawvideo", "-"]);
-    if (a.length < 1024 || b.length < 1024) return void 0;
-    let ma = 0, mb = 0;
-    for (let i = 0; i < 1024; i++) {
-      ma += a[i];
-      mb += b[i];
-    }
-    ma /= 1024;
-    mb /= 1024;
-    let num = 0, da = 0, db = 0;
-    for (let i = 0; i < 1024; i++) {
-      const x = a[i] - ma, y = b[i] - mb;
-      num += x * y;
-      da += x * x;
-      db += y * y;
-    }
-    if (da === 0 || db === 0) return void 0;
-    return Math.round(num / Math.sqrt(da * db) * 1e3) / 1e3;
-  } catch {
-    return void 0;
-  }
-}
-var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
-function assertBedCoversFilm(bedSeconds, filmSeconds) {
-  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
-    throw new Error(
-      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
-    );
-  }
-}
-function planClipAudioFilters(input2) {
-  const mode = input2.clipAudio ?? "keep";
-  return input2.durations.map((duration3, index) => {
-    const useClip = mode === "keep" && Boolean(input2.clipHasAudio[index]);
-    if (useClip) {
-      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
-    }
-    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration3},asetpts=PTS-STARTPTS[a${index}]`;
-  });
-}
-async function assembleClips(input2) {
-  const { ffmpeg, hasXfade } = await resolveTools();
-  const dir = await ensureOutputDir();
-  const digest = createHash("sha1").update(input2.clips.map((c) => `${c.file}:${c.trimStart ?? ""}:${c.trimEnd ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
-  const outPath = join2(dir, `film-${digest}.mp4`);
-  if (input2.clips.length === 0) throw new Error("No clips to assemble.");
-  const clipAudio = input2.clipAudio ?? "keep";
-  const bedGain = input2.audioTrackVolume ?? 0.25;
-  const wantBed = Boolean(input2.audioTrackFile) && bedGain > 0;
-  if (input2.clips.length === 1 && clipAudio === "keep" && !wantBed) {
-    await exec(ffmpeg, [
-      "-y",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      input2.clips[0].file,
-      "-c",
-      "copy",
-      outPath
-    ], { maxBuffer: 32 * 1024 * 1024 });
-    return { path: outPath, mode: "single", hasXfade };
-  }
-  const durations = [];
-  for (const clip of input2.clips) {
-    const full = await probeDuration(clip.file);
-    if (full === void 0) throw new Error(`Could not read duration of ${clip.file}`);
-    const start = clip.trimStart ?? 0;
-    const end = clip.trimEnd ?? full;
-    durations.push(Math.max(0.1, end - start));
-  }
-  const wantsFade = input2.fadeDuration > 0;
-  const fade = wantsFade ? Math.min(input2.fadeDuration, Math.min(...durations) / 2) : 0;
-  if (!wantsFade && !hasXfade) {
-    const listPath = join2(dir, `concat-${digest}.txt`);
-    const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
-    await writeFile(listPath, `${lines.join("\n")}
-`, "utf8");
-    const copyOut = join2(dir, `film-copy-${digest}.mp4`);
-    try {
-      await exec(ffmpeg, [
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        listPath,
-        "-c",
-        "copy",
-        copyOut
-      ], { maxBuffer: 32 * 1024 * 1024 });
-      const copied = await probeDuration(copyOut);
-      if (copied !== void 0) {
-        return { path: copyOut, mode: "concat", hasXfade };
-      }
-    } catch {
-    }
-  }
-  const args = ["-y", "-hide_banner", "-loglevel", "error"];
-  for (let i = 0; i < input2.clips.length; i++) {
-    const clip = input2.clips[i];
-    const start = clip.trimStart ?? 0;
-    const end = clip.trimEnd ?? durations[i] + start;
-    args.push("-ss", String(start), "-to", String(end), "-i", clip.file);
-  }
-  const geometry = await probeVideoGeometry(input2.clips[0].file);
-  const width = geometry?.width ?? 1280;
-  const height = geometry?.height ?? 720;
-  const fps = 24;
-  const withAudio = await Promise.all(input2.clips.map((clip) => hasAudioStream(clip.file)));
-  const filters = [];
-  const n = input2.clips.length;
-  for (let i = 0; i < n; i++) {
-    filters.push(
-      `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
-    );
-  }
-  filters.push(...planClipAudioFilters({
-    durations,
-    clipHasAudio: withAudio,
-    clipAudio
-  }));
-  let mode;
-  let totalDuration = durations.reduce((sum, d) => sum + d, 0);
-  if (fade === 0) {
-    const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
-    const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
-    filters.push(`${videoInputs}concat=n=${n}:v=1:a=0[vout]`);
-    filters.push(`${audioInputs}concat=n=${n}:v=0:a=1[aout]`);
-    mode = "concat";
-  } else {
-    let previousV = "v0";
-    let previousA = "a0";
-    let elapsed = durations[0];
-    for (let i = 1; i < n; i++) {
-      const offset = Math.max(0, elapsed - fade);
-      const isLast = i === n - 1;
-      const vLabel = isLast ? "vout" : `vx${i}`;
-      const aLabel = isLast ? "aout" : `ax${i}`;
-      filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
-      filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
-      previousV = vLabel;
-      previousA = aLabel;
-      elapsed = offset + durations[i];
-    }
-    totalDuration = elapsed;
-    mode = "xfade";
-  }
-  let audioMap = "[aout]";
-  if (wantBed && input2.audioTrackFile) {
-    const bedSeconds = await probeDuration(input2.audioTrackFile);
-    assertBedCoversFilm(bedSeconds, totalDuration);
-    const bedIndex = input2.clips.length;
-    const gain = Math.min(Math.max(bedGain, 0), 4);
-    const fadeOut = Math.min(
-      input2.audioTrackFadeOutSeconds ?? 1.5,
-      Math.max(totalDuration / 2, 0.1)
-    );
-    args.push("-i", input2.audioTrackFile);
-    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
-    if (clipAudio === "replace") {
-      filters.push(`${bedFilter}[aoutmix]`);
-    } else {
-      filters.push(`${bedFilter}[bed]`);
-      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
-    }
-    audioMap = "[aoutmix]";
-  }
-  args.push(
-    "-filter_complex",
-    filters.join(";"),
-    "-map",
-    "[vout]",
-    "-map",
-    audioMap,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "20",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "128k",
-    "-movflags",
-    "+faststart",
-    outPath
-  );
-  await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration };
-}
-async function pathToDataUrl(file2, mime = "image/png") {
-  const buffer = await readFile(file2);
-  return `data:${mime};base64,${buffer.toString("base64")}`;
-}
-
 // mcp/grokVideo.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { mkdir as mkdir2, readFile as readFile3, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname as dirname2, join as join3, resolve, sep } from "node:path";
-import { promisify as promisify2 } from "node:util";
-var exec2 = promisify2(execFile2);
+import { basename, dirname as dirname3, join as join4, resolve, sep } from "node:path";
+import { promisify as promisify3 } from "node:util";
+var exec3 = promisify3(execFile3);
 var USD_TICKS_PER_DOLLAR = 1e10;
 function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
@@ -43179,8 +43389,8 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
   ];
   let lastUrl = "";
   for (const attempt of attempts) {
-    const target = join3(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-    await exec2(ffmpeg, [
+    const target = join4(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+    await exec3(ffmpeg, [
       "-y",
       "-hide_banner",
       "-loglevel",
@@ -43195,8 +43405,8 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
       String(attempt.quality),
       target
     ], { maxBuffer: 16 * 1024 * 1024 });
-    const shrunk = await readFile2(target);
-    await rm(target, { force: true });
+    const shrunk = await readFile3(target);
+    await rm2(target, { force: true });
     lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
     if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
   }
@@ -43226,10 +43436,10 @@ function localImageRefAllowed(ref, roots) {
   let real = abs;
   while (true) {
     try {
-      real = missing.reduceRight((path, part) => join3(path, part), realpathSync(current));
+      real = missing.reduceRight((path, part) => join4(path, part), realpathSync(current));
       break;
     } catch {
-      const parent = dirname2(current);
+      const parent = dirname3(current);
       if (parent === current) break;
       missing.push(basename(current));
       current = parent;
@@ -43243,7 +43453,7 @@ async function toApiImageRef(ref, opts = {}) {
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
   const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-  const buffer = await readFile2(path);
+  const buffer = await readFile3(path);
   if (buffer.byteLength > budget) {
     return shrinkLocalImage(path, budget);
   }
@@ -43278,7 +43488,14 @@ function isTransientRenderFailure(poll) {
   const text = typeof err === "string" ? err : JSON.stringify(err ?? "");
   return /internal[_ ]error|please try again|temporarily unavailable|overloaded|rate.?limit/i.test(text);
 }
+function rejectedPrompt(prompt, negative) {
+  const lint = lintFailure(prompt, negative);
+  if (lint.ok) return void 0;
+  return { error: lint.reason, code: "prompt-rejected" };
+}
 async function generateGrokClip(job, opts) {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -43383,6 +43600,15 @@ async function generateGrokClip(job, opts) {
     const poll = await statusRes.json();
     if (typeof poll.progress === "number") lastProgress = poll.progress;
     if (poll.status === "done" || poll.status === "completed") {
+      const review = reviewTake(job.admission, job.negative);
+      if (!review.ok) {
+        return {
+          ...base,
+          status: "failed",
+          code: "rejected",
+          error: `Clip failed the checklist: ${review.failures.join("; ")}. The take was discarded and will not be used as a pin.`
+        };
+      }
       return {
         ...base,
         status: "completed",
@@ -43416,6 +43642,8 @@ async function inlineReferenceSet(urls) {
   return Promise.all(urls.map((url2) => toApiImageRef(url2, { budgetBytes: perImage })));
 }
 async function generateGrokStill(job, opts) {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -43438,7 +43666,8 @@ async function generateGrokStill(job, opts) {
     route = "edits";
     const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
     const subjects = job.referenceImageUrls?.length ? await inlineReferenceSet(job.referenceImageUrls) : [];
-    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    const plateFirst = job.imageOrder === "plate-first";
+    base.image = subjects.length > 0 ? plateFirst ? [baseUrl, ...subjects] : [...subjects, baseUrl] : { url: baseUrl };
     delete base.reference_images;
   }
   const headers = {
@@ -43485,9 +43714,18 @@ async function generateGrokStill(job, opts) {
         image.mime_type,
         opts.filename
       );
+      const accepted = await acceptRenderedTake(localPath, job.admission, job.negative);
+      if (!accepted.ok) {
+        return {
+          error: `Still failed the checklist: ${accepted.failures.join("; ")}. The file was discarded and will not be used as a pin.`,
+          code: "rejected",
+          auth: credential.source,
+          costUsd: costUsdFromUsage(payload.usage)
+        };
+      }
       return {
         imageUrl: image.url,
-        localPath,
+        localPath: accepted.path,
         mimeType: image.mime_type,
         model: payload.model ?? String(variant.body.model),
         usage: payload.usage,
@@ -43523,7 +43761,7 @@ async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
   const ext = mimeType?.includes("jpeg") || mimeType?.includes("jpg") ? "jpg" : mimeType?.includes("webp") ? "webp" : "png";
   const digest = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const named = filename && !/\.[a-z0-9]{2,5}$/i.test(filename) ? `${filename}.${ext}` : filename;
-  const destination = join3(outputDir, named ?? `still-${digest}.${ext}`);
+  const destination = join4(outputDir, named ?? `still-${digest}.${ext}`);
   if (imageUrl.startsWith("data:")) {
     const comma = imageUrl.indexOf(",");
     if (comma === -1) throw new Error("Malformed data URI for generated still.");
@@ -43557,12 +43795,12 @@ function identityOnly(cast) {
 function castForPicture(cast) {
   const identity = cast?.trim() ? identityOnly(cast) : "";
   const body = identity ? `THE CAST, taken from the reference picture and identical in every frame: ${identity}.` : "THE CAST, taken from the reference picture and identical in every frame: the person in it.";
-  return `${body} Their face, head, hair and skin are those of the reference picture: match them exactly. Their clothing is whatever the reference picture shows them wearing \u2014 take the garments from the picture and copy them unchanged; do not add, swap, layer or remove any garment, and do not infer one from this description. `;
+  return `${body} Their face, head, hair and skin are those of the reference picture: match them exactly. Their clothing is whatever the reference picture shows them wearing. Take the garments from the picture and copy them unchanged, in the same layers the picture shows. `;
 }
 
 // mcp/storyboard.ts
 import { stat as stat2 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var STILL_USD = 0.02;
 var STILL_EXTENSIONS = ["png", "jpg", "webp"];
 function shotPrompt(shot) {
@@ -43582,7 +43820,7 @@ function planBoardFrames(opts) {
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
-  const still = " Single held frame, no motion blur, no text, no watermark.";
+  const still = " Single held frame, sharp focus, a clean picture.";
   const specs = [{ role: "opening", shot: 1, incoming: 0 }];
   for (let i = 0; i < shots.length; i += 1) {
     if (shots[i].middleKeyframe) {
@@ -43609,7 +43847,7 @@ function planBoardFrames(opts) {
     }
     const shotForFrame = shots[spec.shot - 1] ?? shots[0];
     const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt) || Boolean(shotForFrame?.wardrobeChanged);
-    const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
+    const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and keep the rest of the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them.";
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
@@ -43639,7 +43877,7 @@ function shotFrameSlots(shots) {
 }
 async function findExistingStill(dir, stem) {
   for (const ext of STILL_EXTENSIONS) {
-    const candidate = join4(dir, `${stem}.${ext}`);
+    const candidate = join5(dir, `${stem}.${ext}`);
     try {
       const info = await stat2(candidate);
       if (info.size > 0) return candidate;
@@ -43652,7 +43890,7 @@ function heroPrompt(input2) {
   const named = (input2.scene ?? input2.look)?.trim().replace(/\.$/, "");
   const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
   const cast = input2.cast?.trim() ? castForPicture(input2.cast) : "";
-  return `Place the person from the first photo into ${where}. ` + cast + `The first photo supplies the person and nothing else; its own background is discarded. The second photo is the room and it does not change: keep its walls, its furniture, its windows and the view through them exactly as they are, and keep its own light. Photoreal, single held frame, no motion blur, no text, no watermark.`;
+  return `Place the person from the first photo into ${where}. ` + cast + `The first photo supplies only the person. Its background stays out of the picture. The second photo is the room and stays as it is: keep its walls, its furniture, its windows and the view through them exactly as they are, and keep its own light. Photoreal, single held frame, sharp focus, a clean picture.`;
 }
 async function boardFilm(input2, deps) {
   const aspectRatio = input2.aspectRatio ?? "16:9";
@@ -43852,9 +44090,9 @@ function toRenderShots(board) {
 // mcp/characters.ts
 import { createHash as createHash3 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile4, readdir, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { basename as basename2, join as join5, sep as sep2 } from "node:path";
+import { basename as basename2, join as join6, sep as sep2 } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
@@ -44258,7 +44496,7 @@ function characterFromRecord(record2) {
 }
 
 // mcp/characters.ts
-var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join5(homedir3(), ".theshow", "characters");
+var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join6(homedir3(), ".theshow", "characters");
 function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
@@ -44274,10 +44512,10 @@ function sameName(a, b) {
 }
 function candidateFolders(root, name) {
   const slug = slugFor(name);
-  return [join5(root, slug), join5(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
+  return [join6(root, slug), join6(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
 }
 function parseRecord(folder, raw) {
-  const file2 = join5(folder, "character.json");
+  const file2 = join6(folder, "character.json");
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.name !== "string" || !parsed.name.trim()) {
@@ -44301,9 +44539,9 @@ function parseRecord(folder, raw) {
   }
 }
 async function readRecord(folder, options = {}) {
-  const file2 = join5(folder, "character.json");
+  const file2 = join6(folder, "character.json");
   try {
-    return parseRecord(folder, await readFile3(file2, "utf8"));
+    return parseRecord(folder, await readFile4(file2, "utf8"));
   } catch (err) {
     if (!options.quiet) {
       console.error(`theShow: skipping character folder ${folder}:`, err);
@@ -44324,7 +44562,7 @@ function copyNameFor(source) {
   return `${stem}-${shortHash(source)}${extension}`;
 }
 async function keepReferences(input2) {
-  const refsDir = join5(input2.folder, "refs");
+  const refsDir = join6(input2.folder, "refs");
   const kept = [];
   const seen = /* @__PURE__ */ new Set();
   for (const ref of input2.refs) {
@@ -44340,9 +44578,9 @@ async function keepReferences(input2) {
       kept.push(source);
       continue;
     }
-    const target = join5(refsDir, copyNameFor(source));
+    const target = join6(refsDir, copyNameFor(source));
     try {
-      const bytes = await readFile3(source);
+      const bytes = await readFile4(source);
       await mkdir3(refsDir, { recursive: true });
       await writeFile3(target, bytes);
       kept.push(target);
@@ -44411,10 +44649,10 @@ async function saveCharacter(input2) {
   if (wardrobe) record2.wardrobe = wardrobe;
   try {
     await mkdir3(folder, { recursive: true });
-    await writeFile3(join5(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
+    await writeFile3(join6(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    warnings.push(`Could not write ${join5(folder, "character.json")}: ${message}`);
+    warnings.push(`Could not write ${join6(folder, "character.json")}: ${message}`);
     console.error(`theShow: could not save character ${name}:`, err);
   }
   if (warnings.length > 0) record2.warnings = warnings;
@@ -44425,7 +44663,7 @@ function loadCharacterSync(name) {
   for (const folder of candidateFolders(root, name)) {
     let raw;
     try {
-      raw = readFileSync2(join5(folder, "character.json"), "utf8");
+      raw = readFileSync2(join6(folder, "character.json"), "utf8");
     } catch {
       continue;
     }
@@ -44444,7 +44682,7 @@ async function loadAllCharacters() {
   }
   const newest = /* @__PURE__ */ new Map();
   for (const entry2 of folders) {
-    const record2 = await readRecord(join5(root, entry2));
+    const record2 = await readRecord(join6(root, entry2));
     if (!record2) continue;
     const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
     const previous = newest.get(key);
@@ -45195,8 +45433,8 @@ function runPreVideoGate(input2) {
 }
 
 // mcp/server.ts
-import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile5, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
+import { join as join7 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash as createHash4 } from "node:crypto";
 var server = new McpServer({
@@ -45330,6 +45568,27 @@ function lookupCharacter(name) {
     referenceImageUrls: fromDisk.referenceImageUrls
   });
   return characterStore.get(key);
+}
+var LOCATION_ROLE = /\b(location|place|set|environment|interior|exterior)\b/i;
+async function withPersonCutouts(names, urls) {
+  const portraits = /* @__PURE__ */ new Set();
+  for (const name of names ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) continue;
+    if (LOCATION_ROLE.test(known.role ?? "")) continue;
+    for (const url2 of known.referenceImageUrls ?? []) portraits.add(url2);
+  }
+  const prepared = [];
+  for (const url2 of urls) {
+    const localPortrait = portraits.has(url2) && !/^https?:/i.test(url2) && !url2.startsWith("data:");
+    if (!localPortrait) {
+      prepared.push(url2);
+      continue;
+    }
+    const cutout = await featheredSubjectCutout(url2);
+    prepared.push(cutout.ok ? cutout.path : url2);
+  }
+  return prepared;
 }
 async function loadCharactersFromDisk() {
   try {
@@ -46064,8 +46323,12 @@ server.registerTool(
         "start pins the first frame only. both also pins lastFrameUrl."
       ),
       voiceId: external_exports.string().optional().describe(
-        "Built-in voice id, such as rex. Sent as reference_audios[].voice_id."
+        "Built-in voice id, such as rex. Sent as reference_audios voice_id. A spoken line uses the literal token <AUDIO_0>. Time the clip to a rex track written first."
       ),
+      negative: external_exports.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent."
+      ),
+      admission: TakeAdmissionSchema.optional(),
       ledger: external_exports.object({
         locations: external_exports.array(LocationSchema).optional(),
         props: external_exports.array(PropRecordSchema).optional(),
@@ -46138,7 +46401,8 @@ server.registerTool(
       voiceId: voiceId ?? ledger?.voiceId
     };
     const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
-    job.referenceImageUrls = urls.length > 0 ? urls : void 0;
+    const prepared = await withPersonCutouts(characters, urls);
+    job.referenceImageUrls = prepared.length > 0 ? prepared : void 0;
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
       content: [{
@@ -46260,7 +46524,7 @@ async function resolveToLocalFile(input2) {
     await mkdir4(DOWNLOAD_DIR, { recursive: true });
     const digest = createHash4("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
-    const target = join6(DOWNLOAD_DIR, `src-${digest}.${ext}`);
+    const target = join7(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
     if (existing !== void 0) return target;
     const res = await fetch(input2, { redirect: "follow" });
@@ -46320,6 +46584,13 @@ server.registerTool(
       baseImageUrl: external_exports.string().optional().describe(
         "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before. A local path must be inside the output folder or a character folder."
       ),
+      imageOrder: external_exports.enum(["portrait-first", "plate-first"]).optional().describe(
+        "Default portrait-first sends the character reference first and the room last. plate-first sends the room first, for placing a person into a set. Opening a door in that same two-image call was unreliable: edit the plate alone first, then place the character."
+      ),
+      negative: external_exports.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent."
+      ),
+      admission: TakeAdmissionSchema.optional(),
       confirm: external_exports.boolean().default(false).describe(
         "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent word for word either way."
       ),
@@ -46363,12 +46634,16 @@ server.registerTool(
         }]
       };
     }
+    const prepared = await withPersonCutouts(args.characters, urls);
     const result = await generateGrokStill(
       {
         prompt: args.prompt,
         aspectRatio: args.aspectRatio,
-        referenceImageUrls: urls.length > 0 ? urls : void 0,
-        baseImageUrl: args.baseImageUrl
+        referenceImageUrls: prepared.length > 0 ? prepared : void 0,
+        baseImageUrl: args.baseImageUrl,
+        imageOrder: args.imageOrder,
+        negative: args.negative,
+        admission: args.admission
       },
       { outputDir: OUTPUT_DIR }
     );
@@ -46499,7 +46774,7 @@ var sequenceJobs = /* @__PURE__ */ new Map();
 async function persistJob(job) {
   try {
     await mkdir4(JOBS_DIR, { recursive: true });
-    await writeFile4(join6(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
+    await writeFile4(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
   } catch (err) {
     console.error(`theShow: could not persist job ${job.id}:`, err);
   }
@@ -46510,7 +46785,7 @@ async function loadJobsFromDisk() {
     for (const name of files) {
       if (!name.endsWith(".json")) continue;
       try {
-        const raw = await readFile4(join6(JOBS_DIR, name), "utf8");
+        const raw = await readFile5(join7(JOBS_DIR, name), "utf8");
         const job = JSON.parse(raw);
         if (!job?.id) continue;
         if (job.state === "running") {
@@ -46581,6 +46856,7 @@ async function runSequenceJob(job, args) {
     }
     characterRefs.push(...known.referenceImageUrls ?? []);
   }
+  const portraitRefs = await withPersonCutouts(args.characters, Array.from(new Set(characterRefs)));
   const carried = args.carriedShots ?? [];
   const trailing = args.trailingShots ?? [];
   job.shots.push(...carried);
@@ -46607,7 +46883,9 @@ async function runSequenceJob(job, args) {
         lastFrameUrl: shot.lastFrameUrl,
         pin: args.pin ?? "start",
         voiceId: args.voiceId,
-        referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+        negative: shot.negative,
+        admission: shot.admission,
+        referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       let result = await renderShot();
       let retries = 0;
@@ -46626,7 +46904,9 @@ async function runSequenceJob(job, args) {
           firstFrameUrl: shotFirstFrame,
           pin: "start",
           voiceId: args.voiceId,
-          referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+          negative: shot.negative,
+          admission: shot.admission,
+          referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : void 0
         }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
         if (result.status === "completed") {
           degradations.push(
@@ -46677,6 +46957,19 @@ async function runSequenceJob(job, args) {
       if (!frame.path) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
+        job.finishedAt = Date.now();
+        void persistJob(job);
+        return;
+      }
+      const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
+      if (!accepted.ok) {
+        await acceptRenderedTake(clipPath, shot.admission, shot.negative);
+        entry2.localPath = void 0;
+        entry2.framePath = void 0;
+        entry2.status = "failed";
+        entry2.error = `Admission failed: ${accepted.failures.join("; ")}. The take was discarded and is not the next start frame.`;
+        job.state = "stopped";
+        job.error = entry2.error;
         job.finishedAt = Date.now();
         void persistJob(job);
         return;
@@ -46739,13 +47032,15 @@ server.registerTool(
         ),
         locationId: external_exports.string().optional(),
         shotType: external_exports.string().optional(),
-        faceAnchor: external_exports.enum(["auto", "off"]).optional()
+        faceAnchor: external_exports.enum(["auto", "off"]).optional(),
+        negative: external_exports.string().optional(),
+        admission: TakeAdmissionSchema.optional()
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot."
       ),
       continuity: external_exports.string().optional().describe(
-        "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this."
+        "Set, wardrobe, light, and palette, written once and prepended to every shot."
       ),
       ledger: external_exports.object({
         locations: external_exports.array(LocationSchema).optional(),
@@ -47176,7 +47471,8 @@ server.registerTool(
         wardrobeChanged: Boolean(shot.wardrobeChanged) || wardrobeEvents.some((event) => event.shot === index + 1)
       };
     });
-    const referenceImageUrls = urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0;
+    const rawRefs = urls.filter((url2) => url2 !== baseImageUrl);
+    const referenceImageUrls = rawRefs.length > 0 ? rawRefs : void 0;
     const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
     const contractValidation = runPreVideoGate({
       overrideValidation: args.overrideValidation,
@@ -47257,6 +47553,7 @@ server.registerTool(
       const sessionRefusal = await refuseIfSessionWillNotLast(6e4);
       if (sessionRefusal) return sessionRefusal;
     }
+    const sentRefs = decision === "spend" ? await withPersonCutouts(args.characters, rawRefs) : rawRefs;
     const board = await boardFilm(
       {
         shots: boardedShots,
@@ -47271,8 +47568,9 @@ server.registerTool(
         outputDir: OUTPUT_DIR,
         // A base image and a reference set compete for the same body, and the
         // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself.
-        referenceImageUrls,
+        // not the base itself. A person portrait is a feathered cutout; the
+        // original file is not rewritten.
+        referenceImageUrls: sentRefs.length > 0 ? sentRefs : void 0,
         baseImageUrl,
         // Injected so tests can board a whole film without reaching the network.
         generateStill: async (job, opts) => generateGrokStill(job, opts)

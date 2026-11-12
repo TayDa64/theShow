@@ -13,8 +13,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { acceptRenderedTake, reviewTake, type TakeReport } from "./admission";
 import { resolveVideoCredential } from "./grok-auth";
 import { resolveTools } from "./media";
+import { lintFailure } from "./promptLint";
 
 const exec = promisify(execFile);
 
@@ -42,12 +44,20 @@ export type GrokClipJob = {
   pin?: "start" | "both";
   /** Built-in voice id, such as rex. Sent as reference_audios[].voice_id. */
   voiceId?: string;
+  /**
+   * Known limits and hallucinations. Used by the lint and the checklist.
+   * Grok Imagine has no negative_prompt field, so this is never copied onto the request.
+   */
+  negative?: string;
+  /** Measurements taken after the clip exists. A failure drops the video URL. */
+  admission?: TakeReport;
 };
 
 /** Why a call stopped, so callers can decide between a retry, a hint and a hard error. */
 export type GrokFailureCode =
   | "no-credential"
   | "expired-credential"
+  | "prompt-rejected"
   | "rejected"
   | "submit-failed"
   | "no-request-id"
@@ -338,10 +348,19 @@ function isTransientRenderFailure(poll: Record<string, unknown>): boolean {
  * something the caller has to explain to a person (missing login, expired token,
  * rejected credential), and a typed result keeps that message intact.
  */
+function rejectedPrompt(prompt: string, negative?: string) {
+  const lint = lintFailure(prompt, negative);
+  if (lint.ok) return undefined;
+  return { error: lint.reason, code: "prompt-rejected" as const };
+}
+
 export async function generateGrokClip(
   job: GrokClipJob,
   opts: { waitForCompletion: boolean; timeoutSeconds: number },
 ): Promise<GrokClipResult> {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
+
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -479,6 +498,17 @@ export async function generateGrokClip(
     if (typeof poll.progress === "number") lastProgress = poll.progress;
 
     if (poll.status === "done" || poll.status === "completed") {
+      const review = reviewTake(job.admission, job.negative);
+      if (!review.ok) {
+        return {
+          ...base,
+          status: "failed",
+          code: "rejected",
+          error:
+            `Clip failed the checklist: ${review.failures.join("; ")}. ` +
+            "The take was discarded and will not be used as a pin.",
+        };
+      }
       return {
         ...base,
         status: "completed",
@@ -526,6 +556,21 @@ export type GrokStillJob = {
   aspectRatio?: string;
   /** Portraits or location stills: https URLs, data URIs, or local paths. */
   referenceImageUrls?: string[];
+  /**
+   * portrait-first (the default) sends reference images, then the base.
+   * plate-first sends the room as image[0] and the character after it.
+   * Paid edits found the first image is the subject: a portrait first holds a
+   * face and often redraws the room; a plate first held the room (right-half
+   * RMSE about 2.8 versus about 67) and tall proportions, with possible face
+   * and wardrobe drift. Opening a closed door in that same two-image call was
+   * unreliable. Edit the plate alone first, with an affirmative empty corridor
+   * ("smooth white end wall"), then place the character into the open plate.
+   */
+  imageOrder?: "portrait-first" | "plate-first";
+  /** Stored for lint and the checklist. Never copied onto the image request. */
+  negative?: string;
+  /** Measurements taken after the still exists. A failure deletes the file. */
+  admission?: TakeReport;
   /**
    * The picture to EDIT, rather than a hint for a fresh one.
    *
@@ -602,6 +647,9 @@ export async function generateGrokStill(
     filename?: string;
   },
 ): Promise<GrokStillResult> {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
+
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -636,15 +684,18 @@ export async function generateGrokStill(
     // while a 343 KB one also passed — the encoder's own width cap is what
     // actually binds, so 220 KB is the ceiling that matters).
     const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
-    // Order is meaning, not housekeeping: the FIRST picture is the subject the
-    // edit acts on, the rest are context. A portrait first ("place this man into
-    // the office in the second photo") kept a face that a prompt describing him
-    // could not, which is how the hero frame is built. Base alone is the plain
-    // case: one picture, changed.
+    // The FIRST picture is the subject the edit acts on. The default keeps
+    // references (the portrait) first and the base (the room) last, which is
+    // what existing callers and the hero prompt describe. plate-first swaps
+    // that when the caller is placing a person into a set and needs the room
+    // to hold. Base alone is the plain case: one picture, changed.
     const subjects = job.referenceImageUrls?.length
       ? await inlineReferenceSet(job.referenceImageUrls)
       : [];
-    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    const plateFirst = job.imageOrder === "plate-first";
+    base.image = subjects.length > 0
+      ? (plateFirst ? [baseUrl, ...subjects] : [...subjects, baseUrl])
+      : { url: baseUrl };
     // `reference_images` would be a second, competing copy of the same picture.
     delete base.reference_images;
   }
@@ -707,9 +758,20 @@ export async function generateGrokStill(
         image.mime_type,
         opts.filename,
       );
+      const accepted = await acceptRenderedTake(localPath, job.admission, job.negative);
+      if (!accepted.ok) {
+        return {
+          error:
+            `Still failed the checklist: ${accepted.failures.join("; ")}. ` +
+            "The file was discarded and will not be used as a pin.",
+          code: "rejected",
+          auth: credential.source,
+          costUsd: costUsdFromUsage(payload.usage),
+        };
+      }
       return {
         imageUrl: image.url,
-        localPath,
+        localPath: accepted.path,
         mimeType: image.mime_type,
         model: payload.model ?? String(variant.body.model),
         usage: payload.usage,

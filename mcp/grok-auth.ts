@@ -145,9 +145,12 @@ function readGrokAuthFile(): { keyName: string; entry: GrokAuthEntry } | undefin
 /**
  * Token endpoint for a CLI session key.
  *
- * The auth file key is "<issuer>::<client_id>". Okta-style issuers refresh at
- * issuer/v1/token. Anything else uses the origin's /oauth/token. GROK_OAUTH_TOKEN_URL
- * overrides both, which is how tests point this at a fake responder.
+ * The auth file key is "<issuer>::<client_id>". The grok CLI refreshes an
+ * auth.x.ai session at https://auth.x.ai/oauth2/token. Posting that host at
+ * /oauth/token returns 403 and does not rotate the session. Other Okta-style
+ * issuers still refresh at issuer/v1/token, and anything else uses the origin's
+ * /oauth/token. GROK_OAUTH_TOKEN_URL overrides all of these, which is how tests
+ * point this at a fake responder.
  */
 export function oauthTokenUrl(authKeyName: string): string | undefined {
   const override = process.env.GROK_OAUTH_TOKEN_URL;
@@ -156,6 +159,7 @@ export function oauthTokenUrl(authKeyName: string): string | undefined {
   if (!issuer || !/^https:\/\//i.test(issuer)) return undefined;
   try {
     const url = new URL(issuer);
+    if (url.hostname === "auth.x.ai") return "https://auth.x.ai/oauth2/token";
     if (url.pathname.includes("/oauth2/")) {
       const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
       return new URL("v1/token", base).toString();

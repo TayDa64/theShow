@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   ensureCredentialForJob,
   grokAuthFilePath,
+  oauthTokenUrl,
   sessionCoversRender,
 } from '../mcp/grok-auth.ts';
 
@@ -142,6 +143,22 @@ describe('session expiry before a render', () => {
     if (result.ok) expect(result.credential.token).toBe('refreshed-access-token');
     const saved = JSON.parse(fs.readFileSync(authFile, 'utf8')) as Record<string, { key: string }>;
     expect(saved['https://auth.example.test/oauth2/default::test-client'].key).toBe('refreshed-access-token');
+  });
+
+  it('refreshes an auth.x.ai session at /oauth2/token', () => {
+    delete process.env.GROK_OAUTH_TOKEN_URL;
+    expect(oauthTokenUrl('https://auth.x.ai::client-id')).toBe('https://auth.x.ai/oauth2/token');
+    expect(oauthTokenUrl('https://auth.x.ai/oauth2/default::client-id')).toBe(
+      'https://auth.x.ai/oauth2/token',
+    );
+    expect(oauthTokenUrl('https://auth.example.test/oauth2/default::client')).toBe(
+      'https://auth.example.test/oauth2/default/v1/token',
+    );
+    expect(oauthTokenUrl('https://auth.example.test::client')).toBe(
+      'https://auth.example.test/oauth/token',
+    );
+    process.env.GROK_OAUTH_TOKEN_URL = 'https://auth.example.test/override';
+    expect(oauthTokenUrl('https://auth.x.ai::client-id')).toBe('https://auth.example.test/override');
   });
 
   it('refuses without calling a video endpoint when refresh is not possible', async () => {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Admission control on still and clip submission. A prompt lint rejects forbidden nouns and negation before any paid call. A negative list is stored for that lint and for the post-generation checklist, and is not sent: Grok Imagine has no negative_prompt field. A Gaussian-feathered portrait cutout is written beside a character portrait and the original file is left untouched. A failed checklist (an object that changes rooms or appears from nowhere, a squashed torso, a widened body, shortened legs, or a vocal that runs past its pre-timed end) deletes the take so it cannot pin the next shot. `imageOrder: "plate-first"` puts the room first when placing a person into a set. The default remains portrait-first.
 - Per-shot state-file contracts derived from the continuity ledger: requires, atomic steps,
   ensures, invariants, and forbidden items. A validator rejects more than three steps, a
   garment that is both worn and hanging, duplicate garment counts, footwear counts that are
@@ -33,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxy's request limit.
 
 ### Changed
+- An `auth.x.ai` session refreshes at `https://auth.x.ai/oauth2/token`. `GROK_OAUTH_TOKEN_URL` still overrides that. Refresh stays opt-in via `THESHOW_REFRESH_GROK_SESSION`.
+- Board and hero still prompts say what the frame holds. The picture-preservation rule stays; the sent text no longer uses negation.
 - Stored wardrobe `closure` is read from `character.json` and applied. The previous release dropped it, so an existing character that already stored `open`, `slip-on`, or `none` now skips an `unbuttons` step and is checked against that closure. A layer with no `closure` is unchanged.
 - A bookend budgets its two frames together (75 KB each, ~200 KB of base64 for the pair) instead of
   hitting the request body limit at ~590 KB. A single inlined image keeps the original 220 KB budget,

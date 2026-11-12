@@ -9,7 +9,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { acceptRenderedTake, TakeAdmissionSchema, type TakeReport } from "./admission.ts";
 import { resolveBeatDuration, resolveBeatShotType } from "./beats.ts";
+import { featheredSubjectCutout } from "./cutout.ts";
 import { ensureCredentialForJob, resolveVideoCredential } from "./grok-auth.ts";
 import { renderSectionsV2, shouldAnchorFace } from "./promptSections.ts";
 import {
@@ -230,6 +232,40 @@ function lookupCharacter(name: string) {
     referenceImageUrls: fromDisk.referenceImageUrls,
   });
   return characterStore.get(key);
+}
+
+const LOCATION_ROLE = /\b(location|place|set|environment|interior|exterior)\b/i;
+
+/**
+ * Replace a person's local portrait with a feathered cutout. The original file
+ * stays as it was. A location plate is not a portrait and is left alone. A
+ * cutout that cannot be made keeps the original path so a missing ffmpeg does
+ * not block a call the caller already approved.
+ */
+async function withPersonCutouts(
+  names: string[] | undefined,
+  urls: string[],
+): Promise<string[]> {
+  const portraits = new Set<string>();
+  for (const name of names ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) continue;
+    if (LOCATION_ROLE.test(known.role ?? "")) continue;
+    for (const url of known.referenceImageUrls ?? []) portraits.add(url);
+  }
+  const prepared: string[] = [];
+  for (const url of urls) {
+    const localPortrait = portraits.has(url)
+      && !/^https?:/i.test(url)
+      && !url.startsWith("data:");
+    if (!localPortrait) {
+      prepared.push(url);
+      continue;
+    }
+    const cutout = await featheredSubjectCutout(url);
+    prepared.push(cutout.ok ? cutout.path : url);
+  }
+  return prepared;
 }
 
 /** Pull every saved character into the cache so lookups start warm. */
@@ -1182,6 +1218,8 @@ type VideoJob = {
   pin?: "start" | "both";
   voiceId?: string;
   resolution?: string;
+  negative?: string;
+  admission?: TakeReport;
 };
 
 /** Uniform shape so callers can read optional fields without narrowing gymnastics. */
@@ -1227,8 +1265,13 @@ server.registerTool(
         "start pins the first frame only. both also pins lastFrameUrl.",
       ),
       voiceId: z.string().optional().describe(
-        "Built-in voice id, such as rex. Sent as reference_audios[].voice_id.",
+        "Built-in voice id, such as rex. Sent as reference_audios voice_id. " +
+        "A spoken line uses the literal token <AUDIO_0>. Time the clip to a rex track written first.",
       ),
+      negative: z.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent.",
+      ),
+      admission: TakeAdmissionSchema.optional(),
       ledger: z.object({
         locations: z.array(LocationSchema).optional(),
         props: z.array(PropRecordSchema).optional(),
@@ -1307,7 +1350,8 @@ server.registerTool(
     };
 
     const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
-    job.referenceImageUrls = urls.length > 0 ? urls : undefined;
+    const prepared = await withPersonCutouts(characters, urls);
+    job.referenceImageUrls = prepared.length > 0 ? prepared : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
     return {
@@ -1556,6 +1600,15 @@ server.registerTool(
         "Omit it and the still is a fresh generation, as before. A local path must be inside the " +
         "output folder or a character folder.",
       ),
+      imageOrder: z.enum(["portrait-first", "plate-first"]).optional().describe(
+        "Default portrait-first sends the character reference first and the room last. " +
+        "plate-first sends the room first, for placing a person into a set. Opening a door in " +
+        "that same two-image call was unreliable: edit the plate alone first, then place the character.",
+      ),
+      negative: z.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent.",
+      ),
+      admission: TakeAdmissionSchema.optional(),
       confirm: z.boolean().default(false).describe(
         "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent " +
         "word for word either way.",
@@ -1604,12 +1657,16 @@ server.registerTool(
         }],
       };
     }
+    const prepared = await withPersonCutouts(args.characters, urls);
     const result = await generateGrokStill(
       {
         prompt: args.prompt,
         aspectRatio: args.aspectRatio,
-        referenceImageUrls: urls.length > 0 ? urls : undefined,
+        referenceImageUrls: prepared.length > 0 ? prepared : undefined,
         baseImageUrl: args.baseImageUrl,
+        imageOrder: args.imageOrder,
+        negative: args.negative,
+        admission: args.admission,
       },
       { outputDir: OUTPUT_DIR },
     );
@@ -2016,6 +2073,8 @@ async function runSequenceJob(
       lastFrameUrl?: string;
       faceAnchor?: "auto" | "off";
       shotType?: string;
+      negative?: string;
+      admission?: TakeReport;
     }>;
     characters?: string[];
     continuity?: string;
@@ -2054,6 +2113,7 @@ async function runSequenceJob(
     if (!known) { (job.unknownCharacters ??= []).push(name); continue; }
     characterRefs.push(...(known.referenceImageUrls ?? []));
   }
+  const portraitRefs = await withPersonCutouts(args.characters, Array.from(new Set(characterRefs)));
 
   // Carried shots render nothing and cost nothing; they are here so the film
   // assembles complete and so shot numbering stays honest in the progress view.
@@ -2103,7 +2163,9 @@ async function runSequenceJob(
         lastFrameUrl: shot.lastFrameUrl,
         pin: args.pin ?? "start",
         voiceId: args.voiceId,
-        referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
+        negative: shot.negative,
+        admission: shot.admission,
+        referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : undefined,
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       // Retry an API failure it owns, then degrade rather than stop the film.
       //
@@ -2141,7 +2203,9 @@ async function runSequenceJob(
           firstFrameUrl: shotFirstFrame,
           pin: "start",
           voiceId: args.voiceId,
-          referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : undefined,
+          negative: shot.negative,
+          admission: shot.admission,
+          referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : undefined,
         }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
         if (result.status === "completed") {
           degradations.push(
@@ -2205,6 +2269,21 @@ async function runSequenceJob(
       if (!frame.path) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
+        job.finishedAt = Date.now();
+        void persistJob(job);
+        return;
+      }
+      const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
+      if (!accepted.ok) {
+        await acceptRenderedTake(clipPath, shot.admission, shot.negative);
+        entry.localPath = undefined;
+        entry.framePath = undefined;
+        entry.status = "failed";
+        entry.error =
+          `Admission failed: ${accepted.failures.join("; ")}. ` +
+          "The take was discarded and is not the next start frame.";
+        job.state = "stopped";
+        job.error = entry.error;
         job.finishedAt = Date.now();
         void persistJob(job);
         return;
@@ -2289,15 +2368,14 @@ server.registerTool(
         locationId: z.string().optional(),
         shotType: z.string().optional(),
         faceAnchor: z.enum(["auto", "off"]).optional(),
+        negative: z.string().optional(),
+        admission: TakeAdmissionSchema.optional(),
       })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
       characters: z.array(z.string()).optional().describe(
         "Character names from create_character. Their reference images go on every shot.",
       ),
       continuity: z.string().optional().describe(
-        "Everything that must stay identical across the film, written once: set, wardrobe, light " +
-        "source, palette, and the negative constraints. It is prepended to every shot prompt, so " +
-        "you never have to repeat it and the model cannot forget it. configure_film returns a " +
-        "ready-made block for this.",
+        "Set, wardrobe, light, and palette, written once and prepended to every shot.",
       ),
       ledger: z.object({
         locations: z.array(LocationSchema).optional(),
@@ -2848,9 +2926,8 @@ server.registerTool(
       };
     });
 
-    const referenceImageUrls = urls.length > 0
-      ? urls.filter((url) => url !== baseImageUrl)
-      : undefined;
+    const rawRefs = urls.filter((url) => url !== baseImageUrl);
+    const referenceImageUrls = rawRefs.length > 0 ? rawRefs : undefined;
     const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
     const contractValidation = runPreVideoGate({
       overrideValidation: args.overrideValidation,
@@ -2942,6 +3019,9 @@ server.registerTool(
       if (sessionRefusal) return sessionRefusal;
     }
 
+    const sentRefs = decision === "spend"
+      ? await withPersonCutouts(args.characters, rawRefs)
+      : rawRefs;
     const board = await boardFilm(
       {
         shots: boardedShots,
@@ -2956,8 +3036,9 @@ server.registerTool(
         outputDir: OUTPUT_DIR,
         // A base image and a reference set compete for the same body, and the
         // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself.
-        referenceImageUrls,
+        // not the base itself. A person portrait is a feathered cutout; the
+        // original file is not rewritten.
+        referenceImageUrls: sentRefs.length > 0 ? sentRefs : undefined,
         baseImageUrl,
         // Injected so tests can board a whole film without reaching the network.
         generateStill: async (job, opts) => generateGrokStill(job, opts),
