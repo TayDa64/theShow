@@ -8,9 +8,10 @@
  */
 
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveVideoCredential } from "./grok-auth";
 import { resolveTools } from "./media";
@@ -198,6 +199,48 @@ async function shrinkLocalImage(file: string, budgetBytes: number = INLINE_IMAGE
   }
 
   return lastUrl;
+}
+
+function pathInside(root: string, candidate: string): boolean {
+  const base = resolve(root);
+  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+}
+
+/**
+ * A local image may be read only from the caller's output folder or a character
+ * folder. https and data-image refs are not local reads. Anything else is refused
+ * before a file is opened.
+ */
+export function localImageRefAllowed(ref: string, roots: string[]): boolean {
+  const trimmed = ref.trim();
+  if (!trimmed) return false;
+  if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
+  let raw = trimmed;
+  if (trimmed.toLowerCase().startsWith("file:")) {
+    try {
+      raw = new URL(trimmed).pathname;
+    } catch {
+      return false;
+    }
+  }
+  const abs = resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs))) return false;
+  let current = abs;
+  const missing: string[] = [];
+  let real = abs;
+  while (true) {
+    try {
+      real = missing.reduceRight((path, part) => join(path, part), realpathSync(current));
+      break;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+  return roots.some((root) => pathInside(root, real));
 }
 
 /**

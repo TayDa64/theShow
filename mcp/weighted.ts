@@ -215,10 +215,21 @@ export function evaluateWeighted(plan: ContinuityPlan): WeightedCheck {
     ));
   }
   if (plan.voiceId?.trim()) {
+    const spokenShots = new Set(
+      (plan.spokenLines ?? [])
+        .filter((spoken) => spoken.line.trim().length > 0)
+        .map((spoken) => spoken.shot),
+    );
     for (const entry of plan.shotPrompts ?? []) {
       if (entry.prompt.includes("<AUDIO_0>")) continue;
-      const message =
-        `Shot ${entry.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      const speaks = spokenShots.has(entry.shot);
+      // A silent shot in a voiced film has nothing to tag. sections-v2 blocks
+      // only the shots that actually speak. The default still warns on every
+      // prompt that lacks the tag.
+      if (plan.promptStyle === "sections-v2" && !speaks) continue;
+      const message = speaks
+        ? `Shot ${entry.shot} speaks a line but the prompt has no <AUDIO_0> tag.`
+        : `Shot ${entry.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
       if (plan.promptStyle === "sections-v2") {
         violations.push(violation("voice", entry.shot, message));
       } else {

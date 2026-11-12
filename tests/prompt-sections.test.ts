@@ -138,6 +138,8 @@ describe('the face sentence', () => {
     expect(shouldAnchorFace(hands)).toBe(true);
     expect(shouldAnchorFace(hands, { faceAnchor: 'off' })).toBe(false);
     expect(shouldAnchorFace(hands, { shotType: 'feet-close' })).toBe(false);
+    expect(shouldAnchorFace(hands, { shotType: 'Feet-Close' })).toBe(false);
+    expect(shouldAnchorFace(hands, { shotType: 'feet close' })).toBe(false);
     expect(shouldAnchorFace(hands, { shotType: 'close-up' })).toBe(true);
     expect(shouldAnchorFace('The lamp brightens.')).toBe(false);
   });
@@ -164,5 +166,36 @@ describe('the voice tag', () => {
     expect(gate.status).toBe('fail');
     expect(gate.blocked).toBe(true);
     expect(gate.violations.some((entry) => entry.message.includes('<AUDIO_0>'))).toBe(true);
+  });
+
+  it('does not block a silent shot in a sections-v2 film that also speaks', () => {
+    const voiced = 'He says, "Zipped up and cozy." in the voice from <AUDIO_0>.';
+    const gate = gateRenderSequence({
+      plan: {
+        ...plan,
+        promptStyle: 'sections-v2',
+        shotCount: 2,
+        shotPrompts: [
+          { shot: 1, prompt: voiced },
+          { shot: 2, prompt: 'The lamp stays lit. Nobody speaks.' },
+        ],
+      },
+    });
+    expect(gate.status).toBe('pass');
+    expect(gate.violations.some((entry) => entry.message.includes('<AUDIO_0>'))).toBe(false);
+
+    const legacy = gateRenderSequence({
+      plan: {
+        ...plan,
+        shotCount: 2,
+        shotPrompts: [
+          { shot: 1, prompt: voiced },
+          { shot: 2, prompt: 'The lamp stays lit. Nobody speaks.' },
+        ],
+      },
+    });
+    expect(legacy.status).toBe('pass');
+    expect(legacy.warnings?.join(' ')).toContain('Shot 2');
+    expect(legacy.warnings?.join(' ')).not.toContain('Shot 1');
   });
 });

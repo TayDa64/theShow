@@ -391,6 +391,11 @@ export async function boardFilm(
     confirm?: boolean;
     /** The real room, when the caller has one. Never a hardcoded office. */
     scene?: string;
+    /**
+     * The gate already refused this board. The estimate is still returned, and
+     * the next step must not tell the caller to confirm.
+     */
+    blocked?: boolean;
   },
   deps: BoardFilmDeps,
 ): Promise<BoardFilmResult> {
@@ -469,6 +474,16 @@ export async function boardFilm(
       (heroStills ? `, plus one hero frame` : "") +
       `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.` +
+      (heroStills
+        ? " The hero still is bought on every confirmed board, and its name is part of every " +
+          "shot frame, so a new hero buys the hero and every shot frame, not the hero alone."
+        : "") +
+      (!deps.baseImageUrl && (deps.referenceImageUrls ?? []).some((url) => url.trim())
+        ? " A portrait with no location photo is part of every frame's name, so a change to " +
+          "that portrait or the cast buys every frame again. There is no single hero still."
+        : "") +
+      " Closing frames are kept on the shot list and are not sent unless render_sequence is " +
+      "called with pin: \"both\". The default pin is start, so those cuts are not pixel-pinned." +
       (deps.baseImageUrl
         ? ` Every frame is edited from the same picture, so look at the board before ` +
           `rendering the video: a still that came back wrong is two cents, and the clip that ` +
@@ -502,8 +517,12 @@ export async function boardFilm(
       next: overBudget
         ? "Tell the user the board is over budget and what it would cost. Do not retry with a " +
           "higher limit unless they ask for one."
-        : "Show the frame count and the estimate. Call again with confirm: true only after the " +
-          "user approves the board. Nothing is rendered until then.",
+        : input.blocked
+          ? "This board is blocked, so confirm will not render anything. Pass overrideValidation: " +
+            "true to board anyway. confirm alone does not unblock it."
+          : "Show the frame count and the estimate. Call again with confirm: true only after the " +
+            "user approves the board. Nothing is rendered until then. Closing frames on the shot " +
+            "list are not sent unless render_sequence uses pin: \"both\". The default pin is start.",
     };
   }
 
@@ -648,9 +667,10 @@ export async function boardFilm(
       : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were ` +
         "returned. Re-run board_film: frames already on disk are reused and cost nothing.",
     next: complete
-      ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. " +
-        "Consecutive shots share a boundary frame, so every cut lands on identical pixels. " +
-        "Each shot is still one paid video render."
+      ? "Show the stills to the user for approval, then pass `shots` to render_sequence. Consecutive " +
+        "shots share a boundary picture. Those closing frames are not sent unless render_sequence " +
+        "uses pin: \"both\". The default pin is start, so the cuts are not pixel-pinned. Each shot " +
+        "is still one paid video render."
       : "Report which frames failed and re-run board_film. Do not render video from a partial board.",
   };
 }

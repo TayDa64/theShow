@@ -134,5 +134,36 @@ describe('plan_storyboard prompt style', () => {
     expect(body.shots[0].prompt).toBe(entry.prompt);
     expect(body.shots[0].action).not.toMatch(/unbuttons/i);
     expect(body.shots[0].action).toBe(entry.action);
+    const continuity = (JSON.parse(toolText(result)) as { continuity: { promptStyle?: string; voiceId?: string } }).continuity;
+    expect(continuity.promptStyle).toBe('sections-v2');
+    expect(continuity.voiceId).toBe('rex');
+  });
+
+  it('keeps a face anchor on a legacy beat', async () => {
+    const result = await client.callTool({
+      name: 'plan_storyboard',
+      arguments: {
+        sceneDescription: 'A hall.',
+        characters: [],
+        beats: [{ title: 'feet', action: 'The camera looks at his shoes.', faceAnchor: 'off' }],
+      },
+    });
+    const body = JSON.parse(toolText(result)) as { shots: Array<{ faceAnchor?: string }> };
+    expect(body.shots[0].faceAnchor).toBe('off');
+  });
+
+  it('keeps the wardrobe paragraph when sections-v2 has no beats', async () => {
+    const result = await client.callTool({
+      name: 'plan_storyboard',
+      arguments: {
+        sceneDescription: 'A hall.',
+        characters: ['Tay'],
+        promptStyle: 'sections-v2',
+        shotCount: 1,
+      },
+    });
+    const body = JSON.parse(toolText(result)) as { shots: Array<{ action: string; prompt?: string }> };
+    expect(body.shots[0].action).toContain('tan sherpa coat');
+    expect(body.shots[0].prompt ?? '').not.toContain('START:');
   });
 });

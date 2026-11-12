@@ -25,10 +25,11 @@ import {
 import {
   generateGrokClip,
   generateGrokStill,
+  localImageRefAllowed,
   type GrokClipResult,
 } from "./grokVideo.ts";
-import { boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
-import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
+import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
+import { charactersRoot, loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import {
   annotateAction,
   characterFromRecord,
@@ -45,6 +46,7 @@ import {
   RENDER_BLOCKED_BY_CONTRACT,
   RENDER_UNCHECKED,
   decideSpend,
+  messageForBoard,
   gateRenderSequence,
   promptFromContract,
   deriveContracts,
@@ -374,6 +376,7 @@ type ShotBeat = {
   shotType?: string;
   durationSeconds?: number;
   line?: { text?: string; delivery?: "spoken" | "sung" };
+  faceAnchor?: "auto" | "off";
 };
 
 function planShots(opts: {
@@ -399,6 +402,7 @@ function planShots(opts: {
       shotType: resolveBeatShotType(beat, i),
       durationSeconds: resolveBeatDuration(beat, per),
       action: beat.action.replace(/\{scene\}/g, scene).replace(/\{character\}/g, cast[0]),
+      ...(beat.faceAnchor ? { faceAnchor: beat.faceAnchor } : {}),
       continuityNotes: beat.note ?? "",
       characters: cast.filter(() => true),
       focusCharacter: cast[0],
@@ -1090,7 +1094,9 @@ server.registerTool(
         { ...shot } as Record<string, unknown>,
         snapshots[index],
         wardrobeEvents.some((event) => event.shot === index + 1),
-        args.promptStyle !== "sections-v2",
+        // A sectioned beat already carries the wardrobe. A sections-v2 call with
+        // no beat for this shot still needs the ledger paragraph.
+        args.promptStyle !== "sections-v2" || !args.beats?.[index],
       ),
     );
     const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
@@ -1107,6 +1113,8 @@ server.registerTool(
         wardrobeEvents,
         propEvents,
         shots: snapshots,
+        ...(args.promptStyle ? { promptStyle: args.promptStyle } : {}),
+        ...(args.voiceId ? { voiceId: args.voiceId } : {}),
       },
     };
     if (continuityWarnings.length > 0) payload.continuityWarnings = continuityWarnings;
@@ -1545,7 +1553,12 @@ server.registerTool(
       ),
       baseImageUrl: z.string().optional().describe(
         "Edit this picture instead of generating a new one. The prompt is sent word for word. " +
-        "Omit it and the still is a fresh generation, as before.",
+        "Omit it and the still is a fresh generation, as before. A local path must be inside the " +
+        "output folder or a character folder.",
+      ),
+      confirm: z.boolean().default(false).describe(
+        "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent " +
+        "word for word either way.",
       ),
       characters: z.array(z.string()).optional().describe(
         "Names of characters created with create_character. Their reference images are merged " +
@@ -1555,6 +1568,42 @@ server.registerTool(
   },
   async (args) => {
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const imageRefs = [args.baseImageUrl, ...(args.referenceImageUrls ?? []), ...urls]
+      .filter((ref): ref is string => Boolean(ref && ref.trim()));
+    const roots = [OUTPUT_DIR, charactersRoot()];
+    const rejected = imageRefs.find((ref) => !localImageRefAllowed(ref, roots));
+    if (rejected) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "refused",
+            willSpend: false,
+            error:
+              "A local image has to be inside the output folder or a character folder. " +
+              "https URLs and data images are still accepted.",
+          }, null, 2),
+        }],
+      };
+    }
+    if (args.confirm !== true) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            action: "estimate-only",
+            willSpend: false,
+            estimate: {
+              estimatedUsd: STILL_USD,
+              perStillUsd: STILL_USD,
+              isEstimate: true,
+              basis: "One still at $0.02. Nothing is generated until confirm is true.",
+            },
+            next: "Show the estimate. Call again with confirm: true only after the user approves.",
+          }, null, 2),
+        }],
+      };
+    }
     const result = await generateGrokStill(
       {
         prompt: args.prompt,
@@ -2432,29 +2481,42 @@ server.registerTool(
         : count;
     }, 0);
 
-    const ledgerForGate = args.ledger ?? (resumeJob?.ledger
+    const storedLedger = resumeJob?.ledger;
+    const carriedStyle = args.promptStyle ?? args.ledger?.promptStyle ?? storedLedger?.promptStyle;
+    const carriedVoice = args.voiceId ?? args.ledger?.voiceId ?? storedLedger?.voiceId;
+    const ledgerForGate = args.ledger
       ? {
-          locations: resumeJob.ledger.locations,
-          props: resumeJob.ledger.props,
-          wardrobeEvents: resumeJob.ledger.wardrobeEvents,
-          propEvents: resumeJob.ledger.propEvents,
-          shotSteps: resumeJob.ledger.shotSteps,
-          voiceId: resumeJob.ledger.voiceId,
-          promptStyle: resumeJob.ledger.promptStyle,
-          spokenLines: resumeJob.ledger.spokenLines,
-          humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
-          hasPortrait: resumeJob.ledger.hasPortrait,
-          scaleMarks: resumeJob.ledger.scaleMarks,
-          bodyClearance: resumeJob.ledger.bodyClearance,
-          tier1: resumeJob.ledger.tier1,
+          ...args.ledger,
+          ...(carriedStyle ? { promptStyle: carriedStyle } : {}),
+          ...(carriedVoice ? { voiceId: carriedVoice } : {}),
         }
-      : undefined);
+      : storedLedger
+      ? {
+          locations: storedLedger.locations,
+          props: storedLedger.props,
+          wardrobeEvents: storedLedger.wardrobeEvents,
+          propEvents: storedLedger.propEvents,
+          shotSteps: storedLedger.shotSteps,
+          voiceId: carriedVoice,
+          promptStyle: carriedStyle,
+          spokenLines: storedLedger.spokenLines,
+          humanVisionSignOff: storedLedger.humanVisionSignOff,
+          hasPortrait: storedLedger.hasPortrait,
+          scaleMarks: storedLedger.scaleMarks,
+          bodyClearance: storedLedger.bodyClearance,
+          tier1: storedLedger.tier1,
+        }
+      : undefined;
     const continuityPlan = continuityPlanFromRenderArgs({
       shots: args.shots,
       characters: args.characters,
-      promptStyle: args.promptStyle,
+      promptStyle: carriedStyle,
       ledger: ledgerForGate
-        ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId }
+        ? {
+            ...ledgerForGate,
+            ...(carriedVoice ? { voiceId: carriedVoice } : {}),
+            ...(carriedStyle ? { promptStyle: carriedStyle } : {}),
+          }
         : undefined,
     });
     const contractGate = gateRenderSequence({
@@ -2491,10 +2553,13 @@ server.registerTool(
               aspectRatio: args.aspectRatio,
               resolution: args.resolution,
               fadeSeconds: args.fadeDuration,
-              continuity: bookendedShots > 0
-                ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and ` +
-                  "last frames; the rest chain from the previous shot's last frame."
-                : "Each shot starts from the previous shot's last frame.",
+              continuity: (args.pin ?? "start") === "both" && bookendedShots > 0
+                ? `${bookendedShots} of ${shotCount} shots pin both the opening frame and the closing frame.`
+                : bookendedShots > 0
+                  ? `${bookendedShots} of ${shotCount} shots include a closing frame, but pin is "start", ` +
+                    "so those closing frames are not sent and the cuts are not pixel-pinned. Pass " +
+                    "pin: \"both\" to send them. The default stays start."
+                  : "Each shot starts from the previous shot's last frame. Closing frames are not pinned.",
               bookendedShots,
               sharedBoundaryFrames: sharedBoundaries,
               rendersAsOneJob: true,
@@ -2663,7 +2728,11 @@ server.registerTool(
   {
     description:
       "Board a film as stills before rendering it: generate one image per shot boundary, so " +
-      "consecutive shots share a frame and every cut lands on identical pixels. Two cents a still " +
+      "consecutive shots share a picture. render_sequence sends that closing frame only when pin " +
+      "is \"both\"; the default pin is start, so the cut is not pixel-pinned unless you ask. " +
+      "A portrait with no location photo is part of every frame's name, so changing it buys every " +
+      "still again. A hero built from a portrait and a room is bought again with every confirmed " +
+      "board, and a new hero buys every shot frame too. Two cents a still " +
       "against fourteen a second of video, so an eight-shot board costs about eighteen cents and " +
       "lets the user approve the look before the expensive half runs. Call without confirm for a " +
       "cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on " +
@@ -2729,7 +2798,12 @@ server.registerTool(
       ),
       confirm: z.boolean().default(false).describe(
         "Must be true to render stills. Call once without it to get the estimate, show it to the " +
-        "user, and call again with true only after they approve.",
+        "user, and call again with true only after they approve. confirm does not override a " +
+        "failed wardrobe check.",
+      ),
+      overrideValidation: z.boolean().default(false).describe(
+        "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. " +
+        "confirm alone does not unblock a refusal.",
       ),
     }),
   },
@@ -2779,6 +2853,7 @@ server.registerTool(
       : undefined;
     const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
     const contractValidation = runPreVideoGate({
+      overrideValidation: args.overrideValidation,
       plan: {
         characters: (args.characters ?? [])
           .map((name) => lookupCharacter(name))
@@ -2812,19 +2887,54 @@ server.registerTool(
         message:
           "This board names a cast and has neither a portrait nor a base picture, so wardrobe is unchecked.",
       });
-      contractValidation.ok = false;
-      contractValidation.blocked = true;
-      contractValidation.status = "fail";
-      contractValidation.tier0 = "fail";
-      contractValidation.message = RENDER_BLOCKED_BY_CONTRACT;
+      if (args.overrideValidation) {
+        contractValidation.ok = false;
+        contractValidation.blocked = false;
+        contractValidation.status = "override";
+        contractValidation.tier0 = "fail";
+        contractValidation.message =
+          "Wardrobe is unchecked; overrideValidation is set, so boarding may proceed.";
+      } else {
+        contractValidation.ok = false;
+        contractValidation.blocked = true;
+        contractValidation.status = "fail";
+        contractValidation.tier0 = "fail";
+        contractValidation.message =
+          "board_film refused to start because this board names a cast and has neither a portrait " +
+          "nor a location picture, so wardrobe is unchecked. Pass overrideValidation: true to board " +
+          "anyway. confirm alone does not unblock it.";
+      }
+    }
+    if (contractValidation.message) {
+      contractValidation.message = messageForBoard(contractValidation.message);
     }
     const decision = decideSpend(args.confirm, contractValidation);
     if (decision === "refused") {
+      const preview = await boardFilm(
+        {
+          shots: boardedShots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          scene: locationScene(args.characters),
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: false,
+          blocked: true,
+        },
+        {
+          outputDir: OUTPUT_DIR,
+          referenceImageUrls,
+          baseImageUrl,
+          generateStill: async (job, opts) => generateGrokStill(job, opts),
+        },
+      );
       return refusal({
         action: "refused",
         willSpend: false,
+        estimate: preview.estimate,
+        next: preview.next,
         contractValidation,
-        message: contractValidation.message ?? RENDER_BLOCKED_BY_CONTRACT,
+        message: contractValidation.message ?? messageForBoard(undefined),
       });
     }
     if (decision === "spend") {

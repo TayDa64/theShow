@@ -13,9 +13,10 @@
  * refreshes in the background is picked up without restarting the MCP server.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const API_BASE_URL = "https://api.x.ai";
 export const PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
@@ -55,6 +56,40 @@ type GrokAuthEntry = {
 
 /** A render must finish with this much session left, or it is refused. */
 export const SESSION_MARGIN_MS = 15 * 60 * 1000;
+
+/**
+ * Rewriting ~/.grok/auth.json is off unless this is 1, true, or yes.
+ *
+ * The Grok CLI refreshes that file itself. A second writer can rotate the
+ * refresh token and lock the CLI out. This server refuses an expired session
+ * instead of writing, until the operator opts in.
+ */
+export function grokSessionRefreshEnabled(): boolean {
+  const flag = process.env.THESHOW_REFRESH_GROK_SESSION?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+
+const REFRESH_OFF =
+  "Automatic refresh is off, so the session file was not rewritten. " +
+  "Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
+
+/** Write the session file by renaming a 0600 temp file in the same directory. */
+function writeSessionFileAtomic(path: string, contents: string) {
+  const tmp = join(dirname(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  try {
+    writeFileSync(tmp, contents, { encoding: "utf8", mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
+    chmodSync(path, 0o600);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // The temp file may not exist if the write itself failed.
+    }
+    throw err;
+  }
+}
 
 /**
  * Where the CLI session file lives.
@@ -232,6 +267,9 @@ export async function refreshGrokSession(opts: {
   fetchImpl?: typeof fetch;
   now?: number;
 } = {}): Promise<{ ok: true; expiresAt: string } | { ok: false; reason: string }> {
+  if (!grokSessionRefreshEnabled()) {
+    return { ok: false, reason: REFRESH_OFF };
+  }
   const stored = readGrokAuthFile();
   if (!stored || typeof stored.entry.refresh_token !== "string" || !stored.entry.refresh_token) {
     return { ok: false, reason: "Grok session has no refresh token." };
@@ -295,7 +333,7 @@ export async function refreshGrokSession(opts: {
       : {}),
   };
   try {
-    writeFileSync(path, JSON.stringify(file, null, 2), "utf8");
+    writeSessionFileAtomic(path, JSON.stringify(file, null, 2));
   } catch {
     return { ok: false, reason: "Grok session file could not be updated." };
   }
@@ -317,6 +355,7 @@ export async function ensureCredentialForJob(
   const first = resolveVideoCredential();
   if (first.ok && first.credential.kind === "api-key") return first;
 
+  let shortReason: string | undefined;
   if (first.ok) {
     const covers = sessionCoversRender({
       expiresAt: first.credential.expiresAt,
@@ -324,8 +363,20 @@ export async function ensureCredentialForJob(
       now: opts.now,
     });
     if (covers.ok) return first;
+    shortReason = covers.reason;
   } else if (first.code !== "expired") {
     return first;
+  }
+
+  if (!grokSessionRefreshEnabled()) {
+    const why = first.ok
+      ? (shortReason ?? "The Grok session will not last the job.")
+      : first.reason;
+    return {
+      ok: false,
+      code: "expired",
+      reason: `${why} ${REFRESH_OFF}`,
+    };
   }
 
   const refreshed = await refreshGrokSession(opts);

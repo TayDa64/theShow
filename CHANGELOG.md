@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxy's request limit.
 
 ### Changed
+- Stored wardrobe `closure` is read from `character.json` and applied. The previous release dropped it, so an existing character that already stored `open`, `slip-on`, or `none` now skips an `unbuttons` step and is checked against that closure. A layer with no `closure` is unchanged.
 - A bookend budgets its two frames together (75 KB each, ~200 KB of base64 for the pair) instead of
   hitting the request body limit at ~590 KB. A single inlined image keeps the original 220 KB budget,
   so phone photos behave exactly as before.

@@ -36,6 +36,17 @@ export const RENDER_UNCHECKED =
   "render_sequence refused to start because no continuity ledger or shot contracts were provided. " +
   "A plan with nothing to check is unchecked, and unchecked does not spend.";
 
+/** Board refusals name board_film. confirm does not unblock a failed board. */
+export function messageForBoard(message: string | undefined): string {
+  const text = message?.trim()
+    ? message
+    : "board_film refused to start because the shot contracts failed validation. " +
+      "Pass overrideValidation: true to board anyway. confirm alone does not unblock it.";
+  return text
+    .replaceAll("render_sequence refused to start", "board_film refused to start")
+    .replaceAll("rendering may proceed", "boarding may proceed");
+}
+
 export type ShotState = {
   worn: string[];
   holders: Record<string, string>;

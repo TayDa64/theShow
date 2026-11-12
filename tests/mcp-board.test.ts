@@ -107,6 +107,39 @@ describe('the board estimate gate', () => {
     expect(board.estimate.isEstimate).toBe(true);
     // Four stills for three shots, and the basis says why.
     expect(board.estimate.basis).toContain('4 frames for 3 shots');
+    expect(board.estimate.basis).toContain('default pin is start');
+    expect(board.next).toContain('confirm: true');
+  });
+
+  it('says a portrait with no room rebuys every frame, and a blocked estimate does not say to confirm', async () => {
+    const generateStill = fakeStill();
+    const portrait = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9' },
+      { generateStill, outputDir: dir, referenceImageUrls: ['/refs/portrait.jpg'] },
+    );
+    expect(portrait.estimate.basis).toContain('no single hero still');
+    expect(portrait.estimate.basis).toContain('every frame again');
+
+    const hero = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9' },
+      {
+        generateStill,
+        outputDir: dir,
+        baseImageUrl: '/refs/hall.jpg',
+        referenceImageUrls: ['/refs/portrait.jpg'],
+      },
+    );
+    expect(hero.estimate.basis).toContain('not the hero alone');
+    expect(hero.estimate.newStills).toBe(5);
+    expect(hero.estimate.estimatedUsd).toBeCloseTo(0.1, 6);
+
+    const blocked = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', blocked: true },
+      { generateStill, outputDir: dir },
+    );
+    expect(blocked.next).not.toContain('Call again with confirm: true');
+    expect(blocked.next).toContain('confirm will not render');
+    expect(generateStill).not.toHaveBeenCalled();
   });
 
   it('refuses to spend when the estimate is over maxCostUsd', async () => {

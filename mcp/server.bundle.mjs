@@ -2980,7 +2980,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3007,7 +3007,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3871,7 +3871,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4262,7 +4262,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -10053,7 +10053,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -10080,7 +10080,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -21646,7 +21646,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve) {
+function isRecursive(inst, stack, resolve2) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -21656,7 +21656,7 @@ function isRecursive(inst, stack, resolve) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+      const answer = isRecursive(child, stack, resolve2);
       if (answer > result)
         result = answer;
     }
@@ -21667,7 +21667,7 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -21731,7 +21731,7 @@ function isRecursive(inst, stack, resolve) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -40169,7 +40169,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -40186,7 +40186,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -40264,7 +40264,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -40526,12 +40526,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -41671,7 +41671,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -42335,12 +42335,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -42367,13 +42367,34 @@ function resolveBeatDuration(beat, evenSplitSeconds) {
 }
 
 // mcp/grok-auth.ts
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 var API_BASE_URL = "https://api.x.ai";
 var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
 var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
 var SESSION_MARGIN_MS = 15 * 60 * 1e3;
+function grokSessionRefreshEnabled() {
+  const flag = process.env.THESHOW_REFRESH_GROK_SESSION?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
+function writeSessionFileAtomic(path, contents) {
+  const tmp = join(dirname(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  try {
+    writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
+    chmodSync(tmp, 384);
+    renameSync(tmp, path);
+    chmodSync(path, 384);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+    throw err;
+  }
+}
 function grokAuthFilePath() {
   const fromEnv = process.env.GROK_AUTH_FILE;
   if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
@@ -42497,6 +42518,9 @@ function resolveVideoCredential() {
   };
 }
 async function refreshGrokSession(opts = {}) {
+  if (!grokSessionRefreshEnabled()) {
+    return { ok: false, reason: REFRESH_OFF };
+  }
   const stored = readGrokAuthFile();
   if (!stored || typeof stored.entry.refresh_token !== "string" || !stored.entry.refresh_token) {
     return { ok: false, reason: "Grok session has no refresh token." };
@@ -42555,7 +42579,7 @@ async function refreshGrokSession(opts = {}) {
     ...typeof parsed.refresh_token === "string" && parsed.refresh_token ? { refresh_token: parsed.refresh_token } : {}
   };
   try {
-    writeFileSync(path, JSON.stringify(file2, null, 2), "utf8");
+    writeSessionFileAtomic(path, JSON.stringify(file2, null, 2));
   } catch {
     return { ok: false, reason: "Grok session file could not be updated." };
   }
@@ -42564,6 +42588,7 @@ async function refreshGrokSession(opts = {}) {
 async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
   const first = resolveVideoCredential();
   if (first.ok && first.credential.kind === "api-key") return first;
+  let shortReason;
   if (first.ok) {
     const covers = sessionCoversRender({
       expiresAt: first.credential.expiresAt,
@@ -42571,8 +42596,17 @@ async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
       now: opts.now
     });
     if (covers.ok) return first;
+    shortReason = covers.reason;
   } else if (first.code !== "expired") {
     return first;
+  }
+  if (!grokSessionRefreshEnabled()) {
+    const why = first.ok ? shortReason ?? "The Grok session will not last the job." : first.reason;
+    return {
+      ok: false,
+      code: "expired",
+      reason: `${why} ${REFRESH_OFF}`
+    };
   }
   const refreshed = await refreshGrokSession(opts);
   if (!refreshed.ok) {
@@ -42601,9 +42635,13 @@ async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
 
 // mcp/promptSections.ts
 var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
+function normalisedShotType(shotType) {
+  const value = shotType?.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return value || void 0;
+}
 function shouldAnchorFace(prompt, opts) {
   if (opts?.faceAnchor === "off") return false;
-  if (opts?.shotType === "feet-close") return false;
+  if (normalisedShotType(opts?.shotType) === "feet-close") return false;
   return PERSON_IN_SHOT.test(prompt);
 }
 function ensurePeriod(text) {
@@ -43097,9 +43135,10 @@ async function pathToDataUrl(file2, mime = "image/png") {
 
 // mcp/grokVideo.ts
 import { execFile as execFile2 } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join as join3 } from "node:path";
+import { basename, dirname as dirname2, join as join3, resolve, sep } from "node:path";
 import { promisify as promisify2 } from "node:util";
 var exec2 = promisify2(execFile2);
 var USD_TICKS_PER_DOLLAR = 1e10;
@@ -43107,7 +43146,7 @@ function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
   return Number.isFinite(ticks) && ticks > 0 ? ticks / USD_TICKS_PER_DOLLAR : void 0;
 }
-var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 function describeHttpFailure(status, body) {
   const text = body.trim();
   if (!text.startsWith("<")) {
@@ -43162,6 +43201,41 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
     if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
   }
   return lastUrl;
+}
+function pathInside(root, candidate) {
+  const base = resolve(root);
+  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+}
+function localImageRefAllowed(ref, roots) {
+  const trimmed = ref.trim();
+  if (!trimmed) return false;
+  if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
+  let raw = trimmed;
+  if (trimmed.toLowerCase().startsWith("file:")) {
+    try {
+      raw = new URL(trimmed).pathname;
+    } catch {
+      return false;
+    }
+  }
+  const abs = resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs))) return false;
+  let current = abs;
+  const missing = [];
+  let real = abs;
+  while (true) {
+    try {
+      real = missing.reduceRight((path, part) => join3(path, part), realpathSync(current));
+      break;
+    } catch {
+      const parent = dirname2(current);
+      if (parent === current) break;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+  return roots.some((root) => pathInside(root, real));
 }
 async function toApiImageRef(ref, opts = {}) {
   const budget = opts.budgetBytes ?? INLINE_IMAGE_BUDGET_BYTES;
@@ -43633,7 +43707,7 @@ async function boardFilm(input2, deps) {
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots ` + (usable.some((shot) => shot.middleKeyframe) ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)` : `(${usable.length} + 1 shared boundaries)`) + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
+    basis: `${planned.length} frames for ${usable.length} shots ` + (usable.some((shot) => shot.middleKeyframe) ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)` : `(${usable.length} + 1 shared boundaries)`) + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (heroStills ? " The hero still is bought on every confirmed board, and its name is part of every shot frame, so a new hero buys the hero and every shot frame, not the hero alone." : "") + (!deps.baseImageUrl && (deps.referenceImageUrls ?? []).some((url2) => url2.trim()) ? " A portrait with no location photo is part of every frame's name, so a change to that portrait or the cast buys every frame again. There is no single hero still." : "") + ' Closing frames are kept on the shot list and are not sent unless render_sequence is called with pin: "both". The default pin is start, so those cuts are not pixel-pinned.' + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43652,7 +43726,7 @@ async function boardFilm(input2, deps) {
       estimate: baseEstimate,
       maxCostUsd: input2.maxCostUsd,
       error: overBudget ? `The board would cost $${estimatedUsd.toFixed(2)}, over the $${input2.maxCostUsd?.toFixed(2)} limit. Nothing was spent. Raise maxCostUsd or board fewer shots.` : void 0,
-      next: overBudget ? "Tell the user the board is over budget and what it would cost. Do not retry with a higher limit unless they ask for one." : "Show the frame count and the estimate. Call again with confirm: true only after the user approves the board. Nothing is rendered until then."
+      next: overBudget ? "Tell the user the board is over budget and what it would cost. Do not retry with a higher limit unless they ask for one." : input2.blocked ? "This board is blocked, so confirm will not render anything. Pass overrideValidation: true to board anyway. confirm alone does not unblock it." : 'Show the frame count and the estimate. Call again with confirm: true only after the user approves the board. Nothing is rendered until then. Closing frames on the shot list are not sent unless render_sequence uses pin: "both". The default pin is start.'
     };
   }
   const paths = /* @__PURE__ */ new Map();
@@ -43762,7 +43836,7 @@ async function boardFilm(input2, deps) {
     },
     maxCostUsd: input2.maxCostUsd,
     error: complete ? void 0 : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were returned. Re-run board_film: frames already on disk are reused and cost nothing.`,
-    next: complete ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. Consecutive shots share a boundary frame, so every cut lands on identical pixels. Each shot is still one paid video render." : "Report which frames failed and re-run board_film. Do not render video from a partial board."
+    next: complete ? 'Show the stills to the user for approval, then pass `shots` to render_sequence. Consecutive shots share a boundary picture. Those closing frames are not sent unless render_sequence uses pin: "both". The default pin is start, so the cuts are not pixel-pinned. Each shot is still one paid video render.' : "Report which frames failed and re-run board_film. Do not render video from a partial board."
   };
 }
 function toRenderShots(board) {
@@ -43780,7 +43854,7 @@ import { createHash as createHash3 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { basename, join as join5, sep } from "node:path";
+import { basename as basename2, join as join5, sep as sep2 } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
@@ -44244,7 +44318,7 @@ async function folderForWrite(root, name) {
   return record2 && sameName(record2.name, name) ? plain : hashed;
 }
 function copyNameFor(source) {
-  const file2 = basename(source);
+  const file2 = basename2(source);
   const extension = file2.match(/(\.[a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? "";
   const stem = slugFor(file2.replace(/\.[^.]*$/, "")).slice(0, 40) || "ref";
   return `${stem}-${shortHash(source)}${extension}`;
@@ -44262,7 +44336,7 @@ async function keepReferences(input2) {
       continue;
     }
     const source = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-    if (source === refsDir || source.startsWith(refsDir + sep)) {
+    if (source === refsDir || source.startsWith(refsDir + sep2)) {
       kept.push(source);
       continue;
     }
@@ -44539,9 +44613,14 @@ function evaluateWeighted(plan) {
     ));
   }
   if (plan.voiceId?.trim()) {
+    const spokenShots = new Set(
+      (plan.spokenLines ?? []).filter((spoken) => spoken.line.trim().length > 0).map((spoken) => spoken.shot)
+    );
     for (const entry2 of plan.shotPrompts ?? []) {
       if (entry2.prompt.includes("<AUDIO_0>")) continue;
-      const message = `Shot ${entry2.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      const speaks = spokenShots.has(entry2.shot);
+      if (plan.promptStyle === "sections-v2" && !speaks) continue;
+      const message = speaks ? `Shot ${entry2.shot} speaks a line but the prompt has no <AUDIO_0> tag.` : `Shot ${entry2.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
       if (plan.promptStyle === "sections-v2") {
         violations.push(violation("voice", entry2.shot, message));
       } else {
@@ -44620,6 +44699,10 @@ function evaluateWeighted(plan) {
 var MAX_STEPS_PER_SHOT = 3;
 var RENDER_BLOCKED_BY_CONTRACT = "render_sequence refused to start because the shot contracts failed validation. Pass overrideValidation: true to proceed anyway.";
 var RENDER_UNCHECKED = "render_sequence refused to start because no continuity ledger or shot contracts were provided. A plan with nothing to check is unchecked, and unchecked does not spend.";
+function messageForBoard(message) {
+  const text = message?.trim() ? message : "board_film refused to start because the shot contracts failed validation. Pass overrideValidation: true to board anyway. confirm alone does not unblock it.";
+  return text.replaceAll("render_sequence refused to start", "board_film refused to start").replaceAll("rendering may proceed", "boarding may proceed");
+}
 function layerType2(layer) {
   return layer.type ?? "clothing";
 }
@@ -45360,6 +45443,7 @@ function planShots(opts) {
       shotType: resolveBeatShotType(beat, i),
       durationSeconds: resolveBeatDuration(beat, per),
       action: beat.action.replace(/\{scene\}/g, scene2).replace(/\{character\}/g, cast2[0]),
+      ...beat.faceAnchor ? { faceAnchor: beat.faceAnchor } : {},
       continuityNotes: beat.note ?? "",
       characters: cast2.filter(() => true),
       focusCharacter: cast2[0],
@@ -45909,7 +45993,9 @@ server.registerTool(
         { ...shot },
         snapshots[index],
         wardrobeEvents.some((event) => event.shot === index + 1),
-        args.promptStyle !== "sections-v2"
+        // A sectioned beat already carries the wardrobe. A sections-v2 call with
+        // no beat for this shot still needs the ledger paragraph.
+        args.promptStyle !== "sections-v2" || !args.beats?.[index]
       )
     );
     const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
@@ -45924,7 +46010,9 @@ server.registerTool(
         props: args.props ?? [],
         wardrobeEvents,
         propEvents,
-        shots: snapshots
+        shots: snapshots,
+        ...args.promptStyle ? { promptStyle: args.promptStyle } : {},
+        ...args.voiceId ? { voiceId: args.voiceId } : {}
       }
     };
     if (continuityWarnings.length > 0) payload.continuityWarnings = continuityWarnings;
@@ -45953,7 +46041,7 @@ function localImagePath(ref) {
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
-var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var sleep2 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 server.registerTool(
   "generate_controlled_clip",
   {
@@ -46230,7 +46318,10 @@ server.registerTool(
         "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
       ),
       baseImageUrl: external_exports.string().optional().describe(
-        "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before."
+        "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before. A local path must be inside the output folder or a character folder."
+      ),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent word for word either way."
       ),
       characters: external_exports.array(external_exports.string()).optional().describe(
         "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
@@ -46239,6 +46330,39 @@ server.registerTool(
   },
   async (args) => {
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const imageRefs = [args.baseImageUrl, ...args.referenceImageUrls ?? [], ...urls].filter((ref) => Boolean(ref && ref.trim()));
+    const roots = [OUTPUT_DIR, charactersRoot()];
+    const rejected = imageRefs.find((ref) => !localImageRefAllowed(ref, roots));
+    if (rejected) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            willSpend: false,
+            error: "A local image has to be inside the output folder or a character folder. https URLs and data images are still accepted."
+          }, null, 2)
+        }]
+      };
+    }
+    if (args.confirm !== true) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willSpend: false,
+            estimate: {
+              estimatedUsd: STILL_USD,
+              perStillUsd: STILL_USD,
+              isEstimate: true,
+              basis: "One still at $0.02. Nothing is generated until confirm is true."
+            },
+            next: "Show the estimate. Call again with confirm: true only after the user approves."
+          }, null, 2)
+        }]
+      };
+    }
     const result = await generateGrokStill(
       {
         prompt: args.prompt,
@@ -46489,7 +46613,7 @@ async function runSequenceJob(job, args) {
       let retries = 0;
       while (result.status === "failed" && result.retryable && retries < 3) {
         retries += 1;
-        await new Promise((resolve) => setTimeout(resolve, 2500 * retries));
+        await new Promise((resolve2) => setTimeout(resolve2, 2500 * retries));
         result = await renderShot();
       }
       if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
@@ -46767,26 +46891,37 @@ server.registerTool(
       const next = args.shots[i + 1];
       return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
     }, 0);
-    const ledgerForGate = args.ledger ?? (resumeJob?.ledger ? {
-      locations: resumeJob.ledger.locations,
-      props: resumeJob.ledger.props,
-      wardrobeEvents: resumeJob.ledger.wardrobeEvents,
-      propEvents: resumeJob.ledger.propEvents,
-      shotSteps: resumeJob.ledger.shotSteps,
-      voiceId: resumeJob.ledger.voiceId,
-      promptStyle: resumeJob.ledger.promptStyle,
-      spokenLines: resumeJob.ledger.spokenLines,
-      humanVisionSignOff: resumeJob.ledger.humanVisionSignOff,
-      hasPortrait: resumeJob.ledger.hasPortrait,
-      scaleMarks: resumeJob.ledger.scaleMarks,
-      bodyClearance: resumeJob.ledger.bodyClearance,
-      tier1: resumeJob.ledger.tier1
-    } : void 0);
+    const storedLedger = resumeJob?.ledger;
+    const carriedStyle = args.promptStyle ?? args.ledger?.promptStyle ?? storedLedger?.promptStyle;
+    const carriedVoice = args.voiceId ?? args.ledger?.voiceId ?? storedLedger?.voiceId;
+    const ledgerForGate = args.ledger ? {
+      ...args.ledger,
+      ...carriedStyle ? { promptStyle: carriedStyle } : {},
+      ...carriedVoice ? { voiceId: carriedVoice } : {}
+    } : storedLedger ? {
+      locations: storedLedger.locations,
+      props: storedLedger.props,
+      wardrobeEvents: storedLedger.wardrobeEvents,
+      propEvents: storedLedger.propEvents,
+      shotSteps: storedLedger.shotSteps,
+      voiceId: carriedVoice,
+      promptStyle: carriedStyle,
+      spokenLines: storedLedger.spokenLines,
+      humanVisionSignOff: storedLedger.humanVisionSignOff,
+      hasPortrait: storedLedger.hasPortrait,
+      scaleMarks: storedLedger.scaleMarks,
+      bodyClearance: storedLedger.bodyClearance,
+      tier1: storedLedger.tier1
+    } : void 0;
     const continuityPlan = continuityPlanFromRenderArgs({
       shots: args.shots,
       characters: args.characters,
-      promptStyle: args.promptStyle,
-      ledger: ledgerForGate ? { ...ledgerForGate, voiceId: args.voiceId ?? ledgerForGate.voiceId } : void 0
+      promptStyle: carriedStyle,
+      ledger: ledgerForGate ? {
+        ...ledgerForGate,
+        ...carriedVoice ? { voiceId: carriedVoice } : {},
+        ...carriedStyle ? { promptStyle: carriedStyle } : {}
+      } : void 0
     });
     const contractGate = gateRenderSequence({
       plan: continuityPlan,
@@ -46820,7 +46955,7 @@ server.registerTool(
               aspectRatio: args.aspectRatio,
               resolution: args.resolution,
               fadeSeconds: args.fadeDuration,
-              continuity: bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and last frames; the rest chain from the previous shot's last frame.` : "Each shot starts from the previous shot's last frame.",
+              continuity: (args.pin ?? "start") === "both" && bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots pin both the opening frame and the closing frame.` : bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots include a closing frame, but pin is "start", so those closing frames are not sent and the cuts are not pixel-pinned. Pass pin: "both" to send them. The default stays start.` : "Each shot starts from the previous shot's last frame. Closing frames are not pinned.",
               bookendedShots,
               sharedBoundaryFrames: sharedBoundaries,
               rendersAsOneJob: true,
@@ -46954,7 +47089,7 @@ server.registerTool(
 server.registerTool(
   "board_film",
   {
-    description: "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
+    description: 'Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a picture. render_sequence sends that closing frame only when pin is "both"; the default pin is start, so the cut is not pixel-pinned unless you ask. A portrait with no location photo is part of every frame\'s name, so changing it buys every still again. A hero built from a portrait and a room is bought again with every confirmed board, and a new hero buys every shot frame too. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.',
     inputSchema: external_exports.object({
       shots: external_exports.array(external_exports.object({
         prompt: external_exports.string().optional().describe("What happens in the shot."),
@@ -46998,7 +47133,10 @@ server.registerTool(
         "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
       ),
       confirm: external_exports.boolean().default(false).describe(
-        "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+        "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve. confirm does not override a failed wardrobe check."
+      ),
+      overrideValidation: external_exports.boolean().default(false).describe(
+        "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. confirm alone does not unblock a refusal."
       )
     })
   },
@@ -47041,6 +47179,7 @@ server.registerTool(
     const referenceImageUrls = urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0;
     const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
     const contractValidation = runPreVideoGate({
+      overrideValidation: args.overrideValidation,
       plan: {
         characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2)),
         locations: args.locations,
@@ -47068,19 +47207,50 @@ server.registerTool(
         shot: framePreview.find((frame) => frame.wardrobeUnchecked)?.shot ?? 1,
         message: "This board names a cast and has neither a portrait nor a base picture, so wardrobe is unchecked."
       });
-      contractValidation.ok = false;
-      contractValidation.blocked = true;
-      contractValidation.status = "fail";
-      contractValidation.tier0 = "fail";
-      contractValidation.message = RENDER_BLOCKED_BY_CONTRACT;
+      if (args.overrideValidation) {
+        contractValidation.ok = false;
+        contractValidation.blocked = false;
+        contractValidation.status = "override";
+        contractValidation.tier0 = "fail";
+        contractValidation.message = "Wardrobe is unchecked; overrideValidation is set, so boarding may proceed.";
+      } else {
+        contractValidation.ok = false;
+        contractValidation.blocked = true;
+        contractValidation.status = "fail";
+        contractValidation.tier0 = "fail";
+        contractValidation.message = "board_film refused to start because this board names a cast and has neither a portrait nor a location picture, so wardrobe is unchecked. Pass overrideValidation: true to board anyway. confirm alone does not unblock it.";
+      }
+    }
+    if (contractValidation.message) {
+      contractValidation.message = messageForBoard(contractValidation.message);
     }
     const decision = decideSpend(args.confirm, contractValidation);
     if (decision === "refused") {
+      const preview = await boardFilm(
+        {
+          shots: boardedShots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          scene: locationScene(args.characters),
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: false,
+          blocked: true
+        },
+        {
+          outputDir: OUTPUT_DIR,
+          referenceImageUrls,
+          baseImageUrl,
+          generateStill: async (job, opts) => generateGrokStill(job, opts)
+        }
+      );
       return refusal({
         action: "refused",
         willSpend: false,
+        estimate: preview.estimate,
+        next: preview.next,
         contractValidation,
-        message: contractValidation.message ?? RENDER_BLOCKED_BY_CONTRACT
+        message: contractValidation.message ?? messageForBoard(void 0)
       });
     }
     if (decision === "spend") {

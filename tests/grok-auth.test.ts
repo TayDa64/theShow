@@ -17,6 +17,7 @@ const tempDirs: string[] = [];
 afterEach(() => {
   process.env.GROK_AUTH_FILE = '/nonexistent/theshow-test-auth.json';
   delete process.env.GROK_OAUTH_TOKEN_URL;
+  delete process.env.THESHOW_REFRESH_GROK_SESSION;
   delete process.env.XAI_API_KEY;
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -71,6 +72,7 @@ describe('session expiry before a render', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       refresh: 'test-refresh-token',
     });
+    process.env.THESHOW_REFRESH_GROK_SESSION = '1';
     process.env.GROK_OAUTH_TOKEN_URL = 'https://auth.example.test/oauth/token';
     const seen: string[] = [];
     const fetchImpl = (async (input: unknown, init?: { body?: string }) => {
@@ -95,6 +97,32 @@ describe('session expiry before a render', () => {
     const entry = saved['https://auth.example.test/oauth2/default::test-client'];
     expect(entry.key).toBe('refreshed-access-token');
     expect(entry.refresh_token).toBe('rotated-refresh-token');
+    expect(fs.statSync(authFile).mode & 0o777).toBe(0o600);
+    const leftovers = fs.readdirSync(path.dirname(authFile)).filter((name) => name.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+  });
+
+  it('does not rewrite an expired session unless refresh is opted in', async () => {
+    const authFile = writeSession({
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      refresh: 'test-refresh-token',
+    });
+    const before = fs.readFileSync(authFile, 'utf8');
+    process.env.GROK_OAUTH_TOKEN_URL = 'https://auth.example.test/oauth/token';
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+
+    const result = await ensureCredentialForJob(5 * 60 * 1000, { fetchImpl });
+    expect(result.ok).toBe(false);
+    expect(called).toBe(false);
+    expect(fs.readFileSync(authFile, 'utf8')).toBe(before);
+    if (!result.ok) {
+      expect(result.reason).toMatch(/not rewritten/i);
+      expect(result.reason).not.toMatch(/test-refresh-token|test-access-token/);
+    }
   });
 
   it('refreshes an already-expired session when a refresh token is stored', async () => {
@@ -102,6 +130,7 @@ describe('session expiry before a render', () => {
       expiresAt: new Date(Date.now() - 60_000).toISOString(),
       refresh: 'test-refresh-token',
     });
+    process.env.THESHOW_REFRESH_GROK_SESSION = '1';
     process.env.GROK_OAUTH_TOKEN_URL = 'https://auth.example.test/oauth/token';
     const fetchImpl = (async () => new Response(JSON.stringify({
       access_token: 'refreshed-access-token',

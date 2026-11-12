@@ -12,12 +12,17 @@ export const FACE_ANCHOR_SENTENCE = "Keep the face exactly as the first frame sh
 const PERSON_IN_SHOT =
   /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
 
+function normalisedShotType(shotType: string | undefined): string | undefined {
+  const value = shotType?.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return value || undefined;
+}
+
 export function shouldAnchorFace(
   prompt: string,
   opts?: { faceAnchor?: "auto" | "off"; shotType?: string },
 ): boolean {
   if (opts?.faceAnchor === "off") return false;
-  if (opts?.shotType === "feet-close") return false;
+  if (normalisedShotType(opts?.shotType) === "feet-close") return false;
   return PERSON_IN_SHOT.test(prompt);
 }
 

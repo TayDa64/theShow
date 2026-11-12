@@ -29,7 +29,7 @@ export const CHARACTERS_DIR =
  * point THESHOW_CHARACTERS_DIR at a temp directory and the module follows it
  * without having to be re-imported in a particular order.
  */
-function charactersRoot() {
+export function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
 

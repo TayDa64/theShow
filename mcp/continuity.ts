@@ -179,7 +179,7 @@ export type ContinuityPlan = {
   /** Built-in voice id sent with the clip, such as rex. */
   voiceId?: string;
   /**
-   * "sections-v2" requires `<AUDIO_0>` in every voiced prompt.
+   * "sections-v2" requires `<AUDIO_0>` on each shot that has a spoken line.
    * Omitted or "legacy" only warns, so an older prompt still renders.
    */
   promptStyle?: "legacy" | "sections-v2";

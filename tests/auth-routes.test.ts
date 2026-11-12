@@ -1,7 +1,11 @@
 import request from 'supertest';
 import { generateSync } from 'otplib';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { app } from '../server';
+
+beforeEach(() => {
+  delete process.env.THESHOW_VIDEO_BACKEND;
+});
 
 async function registerAccount(name: string, email: string) {
   const agent = request.agent(app);

@@ -8,6 +8,7 @@ import path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { localImageRefAllowed } from '../mcp/grokVideo.ts';
 import { JOBS_DIR } from '../mcp/media.ts';
 import { loadJobsFromDisk, server } from '../mcp/server.ts';
 
@@ -146,5 +147,126 @@ describe('spend tools stop when the gate does not pass', () => {
       (entry: { code: string }) => entry.code === 'too-many-steps',
     )).toBe(true);
     expect(fetchCalls).toEqual([]);
+  });
+
+  it('keeps a stored sections-v2 style when the resume ledger omits it', async () => {
+    fetchCalls.length = 0;
+    const jobId = 'seq_resume_style';
+    const job = {
+      id: jobId,
+      startedAt: 1,
+      state: 'completed',
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1,
+      spentUsd: 1,
+      shots: [{
+        index: 1,
+        title: 'Shot 1',
+        status: 'completed',
+        prompt: 'He stands.',
+      }],
+      ledger: {
+        locations: [],
+        props: [],
+        wardrobeEvents: [],
+        propEvents: [],
+        promptStyle: 'sections-v2',
+        voiceId: 'rex',
+        spokenLines: [{ shot: 1, line: 'Hello there.' }],
+      },
+    };
+    fs.mkdirSync(JOBS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(JOBS_DIR, `${jobId}.json`), JSON.stringify(job));
+    await loadJobsFromDisk();
+
+    const result = await client.callTool({
+      name: 'render_sequence',
+      arguments: {
+        confirm: false,
+        resumeFromJobId: jobId,
+        shots: [{
+          prompt: 'He says, "Hello there." and sits.',
+          durationSeconds: 4,
+          lastFrameUrl: '/tmp/theshow-closing.png',
+        }],
+        ledger: {
+          locations: [],
+          props: [],
+          wardrobeEvents: [],
+          propEvents: [],
+          spokenLines: [{ shot: 1, line: 'Hello there.' }],
+        },
+      },
+    });
+    const body = JSON.parse(toolText(result));
+    expect(body.action).toBe('estimate-only');
+    expect(body.contractValidation.status).toBe('fail');
+    expect(body.contractValidation.blocked).toBe(true);
+    expect(body.plan.continuity).toContain('pin is "start"');
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('accepts overrideValidation on a cast board with no picture', async () => {
+    fetchCalls.length = 0;
+    const refused = await client.callTool({
+      name: 'board_film',
+      arguments: {
+        confirm: true,
+        cast: 'one man in a tan coat',
+        shots: [{ prompt: 'He stands in the hall.' }],
+      },
+    });
+    const blocked = JSON.parse(toolText(refused));
+    expect(blocked.action).toBe('refused');
+    expect(blocked.message).toContain('board_film');
+    expect(blocked.message).not.toContain('render_sequence');
+    expect(blocked.next).not.toContain('Call again with confirm: true');
+    expect(blocked.contractValidation.blocked).toBe(true);
+
+    const allowed = await client.callTool({
+      name: 'board_film',
+      arguments: {
+        confirm: false,
+        overrideValidation: true,
+        cast: 'one man in a tan coat',
+        shots: [{ prompt: 'He stands in the hall.' }],
+      },
+    });
+    const estimate = JSON.parse(toolText(allowed));
+    expect(estimate.action).toBe('estimate-only');
+    expect(estimate.contractValidation.status).toBe('override');
+    expect(estimate.contractValidation.blocked).toBe(false);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('estimates a still until confirm, and refuses a local path outside the allowed folders', async () => {
+    fetchCalls.length = 0;
+    const estimate = JSON.parse(toolText(await client.callTool({
+      name: 'generate_still',
+      arguments: { prompt: 'A lantern on a table.' },
+    })));
+    expect(estimate.action).toBe('estimate-only');
+    expect(estimate.willSpend).toBe(false);
+    expect(fetchCalls).toEqual([]);
+
+    const refused = JSON.parse(toolText(await client.callTool({
+      name: 'generate_still',
+      arguments: {
+        confirm: true,
+        prompt: 'A lantern on a table.',
+        baseImageUrl: '/tmp/theshow-outside-still.png',
+      },
+    })));
+    expect(refused.action).toBe('refused');
+    expect(refused.willSpend).toBe(false);
+    expect(fetchCalls).toEqual([]);
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'theshow-still-'));
+    const inside = path.join(root, 'allowed-still.png');
+    fs.writeFileSync(inside, 'not-a-real-image');
+    expect(localImageRefAllowed(inside, [root])).toBe(true);
+    expect(localImageRefAllowed('https://example.invalid/still.png', [root])).toBe(true);
+    expect(localImageRefAllowed('/tmp/theshow-outside-still.png', [root])).toBe(false);
   });
 });
