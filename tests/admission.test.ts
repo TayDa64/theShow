@@ -15,6 +15,7 @@ import zlib from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import { acceptRenderedTake, reviewTake } from '../mcp/admission.ts';
 import { featheredSubjectCutout } from '../mcp/cutout.ts';
+import { resolveTools } from '../mcp/media.ts';
 import { heroPrompt, planBoardFrames } from '../mcp/storyboard.ts';
 import { lintSentPrompt } from '../mcp/promptLint.ts';
 
@@ -317,7 +318,8 @@ describe('portrait cutout', () => {
     expect(fs.readFileSync(source).equals(before)).toBe(true);
 
     const exec = promisify(execFile);
-    const { stdout } = await exec('ffmpeg', [
+    const { ffmpeg } = await resolveTools();
+    const { stdout } = await exec(ffmpeg, [
       '-v', 'error',
       '-i', cutout.path,
       '-f', 'rawvideo',
