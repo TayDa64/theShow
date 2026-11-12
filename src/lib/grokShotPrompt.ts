@@ -60,10 +60,32 @@ export type GrokShotPromptInput = {
   aspectRatio?: string;
   sceneDescription?: string;
   lighting?: string;
+  /** Framing. Sent whether or not a start frame is pinned. */
+  composition?: string;
+  /** Room and wardrobe notes. Omitted when a start frame already holds them. */
+  continuityNotes?: string;
+  wardrobe?: string;
   pinnedFrame: boolean;
   dialogue?: string;
   voiceId?: string;
 };
+
+/** Same measured rates as the MCP quote. 480p $0.08/s, 720p $0.14/s, 1080p $0.25/s. */
+const STUDIO_RATES: Record<StudioGrokResolution, number> = {
+  "480p": 0.08,
+  "720p": 0.14,
+  "1080p": 0.25,
+};
+
+export function studioQuote(seconds: number, resolution: StudioGrokResolution) {
+  const rate = STUDIO_RATES[resolution];
+  const totalUsd = Math.round(seconds * rate * 100) / 100;
+  return {
+    totalUsd,
+    ratePerSecond: rate,
+    basis: `${seconds}s at $${rate.toFixed(2)}/s for ${resolution} = $${totalUsd.toFixed(2)}.`,
+  };
+}
 
 function textOrEmpty(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -87,12 +109,18 @@ export function buildGrokShotPrompt(input: GrokShotPromptInput): string {
     `Action: ${action}`,
     `Camera: ${angle} angle, ${focal}mm lens, ${shotType}, ${aspect} frame.`,
   ];
+  const composition = textOrEmpty(input.composition);
+  if (composition) lines.push(`Framing: ${composition}`);
 
   if (!input.pinnedFrame) {
     const setting = textOrEmpty(input.sceneDescription);
     const light = textOrEmpty(input.lighting);
+    const continuity = textOrEmpty(input.continuityNotes);
+    const wardrobe = textOrEmpty(input.wardrobe);
     if (setting) lines.push(`Setting: ${setting}`);
     if (light) lines.push(`Light: ${light}`);
+    if (continuity) lines.push(`Continuity: ${continuity}`);
+    if (wardrobe) lines.push(`Wardrobe: ${wardrobe}`);
   }
 
   const dialogue = textOrEmpty(input.dialogue);

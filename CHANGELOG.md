@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `/theshow` is the primary start of planning and video generation. The command file is `commands/theshow.md`. Grok lowercases the slash string, so the invocation is `/theshow`. A slash command loads instructions; the model then calls `configure_film`. `/film` follows the same recipe. Estimates for `configure_film`, `board_film`, and `render_sequence` include the prompt that will be sent and any lint hits. Studio render returns that contract and spends only after confirm. Constraints and "no music" stay off the sent prompt.
 - Admission control on still and clip submission. A prompt lint rejects forbidden nouns and negation before any paid call. A negative list is stored for that lint and for the post-generation checklist, and is not sent: Grok Imagine has no negative_prompt field. A Gaussian-feathered portrait cutout is written beside a character portrait and the original file is left untouched. A failed checklist (an object that changes rooms or appears from nowhere, a squashed torso, a widened body, shortened legs, or a vocal that runs past its pre-timed end) deletes the take so it cannot pin the next shot. `imageOrder: "plate-first"` puts the room first when placing a person into a set. The default remains portrait-first.
 - Per-shot state-file contracts derived from the continuity ledger: requires, atomic steps,
   ensures, invariants, and forbidden items. A validator rejects more than three steps, a

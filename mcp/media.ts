@@ -282,7 +282,7 @@ export async function assembleClips(input: {
   fadeDuration: number;
   /**
    * Optional music, narration, or ambience laid under the whole film. It is
-   * looped if short, trimmed to the film, faded out at the end, and mixed under
+   * refused if shorter than the film, trimmed to the film, faded out at the end, and mixed under
    * the clips' own audio rather than replacing it.
    */
   audioTrackFile?: string;

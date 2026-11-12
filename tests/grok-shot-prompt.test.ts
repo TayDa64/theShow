@@ -11,6 +11,7 @@ import {
   durationForStudioGrokShot,
   studioGrokReferenceUrls,
   studioGrokResolution,
+  studioQuote,
 } from '../src/lib/grokShotPrompt.ts';
 
 function writePng(file: string, width: number, height: number) {
@@ -69,6 +70,27 @@ describe('studio Grok shot prompt', () => {
     expect(lintSentPrompt(pinned, GROK_SHOT_STORED_NEGATIVE)).toEqual([]);
     expect(lintSentPrompt(open, GROK_SHOT_STORED_NEGATIVE)).toEqual([]);
     expect(pinned).not.toMatch(/\b(do not|without|never|avoid)\b/i);
+  });
+
+  it('sends framing always, and wardrobe only when no frame is pinned', () => {
+    const shared = {
+      action: 'The subject turns toward the camera.',
+      composition: 'A medium frame with the subject left of center.',
+      continuityNotes: 'The oak bench stays against the glass.',
+      wardrobe: 'Tay wears a grey coat.',
+      sceneDescription: 'The glass vestibule holds an oak bench.',
+      pinnedFrame: false,
+    };
+    const open = buildGrokShotPrompt(shared);
+    const pinned = buildGrokShotPrompt({ ...shared, pinnedFrame: true });
+    expect(open).toContain('Framing: A medium frame with the subject left of center.');
+    expect(open).toContain('Wardrobe: Tay wears a grey coat.');
+    expect(open).toContain('Continuity: The oak bench stays against the glass.');
+    expect(pinned).toContain('Framing: A medium frame with the subject left of center.');
+    expect(pinned).not.toContain('Wardrobe:');
+    expect(pinned).not.toContain('oak bench');
+    expect(studioQuote(6, '480p').basis).toBe('6s at $0.08/s for 480p = $0.48.');
+    expect(studioQuote(8, '720p').totalUsd).toBeCloseTo(1.12, 5);
   });
 
   it('names the spoken line with the voice tag when a voice is set', () => {

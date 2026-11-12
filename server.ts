@@ -54,6 +54,7 @@ import {
   type VideoBackend,
 } from './src/lib/grokClipStore';
 import { generateGrokClip } from './mcp/grokVideo';
+import { lintSentPrompt } from './mcp/promptLint';
 import { featheredSubjectCutout } from './mcp/cutout';
 import { resolveVideoCredential } from './mcp/grok-auth';
 import {
@@ -62,6 +63,7 @@ import {
   durationForStudioGrokShot,
   studioGrokReferenceUrls,
   studioGrokResolution,
+  studioQuote,
   studioVoiceId,
 } from './src/lib/grokShotPrompt';
 import {
@@ -1509,6 +1511,99 @@ function sendGrokCredentialError(res: express.Response, result: { code?: string;
   });
 }
 
+function studioWardrobeLine(characters: any[]): string {
+  return characters
+    .map((character) => {
+      const outfit = character?.properties?.outfit;
+      const name = character?.name;
+      return typeof outfit === 'string' && outfit.trim() && name
+        ? `${name} wears ${outfit.trim()}`
+        : '';
+    })
+    .filter(Boolean)
+    .join('. ');
+}
+
+/**
+ * The exact Grok shot that would be submitted. No cutout file and no fetch.
+ * A transition of "none" refuses a pin even if a previous anchor was passed.
+ */
+function buildStudioGrokContract(input: {
+  characters: any[];
+  scene: any;
+  shot: any;
+  camera: any;
+  body: any;
+  continuityReference: { url?: string | null; sourceLabel?: string | null } | null;
+  firstFrameUrl?: string;
+}) {
+  const transition = input.shot?.transitionInMode;
+  const explicitFrame = typeof input.firstFrameUrl === 'string' ? input.firstFrameUrl.trim() : '';
+  const askedForContinuity = transition === 'previous-shot' || transition === 'custom-frame';
+  const continuityFrame = askedForContinuity ? (input.continuityReference?.url || '') : '';
+  const bridgeFrame = explicitFrame || continuityFrame || null;
+  const featuredCharacters = getShotCharacters(input.characters, input.scene, input.shot);
+  const voiceId = studioVoiceId(input.body?.voiceId, input.shot?.voiceId);
+  const durationSeconds = durationForStudioGrokShot(
+    input.shot?.durationSeconds,
+    input.body?.trackDurationSeconds ?? input.shot?.trackDurationSeconds ?? input.shot?.audioDurationSeconds,
+  );
+  const resolution = studioGrokResolution(
+    input.body?.resolution ?? input.shot?.resolution ?? input.camera?.resolution,
+  );
+  const pinned = Boolean(bridgeFrame);
+  const aspect = resolveGrokAspectRatio(input.camera?.aspectRatio);
+  const prompt = buildGrokShotPrompt({
+    action: input.shot?.action,
+    shotType: input.shot?.shotType || input.camera?.shotType,
+    cameraAngle: input.shot?.cameraAngle || input.camera?.tiltAngle,
+    focalLength: input.shot?.focalLength || input.camera?.focalLength,
+    aspectRatio: aspect,
+    sceneDescription: input.scene?.description,
+    lighting: input.scene?.lighting,
+    composition: input.shot?.composition,
+    continuityNotes: input.shot?.continuityNotes,
+    wardrobe: studioWardrobeLine(featuredCharacters),
+    pinnedFrame: pinned,
+    dialogue: getShotDialogueExcerpt(input.scene, input.characters, input.shot),
+    voiceId,
+  });
+  const personUrls = featuredCharacters
+    .map((character: any) => getCharacterActiveImageUrl(character))
+    .filter((url: string | null): url is string => Boolean(url));
+  const backgroundUrl = getSceneActiveBackgroundUrl(input.scene);
+  const referenceImageUrls = [...personUrls, ...(backgroundUrl ? [backgroundUrl] : [])]
+    .filter((url) => url !== bridgeFrame);
+  const quote = studioQuote(durationSeconds, resolution);
+  const lintHits = lintSentPrompt(prompt, GROK_SHOT_STORED_NEGATIVE);
+  return {
+    prompt,
+    aspect,
+    voiceId,
+    durationSeconds,
+    resolution,
+    bridgeFrame,
+    featuredCharacters,
+    quote,
+    lintHits,
+    contract: {
+      sentPrompt: prompt,
+      lintHits,
+      resolution,
+      durationSeconds,
+      startFrame: pinned ? bridgeFrame : null,
+      pinned,
+      omittedBecausePinned: pinned ? ['setting', 'light', 'continuity notes', 'wardrobe'] : [],
+      referenceImageUrls,
+      voiceId: voiceId ?? null,
+      negativeStored: GROK_SHOT_STORED_NEGATIVE,
+      quote,
+      seedNote: 'Grok does not receive the seed. The seed on this card is kept for a Veo render.',
+      captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
+    },
+  };
+}
+
 app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, requireCsrf, async (req, res) => {
   let userId: string | null = null;
   let providerMode: GenerationProviderMode = 'sandbox';
@@ -1549,49 +1644,66 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     const { referenceUrls, continuityReference } = pickReferenceUrlsForShot(characters, scene, shot);
     const aspect = resolveGrokAspectRatio(camera?.aspectRatio);
     const seedResolution = resolveStoryboardSeedForShot(scene, shot, resolvedSeed);
+    const confirmed = req.body?.confirm === true;
 
     if (backend === 'grok') {
-      const bridgeFrame = typeof firstFrameUrl === 'string' && firstFrameUrl.trim()
-        ? firstFrameUrl.trim()
-        : continuityReference?.url ?? null;
-      const featuredCharacters = getShotCharacters(characters, scene, shot);
-      const voiceId = studioVoiceId(req.body?.voiceId, shot?.voiceId);
-      const grokDurationSeconds = durationForStudioGrokShot(
-        shot?.durationSeconds,
-        req.body?.trackDurationSeconds ?? shot?.trackDurationSeconds ?? shot?.audioDurationSeconds,
-      );
-      const grokPrompt = buildGrokShotPrompt({
-        action: shot?.action,
-        shotType: shot?.shotType || camera?.shotType,
-        cameraAngle: shot?.cameraAngle || camera?.tiltAngle,
-        focalLength: shot?.focalLength || camera?.focalLength,
-        aspectRatio: aspect,
-        sceneDescription: scene?.description,
-        lighting: scene?.lighting,
-        pinnedFrame: Boolean(bridgeFrame),
-        dialogue: getShotDialogueExcerpt(scene, characters, shot),
-        voiceId,
+      const draft = buildStudioGrokContract({
+        characters,
+        scene,
+        shot,
+        camera,
+        body: req.body,
+        continuityReference,
+        firstFrameUrl,
       });
+      if (!confirmed) {
+        return res.json({
+          action: 'estimate-only',
+          willRender: false,
+          backend: 'grok',
+          contract: draft.contract,
+        });
+      }
+      if (draft.lintHits.length > 0) {
+        return res.status(422).json({
+          error: 'The prompt fails the check. Edit it and review the contract again. Nothing was spent.',
+          code: 'prompt-rejected',
+          sentPrompt: draft.prompt,
+          lintHits: draft.lintHits,
+          willRender: false,
+        });
+      }
+
       const grokReferences = await studioGrokReferenceUrls({
-        personUrls: featuredCharacters.map((character: any) => getCharacterActiveImageUrl(character)),
+        personUrls: draft.featuredCharacters.map((character: any) => getCharacterActiveImageUrl(character)),
         backgroundUrl: getSceneActiveBackgroundUrl(scene),
-        pinnedUrl: bridgeFrame,
+        pinnedUrl: draft.bridgeFrame,
         resolve: resolveAppAssetForGrok,
         cutout: (localPath) => featheredSubjectCutout(localPath),
       });
 
       const { result, operationName, record } = await startGrokShotRender({
         userId,
-        prompt: grokPrompt,
-        aspectRatio: aspect,
-        durationSeconds: grokDurationSeconds,
-        resolution: studioGrokResolution(req.body?.resolution ?? shot?.resolution ?? camera?.resolution),
-        voiceId,
+        prompt: draft.prompt,
+        aspectRatio: draft.aspect,
+        durationSeconds: draft.durationSeconds,
+        resolution: draft.resolution,
+        voiceId: draft.voiceId,
         negative: GROK_SHOT_STORED_NEGATIVE,
-        firstFrameUrl: bridgeFrame,
+        firstFrameUrl: draft.bridgeFrame,
         referenceUrls: grokReferences,
         continuitySource: continuityReference?.sourceLabel ?? null,
       });
+
+      if (result.code === 'prompt-rejected' || (typeof result.error === 'string' && result.error.includes('checklist'))) {
+        return res.status(422).json({
+          error: result.error || 'The take was refused.',
+          code: result.code === 'prompt-rejected' ? 'prompt-rejected' : 'checklist-miss',
+          sentPrompt: draft.prompt,
+          lintHits: draft.lintHits,
+          willRender: false,
+        });
+      }
 
       if (!operationName || !record) {
         return sendGrokCredentialError(res, result);
@@ -1599,11 +1711,16 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
 
       if (result.error || record.status === 'failed') {
         const reason = record.errorMessage || result.detail || result.error || 'unknown error';
-        return res.status(502).json({
-          error: `Grok Imagine Video could not render this shot: ${reason}`,
-          code: 'grok-render-failed',
+        const checklist = String(result.error || reason).includes('checklist');
+        return res.status(checklist ? 422 : 502).json({
+          error: checklist
+            ? reason
+            : `Grok Imagine Video could not render this shot: ${reason}`,
+          code: checklist ? 'checklist-miss' : 'grok-render-failed',
+          sentPrompt: draft.prompt,
           hint: result.hint ?? null,
           operationName,
+          willRender: false,
         });
       }
 
@@ -1622,10 +1739,10 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
         backend: 'grok',
         videoBackend: 'grok',
         usingReferenceImages: (result.status === 'completed') && grokReferences.length > 0,
-        durationSeconds: record.actualDurationSeconds ?? grokDurationSeconds,
+        durationSeconds: record.actualDurationSeconds ?? draft.durationSeconds,
         resolvedSeed: seedResolution.resolvedSeed,
         seedSource: seedResolution.seedSource,
-        usingContinuityFrame: !!bridgeFrame,
+        usingContinuityFrame: !!draft.bridgeFrame,
         continuitySource: continuityReference?.sourceLabel || null,
         providerMode,
         billedTo: record.billedTo,
@@ -1639,12 +1756,34 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     const referenceImages = await buildReferenceImages(referenceUrls);
     const usingReferenceImages = referenceImages.length > 0;
     const veoDuration = usingReferenceImages ? 8 : ([4, 6, 8].includes(Number(shot?.durationSeconds)) ? Number(shot.durationSeconds) : 6);
+    const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
+
+    if (req.body?.confirm === false || (backend === 'gemini' && !confirmed)) {
+      return res.json({
+        action: 'estimate-only',
+        willRender: false,
+        backend,
+        contract: {
+          sentPrompt: videoPrompt,
+          negativePrompt: STORYBOARD_NEGATIVE_PROMPT,
+          resolution: '720p',
+          durationSeconds: veoDuration,
+          startFrame: continuityReference?.url ?? null,
+          pinned: Boolean(continuityReference?.url),
+          referenceImageUrls: referenceUrls,
+          voiceId: null,
+          quote: backend === 'sandbox'
+            ? { totalUsd: 0, basis: 'Sandbox preview. Nothing is billed.' }
+            : { totalUsd: null, basis: 'This path uses Veo. The Grok per-second table does not price it.' },
+          seedNote: 'Veo receives the seed on this card.',
+          captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
+        },
+      });
+    }
 
     if (backend === 'sandbox' || !ai) {
       throw new Error('No live video provider configured. Emulating storyboard shot rendering pipeline.');
     }
-
-    const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
     const operation = await ai.models.generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt: videoPrompt,
@@ -2211,6 +2350,7 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
 
     if (backend === 'grok') {
       const durationSeconds = normalizeGrokShotDuration(QUICK_PREVIEW_DURATION_SECONDS);
+      const resolution = studioGrokResolution(req.body?.resolution);
       // Quick Preview has no shot, so the cast and the scene plate supply the
       // identity and set references a storyboard shot would carry itself.
       const referenceUrls = [
@@ -2222,13 +2362,44 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
           ].filter((url): url is string => Boolean(url)),
         ),
       ].slice(0, 3);
+      const lintHits = lintSentPrompt(videoPrompt, GROK_SHOT_STORED_NEGATIVE);
+      if (req.body?.confirm !== true) {
+        return res.json({
+          action: 'estimate-only',
+          willRender: false,
+          backend: 'grok',
+          contract: {
+            sentPrompt: videoPrompt,
+            lintHits,
+            resolution,
+            durationSeconds,
+            startFrame: null,
+            pinned: false,
+            referenceImageUrls: referenceUrls,
+            voiceId: null,
+            negativeStored: GROK_SHOT_STORED_NEGATIVE,
+            quote: studioQuote(durationSeconds, resolution),
+            seedNote: 'Quick preview does not send a seed to Grok.',
+            captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
+          },
+        });
+      }
+      if (lintHits.length > 0) {
+        return res.status(422).json({
+          error: 'The prompt fails the check. Edit it and review the contract again. Nothing was spent.',
+          code: 'prompt-rejected',
+          sentPrompt: videoPrompt,
+          lintHits,
+          willRender: false,
+        });
+      }
 
       const { result, operationName, record } = await startGrokShotRender({
         userId,
         prompt: videoPrompt,
         aspectRatio: aspect,
         durationSeconds,
-        resolution: studioGrokResolution(req.body?.resolution),
+        resolution,
         referenceUrls,
       });
 
@@ -2283,6 +2454,26 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
       });
     }
 
+    if (req.body?.confirm === false && backend === 'sandbox') {
+      return res.json({
+        action: 'estimate-only',
+        willRender: false,
+        backend: 'sandbox',
+        contract: {
+          sentPrompt: videoPrompt,
+          lintHits: lintSentPrompt(videoPrompt),
+          resolution: '720p',
+          durationSeconds: QUICK_PREVIEW_DURATION_SECONDS,
+          startFrame: null,
+          pinned: false,
+          referenceImageUrls: [],
+          voiceId: null,
+          quote: { totalUsd: 0, basis: 'Sandbox preview. Nothing is billed.' },
+          captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
+        },
+      });
+    }
+
     if (backend === 'sandbox') {
       const mockId = startMockVideoOperation(firstScene?.description || 'Storyboard Concept', {
         aspectRatio: normalizeMockVideoAspectRatio(camera?.aspectRatio),
@@ -2315,6 +2506,26 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
         error: 'The Gemini backend was selected without a connected Gemini provider.',
         code: 'no-video-backend',
         action: 'Connect a Gemini API key in Account, or unset THESHOW_VIDEO_BACKEND so the Grok subscription renders instead.',
+      });
+    }
+
+    if (req.body?.confirm !== true) {
+      return res.json({
+        action: 'estimate-only',
+        willRender: false,
+        backend: 'gemini',
+        contract: {
+          sentPrompt: videoPrompt,
+          negativePrompt: STORYBOARD_NEGATIVE_PROMPT,
+          resolution: '720p',
+          durationSeconds: QUICK_PREVIEW_DURATION_SECONDS,
+          startFrame: null,
+          pinned: false,
+          voiceId: null,
+          quote: { totalUsd: null, basis: 'This path uses Veo. The Grok per-second table does not price it.' },
+          seedNote: 'Veo receives the seed on this card.',
+          captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
+        },
       });
     }
 

@@ -13,6 +13,7 @@ import { acceptRenderedTake, TakeAdmissionSchema, type TakeReport } from "./admi
 import { resolveBeatDuration, resolveBeatShotType } from "./beats.ts";
 import { featheredSubjectCutout } from "./cutout.ts";
 import { ensureCredentialForJob, resolveVideoCredential } from "./grok-auth.ts";
+import { lintSentPrompt } from "./promptLint.ts";
 import { renderSectionsV2, shouldAnchorFace } from "./promptSections.ts";
 import {
   CLOSING_FRAME_MATCH_THRESHOLD,
@@ -528,14 +529,21 @@ function buildContinuityBlock(v: Record<string, unknown>) {
   const style = String(v.style ?? "").trim();
   const characters = String(v.characters ?? "").trim();
   const audio = String(v.audio ?? "").trim();
-  const never = String(v.neverShow ?? "").trim();
 
   parts.push(`Maintain exactly across every shot: ${style ? `${style} look` : "the same look"}.`);
   if (characters) parts.push(`Cast, unchanged in every shot: ${characters}.`);
-  if (audio) parts.push(`Audio: ${audio.toLowerCase()}. No music unless asked for.`);
-  if (never) parts.push(`Never show: ${never}.`);
+  if (audio) parts.push(`Audio: ${audio.toLowerCase()}.`);
   parts.push("Keep the same light source, palette and set dressing as the previous shot.");
   return parts.join(" ");
+}
+
+/** Constraints stay off the sent prompt. The lint and the checklist read this list. */
+function storedNegativeFromBrief(v: Record<string, unknown>): string {
+  const negatives: string[] = [];
+  const never = String(v.neverShow ?? "").trim();
+  if (never) negatives.push(never);
+  negatives.push("no music");
+  return negatives.join("\n");
 }
 
 const FILM_FORM_SCHEMA = {
@@ -621,8 +629,8 @@ const FILM_FORM_SCHEMA = {
       type: "string" as const,
       title: "Music or voiceover path (optional)",
       description:
-        "Attach the track in chat and paste its path here, or use an https link. It is mixed " +
-        "under the film, looped if short and faded out at the end. Leave blank for no music.",
+        "Attach the track in chat and paste its path here, or use an https link. A track shorter " +
+        "than the film is refused. A long enough track is faded out at the end. Leave blank for none.",
       maxLength: 500,
     },
     referenceImage: {
@@ -749,17 +757,30 @@ server.registerTool(
             perShotUsd: perShot,
             totalUsd: total,
             basis:
-              `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. ` +
-              `480p runs near $0.08/s and 1080p near $0.25/s.`,
+              `${shotCount} renders x ${shotSeconds}s at $${ratePerSecond(resolution).toFixed(2)}/s ` +
+              `for ${resolution} = $${total.toFixed(2)}.`,
             isEstimate: true,
           },
           continuityBlock: buildContinuityBlock(v),
+          negative: storedNegativeFromBrief(v),
+          contract: {
+            sentContinuity: buildContinuityBlock(v),
+            negativeStored: storedNegativeFromBrief(v),
+            lintHits: lintSentPrompt(buildContinuityBlock(v), storedNegativeFromBrief(v)),
+            resolution,
+            shotSeconds,
+            quote: {
+              perShotUsd: perShot,
+              totalUsd: total,
+              ratePerSecond: ratePerSecond(resolution),
+            },
+          },
           next:
-            "Show this back for a yes, then call plan_storyboard, and create_character with " +
-            "referenceImageUrls if a reference image was given. Pass continuityBlock as " +
-            "render_sequence's `continuity` so every shot carries the same set, wardrobe and " +
-            "constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the " +
-            "user left blank.",
+            "Show the sent continuity, the stored negative, any lint hits, and the quote. " +
+            "Then call plan_storyboard, and create_character with referenceImageUrls if a " +
+            "reference image was given. Pass continuityBlock as render_sequence's `continuity` " +
+            "and negative as the stored constraints. Pass audioTrack as `audioTrackUrl`. " +
+            "Never invent a character detail the user left blank.",
         }, null, 2),
       }],
     };
@@ -1194,6 +1215,69 @@ function composeShotPrompt(continuity: string | undefined, prompt: string) {
 Shot: ${shot}`;
 }
 
+function sentShotPrompt(
+  continuity: string | undefined,
+  shot: { prompt?: string; faceAnchor?: "auto" | "off"; shotType?: string },
+) {
+  const prompt = composeShotPrompt(continuity, shot.prompt ?? "");
+  return mentionsPerson(prompt) && shouldAnchorFace(prompt, {
+    faceAnchor: shot.faceAnchor,
+    shotType: shot.shotType,
+  })
+    ? `${prompt} Keep the face exactly as the first frame shows it.`
+    : prompt;
+}
+
+function sequenceContractShots(input: {
+  shots: Array<{
+    prompt?: string;
+    title?: string;
+    durationSeconds?: number;
+    firstFrameUrl?: string;
+    lastFrameUrl?: string;
+    referenceImageUrls?: string[];
+    negative?: string;
+    faceAnchor?: "auto" | "off";
+    shotType?: string;
+  }>;
+  continuity?: string;
+  resolution: string;
+  pin: "start" | "end" | "both";
+  voiceId?: string;
+}) {
+  return input.shots.map((shot, index) => {
+    const sentPrompt = sentShotPrompt(input.continuity, shot);
+    const lintHits = lintSentPrompt(sentPrompt, shot.negative);
+    const seconds = Number(shot.durationSeconds) || 8;
+    const rate = ratePerSecond(input.resolution);
+    const totalUsd = Math.round(seconds * rate * 100) / 100;
+    const startFrame = shot.firstFrameUrl
+      ? shot.firstFrameUrl
+      : index > 0
+        ? "previous shot's last frame, pinned after that shot renders"
+        : null;
+    return {
+      index: index + 1,
+      title: shot.title ?? `Shot ${index + 1}`,
+      sentPrompt,
+      lintHits,
+      resolution: input.resolution,
+      durationSeconds: seconds,
+      pin: input.pin,
+      startFrame,
+      closingFrameSent: input.pin === "both" && Boolean(shot.lastFrameUrl),
+      referenceImageUrls: shot.referenceImageUrls ?? [],
+      voiceId: input.voiceId ?? null,
+      negativeStored: shot.negative ?? "",
+      quote: {
+        totalUsd,
+        ratePerSecond: rate,
+        basis: `${seconds}s at $${rate.toFixed(2)}/s for ${input.resolution} = $${totalUsd.toFixed(2)}.`,
+      },
+    };
+  });
+}
+
 /**
  * A local path for an image reference, or undefined when it is remote or
  * already inlined. Used to record where a pinned frame lives on this machine, so
@@ -1328,15 +1412,45 @@ server.registerTool(
       overrideValidation,
     });
     const decision = decideSpend(confirm, gate);
+    const clipLint = lintSentPrompt(args.prompt, args.negative);
+    const clipRate = ratePerSecond(args.resolution);
+    const clipEstimate = Math.round(args.durationSeconds * clipRate * 100) / 100;
+    const clipContract = {
+      sentPrompt: args.prompt,
+      lintHits: clipLint,
+      resolution: args.resolution,
+      durationSeconds: args.durationSeconds,
+      pin: pin ?? "start",
+      startFrame: rest.firstFrameUrl ?? null,
+      closingFrameSent: (pin ?? "start") !== "start" && Boolean(rest.lastFrameUrl),
+      referenceImageUrls: rest.referenceImageUrls ?? [],
+      voiceId: voiceId ?? null,
+      negativeStored: args.negative ?? "",
+      quote: {
+        totalUsd: clipEstimate,
+        ratePerSecond: clipRate,
+        basis: `${args.durationSeconds}s at $${clipRate.toFixed(2)}/s for ${args.resolution} = $${clipEstimate.toFixed(2)}.`,
+      },
+    };
+    if (clipLint.length > 0) {
+      return refusal({
+        action: "refused",
+        willRender: false,
+        contract: clipContract,
+        contractValidation: gate,
+        message:
+          "The prompt fails the check. Show the failures and the prompt. Edit it before another try. Nothing was spent.",
+      });
+    }
     if (decision !== "spend") {
-      const estimate = Math.round(args.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
       return refusal({
         action: decision === "estimate" ? "estimate-only" : "refused",
         willRender: false,
-        estimate: { totalUsd: estimate, resolution: args.resolution, isEstimate: true },
+        estimate: { totalUsd: clipEstimate, resolution: args.resolution, isEstimate: true },
+        contract: clipContract,
         contractValidation: gate,
         message: decision === "estimate"
-          ? "Nothing was spent. Call again with confirm: true only after the gate passes and the user approves."
+          ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves."
           : (gate.message ?? RENDER_BLOCKED_BY_CONTRACT),
       });
     }
@@ -2229,6 +2343,7 @@ async function runSequenceJob(
         lastFramePath: localImagePath(shot.lastFrameUrl),
         closingFrameAgreement: undefined as number | undefined,
         prompt: shot.prompt,
+        sentPrompt: anchored,
         durationSeconds: shot.durationSeconds,
       };
       job.spentUsd += result.costUsd ?? 0;
@@ -2618,6 +2733,15 @@ server.registerTool(
       };
     }
 
+    const outgoing = sequenceContractShots({
+      shots: args.shots,
+      continuity: args.continuity,
+      resolution: args.resolution,
+      pin: args.pin ?? "start",
+      voiceId: carriedVoice,
+    });
+    const lintBlocked = outgoing.some((shot) => shot.lintHits.length > 0);
+
     if (!args.confirm) {
       return {
         content: [{
@@ -2654,15 +2778,35 @@ server.registerTool(
               totalUsd: estimate,
               resolution: args.resolution,
               basis:
-                `${shotCount} renders totalling ${totalSeconds}s at about ` +
-                `$${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
+                `${shotCount} renders totalling ${totalSeconds}s at ` +
+                `$${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution} = $${estimate.toFixed(2)}.`,
               isEstimate: true,
             },
+            contract: { shots: outgoing },
             ...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {}),
-            next:
-              "Show this to the user. Call again with confirm: true only after they approve. Do not " +
-              "set confirm without an explicit yes.",
+            next: lintBlocked
+              ? "The prompts fail the check. Show the sent prompts and the lint hits. Rewrite them " +
+                "before confirm. Nothing was spent, and a retry is an edit of that prompt."
+              : "Show the sent prompt, lint hits, pinned start frame, references, voice, duration, " +
+                "resolution, and the quote. Call again with confirm: true only after they approve. " +
+                "Do not set confirm without an explicit yes.",
             contractValidation: contractGate,
+          }, null, 2),
+        }],
+      };
+    }
+
+    if (lintBlocked) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            willRender: false,
+            contract: { shots: outgoing },
+            message:
+              "The prompt fails the check. The next take is an edit of the prompt that was shown. " +
+              "Nothing was spent.",
           }, null, 2),
         }],
       };
@@ -3045,8 +3189,19 @@ server.registerTool(
       },
     );
 
+    const boardFrames = Array.isArray(board.frames) ? board.frames : [];
     const payload = {
       ...board,
+      contract: {
+        frames: boardFrames.map((frame) => ({
+          index: frame.index,
+          sentPrompt: frame.prompt,
+          lintHits: lintSentPrompt(frame.prompt),
+          pinnedStart: frame.path ?? null,
+        })),
+        note:
+          "A still prompt names the room, because the still has to generate it. A video prompt with a pinned start frame does not restate the room. Closing frames are not sent unless pin is both.",
+      },
       contractValidation,
       continuity: {
         locations: args.locations ?? [],
@@ -3164,7 +3319,25 @@ server.registerTool(
 
     const duration = args.durationSeconds ?? target.durationSeconds ?? 8;
     const prompt = args.prompt ?? target.prompt;
-    const estimateUsd = Math.round(duration * ratePerSecond(original.settings?.resolution ?? "720p") * 100) / 100;
+    const retryResolution = original.settings?.resolution ?? "720p";
+    const retryRate = ratePerSecond(retryResolution);
+    const estimateUsd = Math.round(duration * retryRate * 100) / 100;
+    const retrySent = sentShotPrompt(original.settings?.continuity, { prompt: prompt ?? "" });
+    const retryHits = lintSentPrompt(retrySent);
+    const retryContract = {
+      sentPrompt: retrySent,
+      lintHits: retryHits,
+      resolution: retryResolution,
+      durationSeconds: duration,
+      pin: original.settings?.pin ?? "start",
+      startFrame: original.startFramePath ?? null,
+      voiceId: original.settings?.voiceId ?? null,
+      quote: {
+        totalUsd: estimateUsd,
+        ratePerSecond: retryRate,
+        basis: `1 render of ${duration}s at $${retryRate.toFixed(2)}/s for ${retryResolution} = $${estimateUsd.toFixed(2)}.`,
+      },
+    };
 
     const before = original.shots.filter((shot) => shot.index < index);
     const after = original.shots.filter((shot) => shot.index > index);
@@ -3191,10 +3364,11 @@ server.registerTool(
             },
             estimate: {
               totalUsd: estimateUsd,
-              resolution: original.settings?.resolution ?? "720p",
-              basis: `1 render of ${duration}s at the film's original resolution`,
+              resolution: retryResolution,
+              basis: retryContract.quote.basis,
               isEstimate: true,
             },
+            contract: retryContract,
             caveat:
               after.length === 0
                 ? "This is the last shot, so nothing downstream depends on it."
@@ -3205,7 +3379,23 @@ server.registerTool(
                   : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s ` +
                     "last frame. They are kept as-is, so the join after the repair will be a cut rather than a " +
                     "chained continuation. If that seam matters, repair those shots too.",
-            next: "Show this and the caveat to the user. Call again with confirm: true only after they approve.",
+            next: retryHits.length
+              ? "The prompt fails the check. Show the failures and the prompt that would be sent. Edit it. Nothing was spent."
+              : "Show the sent prompt, the lint hits, the price, and the caveat. Call again with confirm: true only after they approve. Do not spend the retry automatically.",
+          }, null, 2),
+        }],
+      };
+    }
+
+    if (retryHits.length > 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            willRender: false,
+            contract: retryContract,
+            message: "The prompt fails the check. The next take is an edit of that prompt. Nothing was spent.",
           }, null, 2),
         }],
       };

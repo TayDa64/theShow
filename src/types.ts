@@ -172,6 +172,11 @@ export interface StoryboardShot {
   title: string;
   shotType: StoryboardShotType;
   durationSeconds: 4 | 6 | 8;
+  /** Unset means 720p at render. An explicit 480p or 1080p is kept. */
+  resolution?: '480p' | '720p' | '1080p';
+  voiceId?: string;
+  /** When set, the clip is sized to the track. A shot with no track keeps its duration. */
+  trackDurationSeconds?: number;
   focalLength?: number;
   cameraAngle?: CameraConfig['tiltAngle'];
   composition: string;

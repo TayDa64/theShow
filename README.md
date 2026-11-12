@@ -88,11 +88,12 @@ The reference field takes a **path or an https URL**, because MCP has no file up
 
 ### Slash commands
 
-Nine commands ship with the plugin. Each one is the same workflow, started partway in.
+Ten commands ship with the plugin. `/theshow` is the primary start. `/film` follows the same recipe. Each one is the same workflow, started partway in.
 
 | Command | What it does |
 |---|---|
-| `/film <idea>` | Opens the configuration card, then boards and renders the film |
+| `/theshow <idea>` | Primary start. The model calls configure_film, then the board, then the render contract |
+| `/film <idea>` | The same recipe as `/theshow` |
 | `/scene <scene> [shots]` | Plans a storyboard only. Free, renders nothing |
 | `/character <name> [look] [photo]` | Creates or updates a character with reference photos |
 | `/board <scene or jobId>` | Boards a film as stills, about two cents a frame |
@@ -256,7 +257,7 @@ mcp/          the MCP server and its continuity logic
   grokVideo.ts  the video and image API client
   characters.ts the on-disk character store
 skills/theshow/ the workflow the model follows
-commands/       the nine slash commands
+commands/       the ten slash commands, `/theshow` first
 docs/           install guide and proof images
 src/            StoryForge Studio (React + Express)
 tests/          vitest

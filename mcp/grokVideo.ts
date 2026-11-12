@@ -506,7 +506,8 @@ export async function generateGrokClip(
           code: "rejected",
           error:
             `Clip failed the checklist: ${review.failures.join("; ")}. ` +
-            "The take was discarded and will not be used as a pin.",
+            `The prompt that was sent: ${job.prompt}. ` +
+            "The take was discarded and will not be used as a pin. No vision model ran. The next take is an edit of that prompt.",
         };
       }
       return {
@@ -763,7 +764,8 @@ export async function generateGrokStill(
         return {
           error:
             `Still failed the checklist: ${accepted.failures.join("; ")}. ` +
-            "The file was discarded and will not be used as a pin.",
+            `The prompt that was sent: ${job.prompt}. ` +
+            "The file was discarded and will not be used as a pin. No vision model ran.",
           code: "rejected",
           auth: credential.source,
           costUsd: costUsdFromUsage(payload.usage),

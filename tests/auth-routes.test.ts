@@ -93,6 +93,7 @@ describe('auth routes', () => {
         characters: [],
         scenes: [{ title: 'Quota Scene', description: 'A test render.' }],
         camera: { aspectRatio: '16:9' },
+        confirm: true,
       });
 
     expect(firstRender.status).toBe(200);
@@ -104,6 +105,7 @@ describe('auth routes', () => {
         characters: [],
         scenes: [{ title: 'Quota Scene', description: 'A second test render.' }],
         camera: { aspectRatio: '16:9' },
+        confirm: true,
       });
 
     expect(secondRender.status).toBe(429);

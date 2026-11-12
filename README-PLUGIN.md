@@ -12,7 +12,7 @@ This turns theShow (StoryForge) into a Grok Build plugin and MCP server for cont
 | `mcp/server.bundle.mjs` | The server, bundled so startup installs nothing |
 | `mcp/server.ts` | Tool definitions — edit here, then rebuild the bundle |
 | `skills/theshow/SKILL.md` | The workflow the model follows |
-| `commands/*.md` | The nine slash commands |
+| `commands/*.md` | The ten slash commands. `/theshow` is the primary start |
 
 ## Install
 
@@ -42,11 +42,12 @@ Ask for a film in plain language:
 
 > Generate a two-shot, 16-second film about a lamplighter in the rain. Keep the same character in both shots.
 
-Or start from a command. `/film` opens the configuration card; the rest begin the workflow partway in.
+Or start from a command. `/theshow` is the primary start. The file is `commands/theshow.md`. Grok lowercases the slash string, so you type `/theshow`. The qualified form is `/theshow:theshow`. A slash command loads instructions. The model then calls `configure_film`. It does not open the form by itself. `/film` follows the same recipe.
 
 | Command | What it does |
 |---|---|
-| `/film <idea>` | Configuration card, then board and render |
+| `/theshow <idea>` | Primary start. configure_film, board, contract, then render |
+| `/film <idea>` | The same recipe as `/theshow` |
 | `/scene <scene> [shots]` | Storyboard only. Free |
 | `/character <name> [look] [photo]` | Create or update a character |
 | `/board <scene or jobId>` | Board as stills, $0.02 a frame |

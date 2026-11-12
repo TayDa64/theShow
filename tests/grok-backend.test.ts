@@ -201,7 +201,7 @@ describe('quick preview route', () => {
       const response = await agent
         .post('/api/generate-video')
         .set('x-csrf-token', csrfToken)
-        .send(QUICK_PREVIEW_BODY);
+        .send({ ...QUICK_PREVIEW_BODY, confirm: true });
 
       expect(response.status).toBe(503);
       expect(response.body.code).toBe('grok-credential-missing');
@@ -246,7 +246,7 @@ describe('quick preview route', () => {
       const response = await agent
         .post('/api/generate-video')
         .set('x-csrf-token', csrfToken)
-        .send(QUICK_PREVIEW_BODY);
+        .send({ ...QUICK_PREVIEW_BODY, confirm: true });
 
       expect(response.status).toBe(200);
       operationName = response.body.operationName;
@@ -298,7 +298,7 @@ describe('studio Grok shot submission', () => {
       const response = await agent
         .post('/api/generate-shot-video')
         .set('x-csrf-token', csrfToken)
-        .send(body);
+        .send({ ...body, confirm: true });
       expect(response.status).toBe(503);
       expect(calls).toHaveLength(1);
       expect(calls[0].url).toContain('/v1/videos/generations');
@@ -359,6 +359,45 @@ describe('studio Grok shot submission', () => {
     expect(lintSentPrompt(body.prompt, GROK_SHOT_STORED_NEGATIVE)).toEqual([]);
   });
 
+  it('returns the contract and does not spend until confirm', async () => {
+    process.env.THESHOW_VIDEO_BACKEND = 'grok';
+    process.env.XAI_API_KEY = 'test-key-not-used-upstream';
+    const { agent, csrfToken } = await registerAccount();
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response('{"error":"bad key"}', { status: 401 });
+    }) as typeof fetch;
+
+    try {
+      const response = await agent
+        .post('/api/generate-shot-video')
+        .set('x-csrf-token', csrfToken)
+        .send(SHOT_BODY);
+
+      expect(response.status).toBe(200);
+      expect(response.body.action).toBe('estimate-only');
+      expect(response.body.willRender).toBe(false);
+      expect(response.body.contract.sentPrompt).toContain('The subject turns toward the camera.');
+      expect(response.body.contract.quote.basis).toContain('6s at $0.14/s for 720p');
+      expect(response.body.contract.pinned).toBe(false);
+      expect(calls).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.XAI_API_KEY;
+    }
+  });
+
+  it('does not invent a pin when the shot does not ask for one', async () => {
+    const body = await captureShot({
+      ...SHOT_BODY,
+      shot: { ...SHOT_BODY.shot, transitionInMode: 'previous-shot' },
+    });
+    expect(body.image).toBeUndefined();
+    expect(body.prompt).toContain('Setting: A test scene.');
+  });
+
   it('keeps the Veo prompt and its negative prompt on the Gemini path', async () => {
     process.env.THESHOW_VIDEO_BACKEND = 'gemini';
     const { agent, csrfToken } = await registerAccount();
@@ -375,7 +414,7 @@ describe('studio Grok shot submission', () => {
     const response = await agent
       .post('/api/generate-shot-video')
       .set('x-csrf-token', csrfToken)
-      .send(SHOT_BODY);
+      .send({ ...SHOT_BODY, confirm: true });
 
     expect(response.status).toBe(200);
     expect(response.body.videoBackend).toBe('gemini');

@@ -147,7 +147,9 @@ describe('the continuity block', () => {
     expect(code).toContain('continuityBlock: buildContinuityBlock(v)');
     // Blank form fields must not turn into invented prose.
     expect(code).toContain('if (characters) parts.push');
-    expect(code).toContain('if (never) parts.push');
+    expect(code).toContain('if (never) negatives.push');
+    expect(code).not.toContain('Never show:');
+    expect(code).not.toContain('No music unless asked for');
   });
 
   it('is prepended to every shot prompt, not just the first', () => {
