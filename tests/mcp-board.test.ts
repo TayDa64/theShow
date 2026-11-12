@@ -107,6 +107,39 @@ describe('the board estimate gate', () => {
     expect(board.estimate.isEstimate).toBe(true);
     // Four stills for three shots, and the basis says why.
     expect(board.estimate.basis).toContain('4 frames for 3 shots');
+    expect(board.estimate.basis).toContain('default pin is start');
+    expect(board.next).toContain('confirm: true');
+  });
+
+  it('says a portrait with no room rebuys every frame, and a blocked estimate does not say to confirm', async () => {
+    const generateStill = fakeStill();
+    const portrait = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9' },
+      { generateStill, outputDir: dir, referenceImageUrls: ['/refs/portrait.jpg'] },
+    );
+    expect(portrait.estimate.basis).toContain('no single hero still');
+    expect(portrait.estimate.basis).toContain('every frame again');
+
+    const hero = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9' },
+      {
+        generateStill,
+        outputDir: dir,
+        baseImageUrl: '/refs/hall.jpg',
+        referenceImageUrls: ['/refs/portrait.jpg'],
+      },
+    );
+    expect(hero.estimate.basis).toContain('not the hero alone');
+    expect(hero.estimate.newStills).toBe(5);
+    expect(hero.estimate.estimatedUsd).toBeCloseTo(0.1, 6);
+
+    const blocked = await boardFilm(
+      { shots: SHOTS, aspectRatio: '16:9', blocked: true },
+      { generateStill, outputDir: dir },
+    );
+    expect(blocked.next).not.toContain('Call again with confirm: true');
+    expect(blocked.next).toContain('confirm will not render');
+    expect(generateStill).not.toHaveBeenCalled();
   });
 
   it('refuses to spend when the estimate is over maxCostUsd', async () => {
@@ -454,7 +487,8 @@ describe('the picture outranks the prompt', () => {
       expect(frame.prompt).toContain('taken from the reference picture');
       expect(frame.prompt).toContain('ground truth');
       expect(frame.prompt).toContain("exactly as the reference picture shows them");
-      expect(frame.prompt).toContain('never restyle them');
+      expect(frame.prompt).not.toMatch(/\bnever\b/i);
+      expect(frame.prompt).not.toMatch(/\bno\b/i);
     }
   });
 
@@ -560,5 +594,66 @@ describe('a changed hero frame invalidates the shots bought from it', () => {
       baseFingerprint: 'board-hero-aaaa',
     });
     expect(again.map((f) => f.stem)).toEqual(withHero.map((f) => f.stem));
+  });
+});
+
+describe('wardrobe lock when the picture is a portrait and not a location base', () => {
+  it('locks clothing from a portrait alone and flags a cast with no picture', () => {
+    const withPortrait = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+      referenceImageUrls: ['/tmp/portrait.png'],
+    });
+    expect(withPortrait[0].wardrobeUnchecked).toBeUndefined();
+    expect(withPortrait[0].prompt).toMatch(/clothing exactly as the reference/i);
+
+    const withBase = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+      baseImageUrl: '/tmp/room.png',
+    });
+    expect(withBase[0].prompt).toMatch(/clothing exactly as the reference/i);
+
+    const withNeither = planBoardFrames({
+      shots: [{ prompt: 'Tay stands in the tan coat.' }],
+      aspectRatio: '16:9',
+      cast: 'one man in a tan coat',
+    });
+    expect(withNeither[0].wardrobeUnchecked).toBe(true);
+    expect(withNeither[0].prompt).not.toMatch(/clothing exactly as the reference/i);
+  });
+});
+
+describe('the hero frame names the photos in the order they are sent', () => {
+  it('calls the first photo the person and the second photo the room', async () => {
+    const generateStill = fakeStill();
+    await boardFilm(
+      {
+        shots: SHOTS,
+        aspectRatio: '16:9',
+        confirm: true,
+        cast: 'One man, grey beard',
+        look: 'Halfway Station hall',
+      },
+      {
+        outputDir: dir,
+        baseImageUrl: '/refs/hall.jpg',
+        referenceImageUrls: ['/refs/portrait.jpg'],
+        generateStill,
+      },
+    );
+    const hero = generateStill.mock.calls[0][0] as { prompt: string; baseImageUrl?: string; referenceImageUrls?: string[] };
+    expect(hero.referenceImageUrls).toEqual(['/refs/portrait.jpg']);
+    expect(hero.baseImageUrl).toBe('/refs/hall.jpg');
+    expect(hero.prompt).toContain('person from the first photo');
+    expect(hero.prompt).toContain('room in the second photo, Halfway Station hall');
+    expect(hero.prompt).toContain('second photo is the room');
+    expect(hero.prompt).not.toMatch(/\boffice\b/i);
+    expect(hero.prompt).not.toMatch(/\bdusk\b/i);
+    expect(hero.prompt).not.toMatch(/the city/i);
+    const again = generateStill.mock.calls[0][1] as { filename?: string };
+    expect(again.filename).toMatch(/^board-hero-/);
   });
 });

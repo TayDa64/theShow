@@ -23,7 +23,8 @@ describe("the cast line for a board edited from a picture", () => {
   it("tells the model to take clothing from the picture and infer none", () => {
     const out = castForPicture("one man, grey beard, black double-breasted coat");
     expect(out).toMatch(/clothing is whatever the reference picture shows/i);
-    expect(out).toMatch(/do not add, swap, layer or remove any garment/i);
+    expect(out).toMatch(/copy them unchanged, in the same layers the picture shows/i);
+    expect(out).not.toMatch(/\b(do not|don't|never|no)\b/i);
   });
 
   it("never leaves the cast empty-handed when it is all clothing", () => {

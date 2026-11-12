@@ -385,6 +385,13 @@ export function normalizeStoryboardShot(raw: Partial<StoryboardShot>, index = 0)
     title: raw.title || `Shot ${index + 1}`,
     shotType: raw.shotType || STORYBOARD_SHOT_TYPE_ROTATION[index % STORYBOARD_SHOT_TYPE_ROTATION.length],
     durationSeconds: clampShotDuration(raw.durationSeconds),
+    resolution: raw.resolution === '480p' || raw.resolution === '720p' || raw.resolution === '1080p'
+      ? raw.resolution
+      : undefined,
+    voiceId: typeof raw.voiceId === 'string' && raw.voiceId.trim() ? raw.voiceId.trim() : undefined,
+    trackDurationSeconds: typeof raw.trackDurationSeconds === 'number' && raw.trackDurationSeconds > 0
+      ? raw.trackDurationSeconds
+      : undefined,
     focalLength: raw.focalLength,
     cameraAngle: raw.cameraAngle || 'eye-level',
     composition: raw.composition || 'Compose the moment with clear subject focus and readable blocking.',

@@ -259,11 +259,33 @@ function formatSeedSourceLabel(source: StoryboardSeedSource | null | undefined) 
 async function readErrorMessage(response: Response, fallback: string) {
   try {
     const data = await response.json();
-    return data?.error || fallback;
+    const hits = Array.isArray(data?.lintHits) && data.lintHits.length
+      ? ` Lint: ${data.lintHits.map((hit: { match?: string }) => hit.match).filter(Boolean).join(', ')}.`
+      : '';
+    const sent = typeof data?.sentPrompt === 'string' && data.sentPrompt
+      ? ` Prompt that was sent: ${data.sentPrompt}`
+      : '';
+    return `${data?.error || fallback}${hits}${sent}`;
   } catch {
     return fallback;
   }
 }
+
+type RenderContract = {
+  sentPrompt?: string;
+  lintHits?: Array<{ kind?: string; match?: string }>;
+  resolution?: string;
+  durationSeconds?: number;
+  startFrame?: string | null;
+  pinned?: boolean;
+  omittedBecausePinned?: string[];
+  referenceImageUrls?: string[];
+  voiceId?: string | null;
+  quote?: { totalUsd?: number | null; basis?: string };
+  seedNote?: string;
+  captionsNote?: string;
+  negativePrompt?: string;
+};
 function resolveStoryboardShotSeed(
   shot: StoryboardSceneShot,
   previousShot: StoryboardSceneShot | undefined,
@@ -358,6 +380,43 @@ function describeSeedLineage(
   return 'Seed lineage will appear here after the render request is resolved.';
 }
 
+function ContractCard({ contract, title }: { contract: RenderContract; title: string }) {
+  const hits = contract.lintHits ?? [];
+  const start = contract.startFrame;
+  const showImage = typeof start === 'string' && (start.startsWith('http') || start.startsWith('/') || start.startsWith('data:'));
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 space-y-2">
+      <div className="text-[11px] font-semibold text-zinc-200">{title}</div>
+      <p className="text-[11px] font-mono text-zinc-300 whitespace-pre-wrap">{contract.sentPrompt}</p>
+      {hits.length > 0 && (
+        <p className="text-[11px] text-amber-300">
+          Lint: {hits.map((hit) => hit.match).filter(Boolean).join(', ')}. Edit the prompt. Nothing was spent.
+        </p>
+      )}
+      {showImage && (
+        <img src={start} alt="Pinned start frame" className="h-16 w-16 rounded object-cover border border-zinc-800" />
+      )}
+      {contract.pinned && !showImage && start && (
+        <p className="text-[10px] font-mono text-zinc-400">Pinned start: {start}</p>
+      )}
+      {!contract.pinned && <p className="text-[10px] font-mono text-zinc-500">No start frame pinned.</p>}
+      {contract.omittedBecausePinned && contract.omittedBecausePinned.length > 0 && (
+        <p className="text-[10px] font-mono text-zinc-500">
+          Left out because the frame is pinned: {contract.omittedBecausePinned.join(', ')}.
+        </p>
+      )}
+      <p className="text-[10px] font-mono text-zinc-400">
+        {contract.resolution} · {contract.durationSeconds}s
+        {contract.voiceId ? ` · voice ${contract.voiceId}` : ' · no voice'}
+        {contract.referenceImageUrls?.length ? ` · ${contract.referenceImageUrls.length} references` : ' · no references'}
+      </p>
+      {contract.quote?.basis && <p className="text-[11px] text-zinc-200">{contract.quote.basis}</p>}
+      {contract.seedNote && <p className="text-[10px] text-zinc-500">{contract.seedNote}</p>}
+      {contract.captionsNote && <p className="text-[10px] text-zinc-500">{contract.captionsNote}</p>}
+    </div>
+  );
+}
+
 export function ExportView({ settings, onUpdateSettings, onUpdateScenes, characters, scenes, camera }: ExportViewProps) {
   const { authFetch, isAuthenticated, provider } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -386,6 +445,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
   const [storyboardProgressText, setStoryboardProgressText] = useState('');
   const [storyboardJobs, setStoryboardJobs] = useState<StoryboardJob[]>([]);
   const [savingAnchorShotId, setSavingAnchorShotId] = useState<string | null>(null);
+  const [pendingStoryboard, setPendingStoryboard] = useState<RenderContract[] | null>(null);
+  const [pendingQuick, setPendingQuick] = useState<RenderContract | null>(null);
 
   useEffect(() => {
     storyboardJobsRef.current = storyboardJobs;
@@ -653,6 +714,36 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     setRenderMessage('Render cancelled.');
   };
 
+  const reviewQuickPreview = async () => {
+    if (!selectedScene) return;
+    if (!isAuthenticated) {
+      setVideoStatus('failed');
+      setVideoError('Sign in from the Account dashboard to render quick previews.');
+      return;
+    }
+    setVideoError(null);
+    setRenderMessage('Building the contract. Nothing is spent yet.');
+    const response = await authFetch('/api/generate-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        characters,
+        scenes: [selectedScene].filter(Boolean),
+        camera,
+        confirm: false,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.action !== 'estimate-only') {
+      setVideoStatus('failed');
+      setVideoError(data?.error || 'Could not build the preview contract.');
+      return;
+    }
+    setPendingQuick(data.contract);
+    setVideoStatus('idle');
+    setRenderMessage('Review the contract. Nothing has been spent.');
+  };
+
   const triggerQuickPreview = async () => {
     if (!selectedScene) return;
     if (!isAuthenticated) {
@@ -665,6 +756,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     setPollAbortController(controller);
 
     try {
+      setPendingQuick(null);
       setVideoStatus('rendering');
       setRenderProgress(5);
       setRenderMessage('Synthesizing screenplay storyboard assets...');
@@ -679,7 +771,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         body: JSON.stringify({
           characters,
           scenes: [selectedScene].filter(Boolean),
-          camera
+          camera,
+          confirm: true,
         })
       });
 
@@ -783,8 +876,6 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     }
 
     const previousShot = shotIndex > 0 ? sceneSnapshot.storyboardShots?.[shotIndex - 1] : undefined;
-    const previousJob = shotIndex > 0 ? storyboardJobsRef.current[shotIndex - 1] : undefined;
-    const previousGeneratedClip = previousShot ? getStoryboardShotActiveGeneratedClip(previousShot) : null;
     const seedResolution = resolveStoryboardShotSeed(shot, previousShot, retryMode);
 
     updateStoryboardJob(shot.id, {
@@ -801,7 +892,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     });
 
     try {
-      const promptResponse = await authFetch('/api/generate-shot-prompt', {
+      const response = await authFetch('/api/generate-shot-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -811,35 +902,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
           scene: sceneSnapshot,
           shot,
           camera,
-        }),
-      });
-
-      if (!promptResponse.ok) {
-        throw new Error(await readErrorMessage(promptResponse, 'Failed to build the shot prompt.'));
-      }
-
-      const promptData = await promptResponse.json();
-      const bridgeFrame = previousShot ? getShotAnchorFrame(sceneSnapshot, previousShot) : undefined;
-      const previousOperationName = previousJob?.operationName || previousGeneratedClip?.operationName || null;
-      const shouldExtend = !!(previousOperationName && bridgeFrame?.url);
-      const response = await authFetch(shouldExtend ? '/api/extend-clip' : '/api/generate-shot-video', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(shouldExtend ? {
-          prompt: promptData.prompt,
-          videoToExtend: buildOperationDownloadUrl(previousOperationName || ''),
-          firstFrame: bridgeFrame?.url || null,
-          aspectRatio: camera.aspectRatio,
-          durationSeconds: shot.durationSeconds,
-          seed: seedResolution.resolvedSeed,
-        } : {
-          characters,
-          scene: sceneSnapshot,
-          shot,
-          camera,
           resolvedSeed: seedResolution.resolvedSeed,
+          confirm: true,
         }),
       });
 
@@ -848,6 +912,9 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       }
 
       const data = await response.json();
+      if (data.action === 'estimate-only') {
+        throw new Error('The render was not confirmed, so nothing was spent.');
+      }
       const appliedSeed = sanitizeStoryboardSeed(data?.resolvedSeed) || seedResolution.resolvedSeed;
       const updatedScene = updateSceneStoryboardShot(sceneSnapshot, shot.id, { lastRenderSeed: appliedSeed });
 
@@ -865,7 +932,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         seedSource: seedResolution.seedSource,
         inheritedFromShotId: seedResolution.inheritedFromShotId,
         inheritedFromSeed: seedResolution.inheritedFromSeed,
-        usingContinuityFrame: shouldExtend || !!data.usingContinuityFrame,
+        usingContinuityFrame: !!data.usingContinuityFrame,
         continuitySource: data.continuitySource || null,
       });
 
@@ -991,6 +1058,57 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       : 'Shot retry failed. You can retry with the same seed or force a new one.');
   };
 
+  const reviewStoryboard = async () => {
+    if (!selectedScene) return;
+    if (!isAuthenticated) {
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText('Sign in from the Account dashboard to render storyboard clips.');
+      return;
+    }
+    let shots = storyboardShots;
+    let workingScene = selectedScene;
+    if (!shots.length) {
+      shots = (await generateStoryboardPlan()) || [];
+      workingScene = scenes.find(scene => scene.id === selectedScene.id) || {
+        ...selectedScene,
+        storyboardShots: shots,
+      };
+    }
+    if (!shots.length) {
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText('No storyboard shots were available to render.');
+      return;
+    }
+    try {
+      const contracts: RenderContract[] = [];
+      for (const shot of shots) {
+        const response = await authFetch('/api/generate-shot-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            characters,
+            scene: workingScene,
+            shot,
+            camera,
+            confirm: false,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.action !== 'estimate-only') {
+          throw new Error(data?.error || 'Could not build the render contract.');
+        }
+        contracts.push(data.contract);
+      }
+      setPendingStoryboard(contracts);
+      setStoryboardRunStatus('idle');
+      setStoryboardProgressText('Review the contract. Nothing has been spent.');
+    } catch (error: any) {
+      setPendingStoryboard(null);
+      setStoryboardRunStatus('failed');
+      setStoryboardProgressText(error?.message || 'Could not build the render contract.');
+    }
+  };
+
   const triggerStoryboardRender = async () => {
     if (!selectedScene) return;
     if (!isAuthenticated) {
@@ -1062,6 +1180,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         }
       }
 
+      setPendingStoryboard(null);
       setStoryboardRunStatus(hasFailure ? 'failed' : 'completed');
       setStoryboardProgressText(hasFailure
         ? 'Storyboard render halted after a failed shot. Fix the issue or retry the failed shot before continuing.'
@@ -1342,13 +1461,17 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   : (storyboardRunStatus === 'rendering' ? 'bg-indigo-400 animate-pulse' : 'bg-indigo-500')
               }`} />
               <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-1.5 font-sans">
-                {renderMode === 'quick-preview' ? 'Veo Quick Preview' : 'Storyboard Shot Renderer'}
+                {renderMode === 'quick-preview'
+                  ? (provider.videoBackend === 'grok' ? 'Grok quick preview' : provider.videoBackend === 'sandbox' ? 'Sandbox quick preview' : 'Veo quick preview')
+                  : (provider.videoBackend === 'grok' ? 'Grok storyboard renderer' : provider.videoBackend === 'sandbox' ? 'Sandbox storyboard renderer' : 'Veo storyboard renderer')}
               </h3>
             </div>
             <p className="text-[11px] text-zinc-400 font-mono">
               {renderMode === 'quick-preview'
                 ? 'Fast one-clip concept preview that preserves the current pipeline.'
-                : 'Continuity-first Veo 3.1 workflow: each storyboard shot becomes its own clip, with up to 3 total reference images and 8-second reference mode constraints.'}
+                : provider.videoBackend === 'grok'
+                  ? 'Each storyboard shot is its own Grok clip. Review the exact prompt and the quote, then confirm. A pinned start frame stays in the image.'
+                  : 'Continuity-first Veo 3.1 workflow: each storyboard shot becomes its own clip, with up to 3 total reference images and 8-second reference mode constraints.'}
             </p>
           </div>
 
@@ -1392,14 +1515,17 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         {renderMode === 'quick-preview' ? (
           <>
             {videoStatus === 'idle' && (
-              <button
-                onClick={triggerQuickPreview}
-                disabled={!isAuthenticated}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
-              >
-                <Film className="w-3.5 h-3.5" />
-                <span>Export Video</span>
-              </button>
+              <div className="space-y-3">
+                {pendingQuick && <ContractCard contract={pendingQuick} title="Quick preview contract" />}
+                <button
+                  onClick={pendingQuick ? triggerQuickPreview : reviewQuickPreview}
+                  disabled={!isAuthenticated || (pendingQuick?.lintHits?.length ?? 0) > 0}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                >
+                  <Film className="w-3.5 h-3.5" />
+                  <span>{pendingQuick ? 'Confirm and export' : 'Review contract'}</span>
+                </button>
+              </div>
             )}
 
             {videoStatus === 'rendering' && (
@@ -1503,7 +1629,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                       <span>Download file</span>
                     </button>
                     <button
-                      onClick={triggerQuickPreview}
+                      onClick={reviewQuickPreview}
                       className="bg-indigo-950 hover:bg-indigo-900 border border-indigo-500/20 text-indigo-300 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
                     >
                       <RefreshCw className="w-3 h-3" />
@@ -1523,7 +1649,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <p className="text-[10.5px] font-mono text-zinc-400 leading-normal">{videoError || 'Engine could not verify target compilation frames.'}</p>
                 <div className="flex justify-end pt-1">
                   <button
-                    onClick={triggerQuickPreview}
+                    onClick={reviewQuickPreview}
                     className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
                   >
                     <RefreshCw className="w-3 h-3" />
@@ -1542,7 +1668,9 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   <span>Storyboard film sheet</span>
                 </div>
                 <p className="text-[11px] text-zinc-500 font-mono">
-                  Veo 3.1 reference-image mode supports up to 3 total reference images per shot and requires 8-second shots when references are used. Successful renders auto-save anchor frames for downstream continuity.
+                  {provider.videoBackend === 'grok'
+                    ? 'Review the exact prompt, the pinned frame, and the quote. Confirm spends one clip per shot. A shot set to no transition is not pinned to the previous frame.'
+                    : 'Veo 3.1 reference-image mode supports up to 3 total reference images per shot and requires 8-second shots when references are used. Successful renders auto-save anchor frames for downstream continuity.'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1557,15 +1685,38 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 </button>
                 <button
                   type="button"
-                  onClick={triggerStoryboardRender}
-                  disabled={isGeneratingStoryboardPlan || !selectedScene || !isAuthenticated}
+                  onClick={() => { void reviewStoryboard(); }}
+                  disabled={!pendingStoryboard}
+                  className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-40"
+                >
+                  Review again
+                </button>
+                <button
+                  type="button"
+                  onClick={pendingStoryboard ? triggerStoryboardRender : reviewStoryboard}
+                  disabled={
+                    isGeneratingStoryboardPlan
+                    || !selectedScene
+                    || !isAuthenticated
+                    || Boolean(pendingStoryboard?.some((item) => (item.lintHits?.length ?? 0) > 0))
+                  }
                   className="bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg disabled:opacity-50"
                 >
                   <Film className="w-3.5 h-3.5" />
-                  <span>Render Storyboard Clips</span>
+                  <span>{pendingStoryboard ? 'Confirm and render' : 'Review render contract'}</span>
                 </button>
               </div>
             </div>
+
+            {pendingStoryboard && pendingStoryboard.length > 0 && (
+              <div className="space-y-3">
+                {pendingStoryboard.map((contract, index) => (
+                  <div key={`contract-${index}`}>
+                    <ContractCard contract={contract} title={`Shot ${index + 1}`} />
+                  </div>
+                ))}
+              </div>
+            )}
 
             {selectedScene && storyboardShots.length > 0 ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -1664,7 +1815,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   </button>
                 </div>
                 <p className="text-[9px] font-mono text-zinc-500 text-center leading-tight">
-                  Storyboard mode renders one Veo clip per shot, which is how the project avoids compressing long dialogue into a single 8–10 second video.
+                  Storyboard mode renders one clip per shot, which is how the project avoids compressing long dialogue into a single 8–10 second video.
                 </p>
               </div>
             )}

@@ -16,6 +16,17 @@ generation plus FFmpeg by hand, or any other route. If a tool appears unavailabl
 If a user asks for theShow and your tool list has no `plan_storyboard`, stop and say the plugin
 isn't loaded in this session — do not quietly build the film another way and present it as theShow.
 
+In a new chat, if the user says "theShow" or "the show" and wants a film, start this same workflow
+at `configure_film`. Do not substitute `imagine_*` or any other pipeline. If the plugin's tools are
+not loaded, say so and stop.
+
+`/theshow` is the primary start. The command file is `commands/theshow.md`. Grok registers plugin
+commands from the filename and lowercases the slash string, so the invocation you type is
+`/theshow`. The skill named `theshow` also appears as `/theshow`, and the qualified form when those
+names collide is `/theshow:theshow`. theShow is the name to look for. A slash command loads these
+instructions. It does not open the form by itself. You then call `configure_film`. `/film` follows
+this same recipe. It is not a second pipeline.
+
 ## Step 0 — Configure before you generate. Never skip this.
 
 **This is the single most important rule.** Generating before configuration is how you get a film
@@ -68,8 +79,8 @@ Characters:   <name — look, wardrobe>
 Style:        <look and colour>
 Shots:        2 × 8s = 16s, 16:9
 Audio:        <dialogue | diegetic | silent>
-Never show:   <constraints>
-Estimated:    ~$2.24 (2 renders · 8s at 720p ≈ $1.12 each)
+Constraints:  stored off the prompt
+Estimated:    <count> × <seconds>s at $<rate>/s for <resolution> = $<total>
 ```
 
 Only after they approve, proceed. If the user gave enough detail up front to fill every field, show
@@ -106,12 +117,14 @@ the config block. If they don't care, say so explicitly instead of filling the g
 
 ## Slash commands
 
-The plugin ships nine commands, and each one is this same workflow started partway in. When a user
-types one, honour what it names and skip the step they already took.
+The plugin ships ten commands, and each one is this same workflow started partway in. When a user
+types one, honour what it names and skip the step they already took. None of them skips the
+estimate. `/theshow` is the primary start. `/film` follows that same recipe.
 
 | Command | What it does |
 |---|---|
-| `/film <idea>` | Opens the configuration card, then boards and renders the film |
+| `/theshow <idea>` | Primary start. configure_film, then the board, then the render contract, then render |
+| `/film <idea>` | The same recipe as `/theshow` |
 | `/scene <scene> [shots]` | Plans a storyboard only. Free, renders nothing |
 | `/character <name> [look] [photo]` | Creates or updates a character with reference photos |
 | `/board <scene or jobId>` | Boards a film as stills, about two cents a frame |
@@ -122,7 +135,11 @@ types one, honour what it names and skip the step they already took.
 | `/continue <jobId> <what next>` | Continues an existing film with more shots |
 
 None of them skips the estimate. A command that spends money still calls its tool without `confirm`,
-shows the figure, and waits.
+shows the contract that applies to it, and waits. `/board` shows the still prompts, their lint hits,
+and the $0.02 quote. `/render` and `/continue` show the composed prompt, lint hits, the pinned start
+frame, references, voice, duration, resolution, and the quote. `/retry` shows that one shot's sent
+prompt, its lint hits, its price, and the warning that the next join becomes a cut. A lint hit
+means the next take is an edit of that prompt. Do not spend it automatically.
 
 ## Reference images
 
@@ -239,12 +256,12 @@ calls, so a shot without the reference will drift even if the previous shot had 
    chaining, and 0.25 when a portrait rode along as a second reference. Without a Location the board
    falls back to chaining.
 
-   **What bookending buys you.** A clip pinned only at its start drifts: two unpinned clips of the
-   same scene sit around **0.20 correlation**, which is why a cut between them pops. Pinning both ends
-   changes the deal. Measured on real renders, a shot sent with a first and last frame landed its
-   opening frame at **0.998** against the supplied image and its closing frame at **0.87** (lower only
-   because the last rendered frame carries motion blur). So a cut between shot N's last frame and shot
-   N+1's first frame — the same file — is the same picture, and there is nothing to hide with a fade.
+   **Pin default is start.** Closing frames are not sent unless `pin` is `both`. A start-only pin
+   keeps the opening picture in `image`. The prompt the user reads for that shot is the motion
+   prompt, without the room. Pinning both ends is opt-in. Measured on real renders, a shot sent with
+   a first and last frame landed its opening frame at **0.998** against the supplied image and its
+   closing frame at **0.87** (lower only because the last rendered frame carries motion blur). That
+   measurement is what `pin: "both"` does. It is not the default.
 
 4. **Sequential clips — use `render_sequence`**
 
@@ -347,9 +364,9 @@ calls, so a shot without the reference will drift even if the previous shot had 
    the frame chain; the join only decides how the seam is presented.
 
    **Music and narration.** `render_sequence` and `assemble_film` both take `audioTrackUrl`, which
-   mixes a music bed or voiceover under the whole film. It is looped if shorter than the film,
-   trimmed to its exact length, and faded out at the end, so a 30-second cue works under a
-   three-minute film. It is mixed *under* the clips' own audio rather than replacing it.
+   mixes a music bed or voiceover under the whole film. A track shorter than the film is refused.
+   A long enough track is trimmed to the film and faded out at the end. It is mixed *under* the
+   clips' own audio rather than replacing it.
 
    - Ask for the track and have the user attach it in chat, exactly like a reference photo; the
      attachment path goes in as-is. A public https link works too.

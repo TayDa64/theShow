@@ -71,6 +71,11 @@ export type BoardFrame = {
   role: BoardFrameRole;
   /** 1-based shot this frame primarily belongs to. */
   shot: number;
+  /**
+   * True when this take names a cast and neither a portrait nor a location
+   * picture is attached. Callers must report it; it is not a silent pass.
+   */
+  wardrobeUnchecked?: boolean;
 };
 
 export type BoardedShot = {
@@ -167,6 +172,8 @@ export function planBoardFrames(opts: {
    * the previous one.
    */
   baseImageUrl?: string;
+  /** Portraits. A portrait without a location base still locks clothing. */
+  referenceImageUrls?: string[];
   /**
    * What the frames will actually be edited from, when that is not the same file
    * the caller passed.
@@ -192,7 +199,10 @@ export function planBoardFrames(opts: {
   // attached the cast is a description OF the picture, so the instruction is to
   // preserve it, not to re-imagine it. A shot prompt can still change something,
   // but it has to say so explicitly — see WARDROBE_CHANGE below.
-  const hasPicture = Boolean(opts.baseImageUrl);
+  const hasPortrait = Boolean(opts.referenceImageUrls?.some((url) => url.trim()));
+  const hasBase = Boolean(opts.baseImageUrl);
+  const hasPicture = hasPortrait || hasBase;
+  const wardrobeUnchecked = !hasPicture && Boolean(opts.cast?.trim());
   // When a picture is attached, the cast line is stripped of anything the
   // picture can disagree with — see mcp/cast.ts. A cast line is written once, by
   // hand, from memory; the picture is the thing that is actually true.
@@ -207,7 +217,7 @@ export function planBoardFrames(opts: {
       "through them unchanged."
     : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
-  const still = " Single held frame, no motion blur, no text, no watermark.";
+  const still = " Single held frame, sharp focus, a clean picture.";
 
   type FrameSpec = {
     role: BoardFrameRole;
@@ -274,16 +284,22 @@ export function planBoardFrames(opts: {
     const personRule = !hasPicture
       ? ""
       : asksForChange
-        ? " This shot asks for the clothing change it names; apply that change and nothing else " +
-          "about the person."
+        ? " This shot asks for the clothing change it names; apply that change and keep the rest of the person."
         : " Keep this person's face, head, beard hair and clothing exactly as the reference " +
-          "picture shows them, and never restyle them.";
+          "picture shows them.";
 
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem, role: spec.role, shot: spec.shot };
+    return {
+      index,
+      prompt: full,
+      stem,
+      role: spec.role,
+      shot: spec.shot,
+      ...(wardrobeUnchecked ? { wardrobeUnchecked: true } : {}),
+    };
   });
 }
 
@@ -319,7 +335,12 @@ export async function findExistingStill(dir: string, stem: string): Promise<stri
 export type BoardFilmDeps = {
   /** Injected so a test never reaches the network. */
   generateStill: (
-    job: { prompt: string; aspectRatio?: string; referenceImageUrls?: string[] },
+    job: {
+      prompt: string;
+      aspectRatio?: string;
+      referenceImageUrls?: string[];
+      baseImageUrl?: string;
+    },
     opts: { outputDir: string; filename?: string },
   ) => Promise<GrokStillResult>;
   outputDir: string;
@@ -344,6 +365,20 @@ export type BoardFilmDeps = {
  * `maxCostUsd` refuses rather than spends, and the returned `shots` are ready to
  * paste straight into render_sequence with both frames filled in.
  */
+export function heroPrompt(input: { cast?: string; look?: string; scene?: string }): string {
+  const named = (input.scene ?? input.look)?.trim().replace(/\.$/, "");
+  const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
+  const cast = input.cast?.trim() ? castForPicture(input.cast) : "";
+  return (
+    `Place the person from the first photo into ${where}. ` +
+    cast +
+    `The first photo supplies only the person. Its background stays out of the picture. ` +
+    `The second photo is the room and stays as it is: keep its walls, its furniture, its ` +
+    `windows and the view through them exactly as they are, and keep its own light. ` +
+    `Photoreal, single held frame, sharp focus, a clean picture.`
+  );
+}
+
 export async function boardFilm(
   input: {
     shots: BoardShotInput[];
@@ -353,6 +388,13 @@ export async function boardFilm(
     cast?: string;
     maxCostUsd?: number;
     confirm?: boolean;
+    /** The real room, when the caller has one. Never a hardcoded office. */
+    scene?: string;
+    /**
+     * The gate already refused this board. The estimate is still returned, and
+     * the next step must not tell the caller to confirm.
+     */
+    blocked?: boolean;
   },
   deps: BoardFilmDeps,
 ): Promise<BoardFilmResult> {
@@ -385,7 +427,9 @@ export async function boardFilm(
   const heroRefsForStem = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   const heroStem = heroRefsForStem.length > 0
     ? `board-hero-${createHash("sha1")
-        .update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`)
+        .update(
+          `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}|${input.look ?? ""}|${input.scene ?? ""}`,
+        )
         .digest("hex")
         .slice(0, 16)}`
     : undefined;
@@ -396,6 +440,7 @@ export async function boardFilm(
     look: input.look,
     cast: input.cast,
     baseImageUrl: deps.baseImageUrl,
+    referenceImageUrls: deps.referenceImageUrls,
     baseFingerprint: heroStem,
   });
 
@@ -428,6 +473,16 @@ export async function boardFilm(
       (heroStills ? `, plus one hero frame` : "") +
       `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.` +
+      (heroStills
+        ? " The hero still is bought on every confirmed board, and its name is part of every " +
+          "shot frame, so a new hero buys the hero and every shot frame, not the hero alone."
+        : "") +
+      (!deps.baseImageUrl && (deps.referenceImageUrls ?? []).some((url) => url.trim())
+        ? " A portrait with no location photo is part of every frame's name, so a change to " +
+          "that portrait or the cast buys every frame again. There is no single hero still."
+        : "") +
+      " Closing frames are kept on the shot list and are not sent unless render_sequence is " +
+      "called with pin: \"both\". The default pin is start, so those cuts are not pixel-pinned." +
       (deps.baseImageUrl
         ? ` Every frame is edited from the same picture, so look at the board before ` +
           `rendering the video: a still that came back wrong is two cents, and the clip that ` +
@@ -461,8 +516,12 @@ export async function boardFilm(
       next: overBudget
         ? "Tell the user the board is over budget and what it would cost. Do not retry with a " +
           "higher limit unless they ask for one."
-        : "Show the frame count and the estimate. Call again with confirm: true only after the " +
-          "user approves the board. Nothing is rendered until then.",
+        : input.blocked
+          ? "This board is blocked, so confirm will not render anything. Pass overrideValidation: " +
+            "true to board anyway. confirm alone does not unblock it."
+          : "Show the frame count and the estimate. Call again with confirm: true only after the " +
+            "user approves the board. Nothing is rendered until then. Closing frames on the shot " +
+            "list are not sent unless render_sequence uses pin: \"both\". The default pin is start.",
     };
   }
 
@@ -476,25 +535,9 @@ export async function boardFilm(
   // spends two cents building ONE hero frame first and then edits every shot
   // from that single picture.
   //
-  // Which of the two photos is the SUBJECT of that hero edit decides which one
-  // survives, and it is not a toss-up. On `/v1/images/edits` the first picture
-  // is the thing being changed and the rest are context, so:
-  //
-  //  - Portrait first ("place this person into the setting in the second
-  //    photo"): the face is perfect and the room is not. Measured, the frame
-  //    came back as the portrait's own bright living room - sofa, doorway,
-  //    trees in daylight - because the portrait's background is part of the
-  //    subject an edit is inclined to keep. The office was reduced to a hint.
-  //  - Office first ("place the person from the second photo into this
-  //    office"): the room is exact (skyline structure correlation 0.97 against
-  //    0.02-0.08 the other way round) and the person is still the person.
-  //    The office is the thing that must not change, because a redrawn room is
-  //    what makes two shots look like two different films; a face has a
-  //    portrait pinned on every frame afterwards to correct it. Measured on
-  //    three reps, the tan coat survived all three.
-  //
-  // So the office is the base and the portrait is the reference, whichever the
-  // caller passed. Garments are never named in the text - see mcp/cast.ts.
+  // The wire order is portrait first, room second (grokVideo puts reference
+  // images ahead of the base). The words have to name that same order. The
+  // room is whatever scene the caller described, not a fixed office at dusk.
   let boardBase = deps.baseImageUrl;
   const heroRefs = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
@@ -502,15 +545,7 @@ export async function boardFilm(
     const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
-        prompt:
-          `Place the person from the second photo into this office. ` +
-          `${input.cast?.trim() ? castForPicture(input.cast) : ""}` +
-          `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
-          `The first photo is the room and it does not change: its walls, its furniture, its ` +
-          `windows and the city through them stay exactly as they are, and its own dusk light is ` +
-          `the light of this frame. The second photo supplies the person and nothing else - its ` +
-          `own background is discarded. ` +
-          `Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: heroPrompt(input),
         aspectRatio,
         baseImageUrl: setting,
         referenceImageUrls: [subject],
@@ -631,9 +666,10 @@ export async function boardFilm(
       : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were ` +
         "returned. Re-run board_film: frames already on disk are reused and cost nothing.",
     next: complete
-      ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. " +
-        "Consecutive shots share a boundary frame, so every cut lands on identical pixels. " +
-        "Each shot is still one paid video render."
+      ? "Show the stills to the user for approval, then pass `shots` to render_sequence. Consecutive " +
+        "shots share a boundary picture. Those closing frames are not sent unless render_sequence " +
+        "uses pin: \"both\". The default pin is start, so the cuts are not pixel-pinned. Each shot " +
+        "is still one paid video render."
       : "Report which frames failed and re-run board_film. Do not render video from a partial board.",
   };
 }

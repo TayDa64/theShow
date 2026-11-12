@@ -243,7 +243,7 @@ describe('body size budgeting for a bookend', () => {
     expect(videoSource).toContain('export const INLINE_IMAGE_BUDGET_BYTES = 220 * 1024;');
     const singleCall = videoSource.slice(
       videoSource.indexOf('} else if (job.firstFrameUrl) {'),
-      videoSource.indexOf('} else if (job.lastFrameUrl) {'),
+      videoSource.indexOf('} else if (sendLastFrame && job.lastFrameUrl) {'),
     );
     // A lone frame is inlined with no tighter budget argument at all.
     expect(singleCall).toContain('toApiImageRef(job.firstFrameUrl)');
@@ -364,6 +364,7 @@ describe('generate_still', () => {
     );
     expect(tool).toContain('mergeCharacterReferences(args.characters, args.referenceImageUrls)');
     expect(tool).toContain('generateGrokStill(');
+    expect(tool).toContain('baseImageUrl: args.baseImageUrl');
     // A failed still must never return a made-up path.
     expect(tool).toContain('error: result.error ?? "Still generation failed"');
   });
@@ -477,6 +478,7 @@ describe('base image routes the still to the edit endpoint', () => {
 
     expect(result.route).toBe('edits');
     expect(seen[0].url).toContain('/v1/images/edits');
+    expect(seen[0].body.prompt).toBe('He stands at the desk.');
     expect(seen[0].body.image).toBeTruthy();
     // 220000000 ticks: an edit billed 0.022 where a plain still bills 0.020.
     expect(result.costUsd).toBeCloseTo(0.022, 4);

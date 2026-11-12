@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `/theshow` is the primary start of planning and video generation. The command file is `commands/theshow.md`. Grok lowercases the slash string, so the invocation is `/theshow`. A slash command loads instructions; the model then calls `configure_film`. `/film` follows the same recipe. Estimates for `configure_film`, `board_film`, and `render_sequence` include the prompt that will be sent and any lint hits. Studio render returns that contract and spends only after confirm. Constraints and "no music" stay off the sent prompt.
+- Admission control on still and clip submission. A prompt lint rejects forbidden nouns and negation before any paid call. A negative list is stored for that lint and for the post-generation checklist, and is not sent: Grok Imagine has no negative_prompt field. A Gaussian-feathered portrait cutout is written beside a character portrait and the original file is left untouched. A failed checklist (an object that changes rooms or appears from nowhere, a squashed torso, a widened body, shortened legs, or a vocal that runs past its pre-timed end) deletes the take so it cannot pin the next shot. `imageOrder: "plate-first"` puts the room first when placing a person into a set. The default remains portrait-first.
 - Per-shot state-file contracts derived from the continuity ledger: requires, atomic steps,
   ensures, invariants, and forbidden items. A validator rejects more than three steps, a
   garment that is both worn and hanging, duplicate garment counts, footwear counts that are
@@ -33,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxy's request limit.
 
 ### Changed
+- Studio `POST /api/generate-shot-video` on Grok sends an affirmative motion prompt. Veo still uses `buildShotPrompt` and `negativePrompt`. The old don'ts are stored as the Grok negative and stay off the request. Studio Grok calls send `resolution`, using 720p when the caller left it unset and keeping an explicit 480p. A pinned start frame stays in `image`. A separate person portrait may be sent as a feathered cutout in `reference_images`. Optional `voiceId` is sent as `reference_audios`, and an explicit track duration sizes that clip. Shots without a voice keep their duration. Last-frame chaining stays the film path for a subscription session and for an API key. The 405 on `POST /v1/videos/extensions` was the subscription proxy, not the API spec.
+- An `auth.x.ai` session refreshes at `https://auth.x.ai/oauth2/token`. `GROK_OAUTH_TOKEN_URL` still overrides that. Refresh stays opt-in via `THESHOW_REFRESH_GROK_SESSION`.
+- Board and hero still prompts say what the frame holds. The picture-preservation rule stays; the sent text no longer uses negation.
+- Stored wardrobe `closure` is read from `character.json` and applied. The previous release dropped it, so an existing character that already stored `open`, `slip-on`, or `none` now skips an `unbuttons` step and is checked against that closure. A layer with no `closure` is unchanged.
 - A bookend budgets its two frames together (75 KB each, ~200 KB of base64 for the pair) instead of
   hitting the request body limit at ~590 KB. A single inlined image keeps the original 220 KB budget,
   so phone photos behave exactly as before.
