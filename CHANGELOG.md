@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proxy's request limit.
 
 ### Changed
+- Studio `POST /api/generate-shot-video` on Grok sends an affirmative motion prompt. Veo still uses `buildShotPrompt` and `negativePrompt`. The old don'ts are stored as the Grok negative and stay off the request. Studio Grok calls send `resolution`, using 720p when the caller left it unset and keeping an explicit 480p. A pinned start frame stays in `image`. A separate person portrait may be sent as a feathered cutout in `reference_images`. Optional `voiceId` is sent as `reference_audios`, and an explicit track duration sizes that clip. Shots without a voice keep their duration. Last-frame chaining stays the film path for a subscription session and for an API key. The 405 on `POST /v1/videos/extensions` was the subscription proxy, not the API spec.
 - An `auth.x.ai` session refreshes at `https://auth.x.ai/oauth2/token`. `GROK_OAUTH_TOKEN_URL` still overrides that. Refresh stays opt-in via `THESHOW_REFRESH_GROK_SESSION`.
 - Board and hero still prompts say what the frame holds. The picture-preservation rule stays; the sent text no longer uses negation.
 - Stored wardrobe `closure` is read from `character.json` and applied. The previous release dropped it, so an existing character that already stored `open`, `slip-on`, or `none` now skips an `unbuttons` step and is checked against that closure. A layer with no `closure` is unchanged.

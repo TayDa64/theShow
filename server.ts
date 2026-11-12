@@ -54,7 +54,16 @@ import {
   type VideoBackend,
 } from './src/lib/grokClipStore';
 import { generateGrokClip } from './mcp/grokVideo';
+import { featheredSubjectCutout } from './mcp/cutout';
 import { resolveVideoCredential } from './mcp/grok-auth';
+import {
+  GROK_SHOT_STORED_NEGATIVE,
+  buildGrokShotPrompt,
+  durationForStudioGrokShot,
+  studioGrokReferenceUrls,
+  studioGrokResolution,
+  studioVoiceId,
+} from './src/lib/grokShotPrompt';
 import {
   ensureMockVideoAsset,
   normalizeMockVideoAspectRatio,
@@ -1398,6 +1407,9 @@ async function startGrokShotRender(input: {
   prompt: string;
   aspectRatio: '16:9' | '9:16';
   durationSeconds: number;
+  resolution?: '480p' | '720p' | '1080p';
+  voiceId?: string;
+  negative?: string;
   firstFrameUrl?: string | null;
   referenceUrls?: string[];
   continuitySource?: string | null;
@@ -1407,13 +1419,17 @@ async function startGrokShotRender(input: {
   const firstFrame = input.firstFrameUrl ? resolveAppAssetForGrok(input.firstFrameUrl) : null;
   const referenceImageUrls = (input.referenceUrls || [])
     .map((url) => resolveAppAssetForGrok(url))
-    .filter((url): url is string => Boolean(url));
+    .filter((url): url is string => Boolean(url))
+    .filter((url) => url !== firstFrame && url !== input.firstFrameUrl);
 
   const result = await generateGrokClip(
     {
       prompt: input.prompt,
       durationSeconds: input.durationSeconds,
       aspectRatio: input.aspectRatio,
+      resolution: input.resolution ?? '720p',
+      voiceId: input.voiceId,
+      negative: input.negative,
       model: GROK_CLIP_MODEL,
       firstFrameUrl: firstFrame ?? undefined,
       referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
@@ -1531,8 +1547,6 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
     }
 
     const { referenceUrls, continuityReference } = pickReferenceUrlsForShot(characters, scene, shot);
-    const durationSeconds = normalizeGrokShotDuration(shot?.durationSeconds);
-    const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
     const aspect = resolveGrokAspectRatio(camera?.aspectRatio);
     const seedResolution = resolveStoryboardSeedForShot(scene, shot, resolvedSeed);
 
@@ -1540,14 +1554,42 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
       const bridgeFrame = typeof firstFrameUrl === 'string' && firstFrameUrl.trim()
         ? firstFrameUrl.trim()
         : continuityReference?.url ?? null;
+      const featuredCharacters = getShotCharacters(characters, scene, shot);
+      const voiceId = studioVoiceId(req.body?.voiceId, shot?.voiceId);
+      const grokDurationSeconds = durationForStudioGrokShot(
+        shot?.durationSeconds,
+        req.body?.trackDurationSeconds ?? shot?.trackDurationSeconds ?? shot?.audioDurationSeconds,
+      );
+      const grokPrompt = buildGrokShotPrompt({
+        action: shot?.action,
+        shotType: shot?.shotType || camera?.shotType,
+        cameraAngle: shot?.cameraAngle || camera?.tiltAngle,
+        focalLength: shot?.focalLength || camera?.focalLength,
+        aspectRatio: aspect,
+        sceneDescription: scene?.description,
+        lighting: scene?.lighting,
+        pinnedFrame: Boolean(bridgeFrame),
+        dialogue: getShotDialogueExcerpt(scene, characters, shot),
+        voiceId,
+      });
+      const grokReferences = await studioGrokReferenceUrls({
+        personUrls: featuredCharacters.map((character: any) => getCharacterActiveImageUrl(character)),
+        backgroundUrl: getSceneActiveBackgroundUrl(scene),
+        pinnedUrl: bridgeFrame,
+        resolve: resolveAppAssetForGrok,
+        cutout: (localPath) => featheredSubjectCutout(localPath),
+      });
 
       const { result, operationName, record } = await startGrokShotRender({
         userId,
-        prompt: videoPrompt,
+        prompt: grokPrompt,
         aspectRatio: aspect,
-        durationSeconds,
+        durationSeconds: grokDurationSeconds,
+        resolution: studioGrokResolution(req.body?.resolution ?? shot?.resolution ?? camera?.resolution),
+        voiceId,
+        negative: GROK_SHOT_STORED_NEGATIVE,
         firstFrameUrl: bridgeFrame,
-        referenceUrls,
+        referenceUrls: grokReferences,
         continuitySource: continuityReference?.sourceLabel ?? null,
       });
 
@@ -1579,8 +1621,8 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
         isFallback: false,
         backend: 'grok',
         videoBackend: 'grok',
-        usingReferenceImages: (result.status === 'completed') && referenceUrls.length > 0,
-        durationSeconds: record.actualDurationSeconds ?? durationSeconds,
+        usingReferenceImages: (result.status === 'completed') && grokReferences.length > 0,
+        durationSeconds: record.actualDurationSeconds ?? grokDurationSeconds,
         resolvedSeed: seedResolution.resolvedSeed,
         seedSource: seedResolution.seedSource,
         usingContinuityFrame: !!bridgeFrame,
@@ -1602,6 +1644,7 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
       throw new Error('No live video provider configured. Emulating storyboard shot rendering pipeline.');
     }
 
+    const videoPrompt = buildShotPrompt(characters, scene, shot, camera, continuityReference);
     const operation = await ai.models.generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt: videoPrompt,
@@ -1837,8 +1880,11 @@ app.post('/api/extend-clip', generationRateLimiter, requireAuth, requireCsrf, as
     }
 
     if (extendBackend === 'grok') {
-      // The subscription proxy has no extension route (POST /v1/videos/extensions
-      // answers 405), so continue the take from the previous clip's last frame.
+      // Film continuity stays a new clip pinned to the previous last frame, on
+      // a subscription session and on an API key. POST /v1/videos/extensions
+      // answered 405 on the subscription proxy. That status is the proxy, not
+      // the API spec. An API-key client may opt into that route later. This
+      // path keeps the last-frame chain.
       const bridgeFrame = await resolveExtendBridgeFrame(firstFrame, videoToExtend);
       const grokDurationSeconds = normalizeGrokShotDuration(durationSeconds);
       const { result, operationName, record } = await startGrokShotRender({
@@ -1846,6 +1892,7 @@ app.post('/api/extend-clip', generationRateLimiter, requireAuth, requireCsrf, as
         prompt,
         aspectRatio: resolveGrokAspectRatio(aspectRatio),
         durationSeconds: grokDurationSeconds,
+        resolution: studioGrokResolution(req.body?.resolution),
         firstFrameUrl: bridgeFrame,
         referenceUrls: Array.isArray(referenceImages) ? referenceImages : [],
         continuitySource: bridgeFrame ? 'Previous clip last frame' : null,
@@ -2181,6 +2228,7 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
         prompt: videoPrompt,
         aspectRatio: aspect,
         durationSeconds,
+        resolution: studioGrokResolution(req.body?.resolution),
         referenceUrls,
       });
 

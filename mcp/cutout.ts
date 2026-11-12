@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import { promisify } from "node:util";
-import { resolveTools } from "./media.ts";
+import { resolveTools } from "./media";
 
 const exec = promisify(execFile);
 
