@@ -1,0 +1,643 @@
+{
+  "tools": [
+    {
+      "name": "configure_film",
+      "description": "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "scene": {
+            "description": "Pre-fill the scene if the user already said it.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Card heading shown to the user.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_character",
+      "description": "Create or update a character with optional reference images for continuity.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "referenceImageUrls": {
+            "description": "Portrait reference images: public https URLs, data URIs, or local file paths. Each is inlined for the API, so a path from a chat attachment or extract_last_frame works.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "plan_storyboard",
+      "description": "Plan multi-shot storyboard for a scene.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "sceneDescription": {
+            "type": "string"
+          },
+          "beats": {
+            "description": "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "description": "What happens in this shot. {scene} and {character} are substituted."
+                },
+                "note": {
+                  "description": "Continuity requirement carried into the prompt.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "action"
+              ]
+            }
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetDurationSeconds": {
+            "type": "number"
+          },
+          "shotCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "sceneDescription",
+          "characters"
+        ]
+      }
+    },
+    {
+      "name": "generate_controlled_clip",
+      "description": "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "characters": {
+            "description": "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "referenceImageUrls": {
+            "description": "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "firstFrameUrl": {
+            "description": "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut.",
+            "type": "string"
+          },
+          "lastFrameUrl": {
+            "description": "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture.",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "default": 8,
+            "type": "number",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "resolution": {
+            "default": "720p",
+            "description": "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default.",
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "model": {
+            "default": "grok-imagine-video-1.5",
+            "type": "string"
+          },
+          "waitForCompletion": {
+            "default": true,
+            "type": "boolean"
+          },
+          "timeoutSeconds": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "extend_clip",
+      "description": "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "videoUrl": {
+            "type": "string",
+            "description": "Public https URL of the source clip (2-15 seconds)."
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "default": 6,
+            "type": "number",
+            "minimum": 2,
+            "maximum": 10
+          },
+          "model": {
+            "default": "grok-imagine-video",
+            "type": "string"
+          },
+          "waitForCompletion": {
+            "default": true,
+            "type": "boolean"
+          },
+          "timeoutSeconds": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "videoUrl",
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "extract_last_frame",
+      "description": "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "videoUrl": {
+            "type": "string",
+            "description": "Public https URL, file:// path, or a local path from a previous run."
+          },
+          "includeDataUri": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "videoUrl"
+        ]
+      }
+    },
+    {
+      "name": "generate_still",
+      "description": "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "description": "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked.",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "referenceImageUrls": {
+            "description": "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "characters": {
+            "description": "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "assemble_film",
+      "description": "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "clips": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "trimStart": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "trimEnd": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          },
+          "fadeDuration": {
+            "default": 0,
+            "description": "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "audioTrackUrl": {
+            "description": "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it.",
+            "type": "string"
+          },
+          "audioTrackVolume": {
+            "default": 0.25,
+            "description": "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video.",
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 4
+          },
+          "audioTrackFadeOutSeconds": {
+            "default": 1.5,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "clips"
+        ]
+      }
+    },
+    {
+      "name": "render_sequence",
+      "description": "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "shots": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
+                },
+                "durationSeconds": {
+                  "default": 8,
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                },
+                "title": {
+                  "type": "string"
+                },
+                "firstFrameUrl": {
+                  "description": "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved.",
+                  "type": "string"
+                },
+                "lastFrameUrl": {
+                  "description": "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            },
+            "description": "Shots in order, 1 to 12. More than that is usually two films."
+          },
+          "characters": {
+            "description": "Character names from create_character. Their reference images go on every shot.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "continuity": {
+            "description": "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this.",
+            "type": "string"
+          },
+          "firstFrameUrl": {
+            "description": "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
+            "type": "string"
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "resolution": {
+            "default": "720p",
+            "description": "Output resolution. 1080p costs roughly twice 720p per second of video.",
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "model": {
+            "default": "grok-imagine-video-1.5",
+            "type": "string"
+          },
+          "assemble": {
+            "default": true,
+            "description": "Also assemble the clips into one film.",
+            "type": "boolean"
+          },
+          "audioTrackUrl": {
+            "description": "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment.",
+            "type": "string"
+          },
+          "audioTrackVolume": {
+            "default": 0.25,
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 4
+          },
+          "audioTrackFadeOutSeconds": {
+            "default": 1.5,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 30
+          },
+          "fadeDuration": {
+            "default": 0,
+            "description": "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "resumeFromJobId": {
+            "description": "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots.",
+            "type": "string"
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve.",
+            "type": "boolean"
+          },
+          "timeoutSecondsPerShot": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "shots"
+        ]
+      }
+    },
+    {
+      "name": "board_film",
+      "description": "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "shots": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "description": "What happens in the shot.",
+                  "type": "string"
+                },
+                "action": {
+                  "description": "Alias for prompt, so plan_storyboard output pastes in unchanged.",
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "durationSeconds": {
+                  "default": 8,
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                }
+              }
+            },
+            "description": "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+          },
+          "look": {
+            "description": "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies.",
+            "type": "string"
+          },
+          "cast": {
+            "description": "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters.",
+            "type": "string"
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "characters": {
+            "description": "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "referenceImageUrls": {
+            "description": "Extra reference stills for the board: https URLs, data URIs, or local paths.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseImageUrl": {
+            "description": "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here.",
+            "type": "string"
+          },
+          "maxCostUsd": {
+            "description": "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board.",
+            "type": "number",
+            "minimum": 0
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "shots"
+        ]
+      }
+    },
+    {
+      "name": "retry_shot",
+      "description": "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The finished job whose shot needs replacing."
+          },
+          "shotIndex": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "1-based shot number, as reported in the job."
+          },
+          "prompt": {
+            "description": "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong.",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "timeoutSecondsPerShot": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "jobId",
+          "shotIndex"
+        ]
+      }
+    },
+    {
+      "name": "list_films",
+      "description": "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "includeUnfinished": {
+            "default": false,
+            "description": "Also list films that stopped or failed, which still hold every shot they paid for.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "check_sequence",
+      "description": "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The jobId render_sequence returned."
+          }
+        },
+        "required": [
+          "jobId"
+        ]
+      }
+    }
+  ]
+}
