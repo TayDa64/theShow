@@ -43571,10 +43571,6 @@ async function loadAllCharacters() {
 import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 import { createHash as createHash4 } from "node:crypto";
-var server = new McpServer({
-  name: "theshow",
-  version: "0.1.0"
-});
 var CharacterSchema = external_exports.object({
   name: external_exports.string(),
   role: external_exports.string().optional(),
@@ -43878,187 +43874,193 @@ var FILM_FORM_SCHEMA = {
   },
   required: ["scene"]
 };
-server.registerTool(
-  "configure_film",
-  {
-    description: "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
-    inputSchema: external_exports.object({
-      scene: external_exports.string().optional().describe("Pre-fill the scene if the user already said it."),
-      prompt: external_exports.string().optional().describe("Card heading shown to the user.")
-    })
-  },
-  async (args) => {
-    const title = args.prompt ?? "Configure the film";
-    const caps = server.server.getClientCapabilities();
-    const canElicit = Boolean(caps?.elicitation);
-    if (!canElicit) {
+function registerConfigureFilm(server) {
+  server.registerTool(
+    "configure_film",
+    {
+      description: "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
+      inputSchema: external_exports.object({
+        scene: external_exports.string().optional().describe("Pre-fill the scene if the user already said it."),
+        prompt: external_exports.string().optional().describe("Card heading shown to the user.")
+      })
+    },
+    async (args) => {
+      const title = args.prompt ?? "Configure the film";
+      const caps = server.server.getClientCapabilities();
+      const canElicit = Boolean(caps?.elicitation);
+      if (!canElicit) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              elicitationSupported: false,
+              message: "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
+              fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
+                key,
+                title: v2.title ?? key,
+                description: v2.description ?? ""
+              }))
+            }, null, 2)
+          }]
+        };
+      }
+      const schema = structuredClone(FILM_FORM_SCHEMA);
+      if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
+      let result;
+      try {
+        result = await server.server.elicitInput({
+          message: title,
+          requestedSchema: schema
+        });
+      } catch (err) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              elicitationSupported: true,
+              formFailed: true,
+              error: err instanceof Error ? err.message : String(err),
+              message: "The form was shown but the response was rejected. Ask for the same fields conversationally."
+            }, null, 2)
+          }]
+        };
+      }
+      if (result.action !== "accept") {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              action: result.action,
+              message: result.action === "decline" ? "The user dismissed the form. Do not render. Ask what they would like to change." : "The user cancelled. Do not render."
+            }, null, 2)
+          }]
+        };
+      }
+      const v = result.content ?? {};
+      const shotCount = Number(v.shotCount ?? 2);
+      const shotSeconds = Number(v.shotSeconds ?? 8);
+      const resolution = resolutionFromLabel(v.resolution) ?? "720p";
+      const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
+      const total = Math.round(perShot * shotCount * 100) / 100;
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            elicitationSupported: false,
-            message: "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
-            fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
-              key,
-              title: v2.title ?? key,
-              description: v2.description ?? ""
-            }))
+            action: "accept",
+            config: {
+              scene: v.scene ?? "",
+              characters: v.characters ?? "",
+              style: v.style ?? "Photoreal cinematic",
+              shotCount,
+              shotSeconds,
+              resolution,
+              aspectRatio: v.aspectRatio ?? "16:9",
+              audio: v.audio ?? "Diegetic only",
+              neverShow: v.neverShow ?? "",
+              referenceImage: v.referenceImage || void 0,
+              audioTrack: v.audioTrack || void 0
+            },
+            estimate: {
+              perShotUsd: perShot,
+              totalUsd: total,
+              basis: `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. 480p runs near $0.08/s and 1080p near $0.25/s.`,
+              isEstimate: true
+            },
+            continuityBlock: buildContinuityBlock(v),
+            next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the user left blank."
           }, null, 2)
         }]
       };
     }
-    const schema = structuredClone(FILM_FORM_SCHEMA);
-    if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
-    let result;
-    try {
-      result = await server.server.elicitInput({
-        message: title,
-        requestedSchema: schema
+  );
+}
+function registerCreateCharacter(server) {
+  server.registerTool(
+    "create_character",
+    {
+      description: "Create or update a character with optional reference images for continuity.",
+      inputSchema: CharacterSchema
+    },
+    async (args) => {
+      let stored;
+      try {
+        stored = await rememberCharacter(args);
+      } catch (err) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: err instanceof Error ? err.message : "Could not save the character."
+            }, null, 2)
+          }],
+          isError: true
+        };
+      }
+      const { entry, folder, warnings } = stored;
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ...entry,
+            storage: folder,
+            referenceImages: entry.referenceImageUrls.length,
+            ...warnings ? { warnings } : {},
+            message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
+          }, null, 2)
+        }]
+      };
+    }
+  );
+}
+function registerPlanStoryboard(server) {
+  server.registerTool(
+    "plan_storyboard",
+    {
+      description: "Plan multi-shot storyboard for a scene.",
+      inputSchema: external_exports.object({
+        sceneDescription: external_exports.string(),
+        beats: external_exports.array(external_exports.object({
+          title: external_exports.string(),
+          action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
+          note: external_exports.string().optional().describe("Continuity requirement carried into the prompt.")
+        })).optional().describe(
+          "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
+        ),
+        characters: external_exports.array(external_exports.string()),
+        targetDurationSeconds: external_exports.number().optional(),
+        shotCount: external_exports.number().optional()
+      })
+    },
+    async (args) => {
+      const requested = args.shotCount ?? Math.max(1, Math.round((args.targetDurationSeconds ?? 16) / 8));
+      const shotCount = Math.min(12, Math.max(1, Math.round(requested)));
+      const totalDurationSeconds = Math.min(
+        180,
+        Math.max(shotCount, Math.round(args.targetDurationSeconds ?? shotCount * 8))
+      );
+      const shots = planShots({
+        sceneDescription: args.sceneDescription,
+        characterNames: args.characters ?? [],
+        shotCount,
+        totalDurationSeconds,
+        beats: args.beats
       });
-    } catch (err) {
+      const unknown2 = (args.characters ?? []).filter((name) => !lookupCharacter(name));
+      const payload = {
+        scene: args.sceneDescription,
+        shotCount: shots.length,
+        totalDurationSeconds: shots.reduce((sum, shot) => sum + shot.durationSeconds, 0),
+        shots
+      };
+      if (unknown2.length > 0) {
+        payload.note = `No stored character record for: ${unknown2.join(", ")}. Call create_character first so continuity notes can carry wardrobe and reference images.`;
+      }
       return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            elicitationSupported: true,
-            formFailed: true,
-            error: err instanceof Error ? err.message : String(err),
-            message: "The form was shown but the response was rejected. Ask for the same fields conversationally."
-          }, null, 2)
-        }]
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
       };
     }
-    if (result.action !== "accept") {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            action: result.action,
-            message: result.action === "decline" ? "The user dismissed the form. Do not render. Ask what they would like to change." : "The user cancelled. Do not render."
-          }, null, 2)
-        }]
-      };
-    }
-    const v = result.content ?? {};
-    const shotCount = Number(v.shotCount ?? 2);
-    const shotSeconds = Number(v.shotSeconds ?? 8);
-    const resolution = resolutionFromLabel(v.resolution) ?? "720p";
-    const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
-    const total = Math.round(perShot * shotCount * 100) / 100;
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          action: "accept",
-          config: {
-            scene: v.scene ?? "",
-            characters: v.characters ?? "",
-            style: v.style ?? "Photoreal cinematic",
-            shotCount,
-            shotSeconds,
-            resolution,
-            aspectRatio: v.aspectRatio ?? "16:9",
-            audio: v.audio ?? "Diegetic only",
-            neverShow: v.neverShow ?? "",
-            referenceImage: v.referenceImage || void 0,
-            audioTrack: v.audioTrack || void 0
-          },
-          estimate: {
-            perShotUsd: perShot,
-            totalUsd: total,
-            basis: `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. 480p runs near $0.08/s and 1080p near $0.25/s.`,
-            isEstimate: true
-          },
-          continuityBlock: buildContinuityBlock(v),
-          next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the user left blank."
-        }, null, 2)
-      }]
-    };
-  }
-);
-server.registerTool(
-  "create_character",
-  {
-    description: "Create or update a character with optional reference images for continuity.",
-    inputSchema: CharacterSchema
-  },
-  async (args) => {
-    let stored;
-    try {
-      stored = await rememberCharacter(args);
-    } catch (err) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: err instanceof Error ? err.message : "Could not save the character."
-          }, null, 2)
-        }],
-        isError: true
-      };
-    }
-    const { entry, folder, warnings } = stored;
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          ...entry,
-          storage: folder,
-          referenceImages: entry.referenceImageUrls.length,
-          ...warnings ? { warnings } : {},
-          message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
-        }, null, 2)
-      }]
-    };
-  }
-);
-server.registerTool(
-  "plan_storyboard",
-  {
-    description: "Plan multi-shot storyboard for a scene.",
-    inputSchema: external_exports.object({
-      sceneDescription: external_exports.string(),
-      beats: external_exports.array(external_exports.object({
-        title: external_exports.string(),
-        action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
-        note: external_exports.string().optional().describe("Continuity requirement carried into the prompt.")
-      })).optional().describe(
-        "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
-      ),
-      characters: external_exports.array(external_exports.string()),
-      targetDurationSeconds: external_exports.number().optional(),
-      shotCount: external_exports.number().optional()
-    })
-  },
-  async (args) => {
-    const requested = args.shotCount ?? Math.max(1, Math.round((args.targetDurationSeconds ?? 16) / 8));
-    const shotCount = Math.min(12, Math.max(1, Math.round(requested)));
-    const totalDurationSeconds = Math.min(
-      180,
-      Math.max(shotCount, Math.round(args.targetDurationSeconds ?? shotCount * 8))
-    );
-    const shots = planShots({
-      sceneDescription: args.sceneDescription,
-      characterNames: args.characters ?? [],
-      shotCount,
-      totalDurationSeconds,
-      beats: args.beats
-    });
-    const unknown2 = (args.characters ?? []).filter((name) => !lookupCharacter(name));
-    const payload = {
-      scene: args.sceneDescription,
-      shotCount: shots.length,
-      totalDurationSeconds: shots.reduce((sum, shot) => sum + shot.durationSeconds, 0),
-      shots
-    };
-    if (unknown2.length > 0) {
-      payload.note = `No stored character record for: ${unknown2.join(", ")}. Call create_character first so continuity notes can carry wardrobe and reference images.`;
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
-    };
-  }
-);
+  );
+}
 var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
 function mentionsPerson(text) {
   return PERSON_IN_SHOT.test(text);
@@ -44078,141 +44080,145 @@ function localImagePath(ref) {
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
 var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-server.registerTool(
-  "generate_controlled_clip",
-  {
-    description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
-    inputSchema: external_exports.object({
-      prompt: external_exports.string(),
-      characters: external_exports.array(external_exports.string()).optional().describe(
-        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand."
-      ),
-      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-        "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`."
-      ),
-      firstFrameUrl: external_exports.string().optional().describe(
-        "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
-      ),
-      lastFrameUrl: external_exports.string().optional().describe(
-        "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture."
-      ),
-      durationSeconds: external_exports.number().min(1).max(15).default(8),
-      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
-        "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default."
-      ),
-      model: external_exports.string().default("grok-imagine-video-1.5"),
-      waitForCompletion: external_exports.boolean().default(true),
-      timeoutSeconds: external_exports.number().min(10).max(600).default(240)
-    })
-  },
-  async (args) => {
-    const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
-    const job = { ...rest };
-    const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
-    job.referenceImageUrls = urls.length > 0 ? urls : void 0;
-    const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          ...result,
-          message: result.videoUrl ? "Clip generated. Use extract_last_frame on it to carry continuity into the next shot." : result.requestId ? "Generation submitted. Poll statusUrl for the finished clip." : "Stub response: no credential available, so nothing was generated.",
-          referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
-          unknownCharacters: missing.length > 0 ? missing : void 0,
-          args
-        }, null, 2)
-      }]
-    };
-  }
-);
-server.registerTool(
-  "extend_clip",
-  {
-    description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing.",
-    inputSchema: external_exports.object({
-      videoUrl: external_exports.string().describe("Public https URL of the source clip (2-15 seconds)."),
-      prompt: external_exports.string(),
-      durationSeconds: external_exports.number().min(2).max(10).default(6),
-      model: external_exports.string().default("grok-imagine-video"),
-      waitForCompletion: external_exports.boolean().default(true),
-      timeoutSeconds: external_exports.number().min(10).max(600).default(240)
-    })
-  },
-  async (args) => {
-    const resolved = resolveVideoCredential();
-    if (resolved.ok === false) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
-    }
-    const credential = resolved.credential;
-    if (credential.kind === "session") {
+function registerGenerateControlledClip(server) {
+  server.registerTool(
+    "generate_controlled_clip",
+    {
+      description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
+      inputSchema: external_exports.object({
+        prompt: external_exports.string(),
+        characters: external_exports.array(external_exports.string()).optional().describe(
+          "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand."
+        ),
+        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+          "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`."
+        ),
+        firstFrameUrl: external_exports.string().optional().describe(
+          "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
+        ),
+        lastFrameUrl: external_exports.string().optional().describe(
+          "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture."
+        ),
+        durationSeconds: external_exports.number().min(1).max(15).default(8),
+        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+        resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+          "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default."
+        ),
+        model: external_exports.string().default("grok-imagine-video-1.5"),
+        waitForCompletion: external_exports.boolean().default(true),
+        timeoutSeconds: external_exports.number().min(10).max(600).default(240)
+      })
+    },
+    async (args) => {
+      const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
+      const job = { ...rest };
+      const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
+      job.referenceImageUrls = urls.length > 0 ? urls : void 0;
+      const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            error: "Extension not available on the subscription session",
-            detail: "The Grok CLI inference proxy answers POST /v1/videos/extensions with HTTP 405. Extension needs an XAI_API_KEY pointed at api.x.ai.",
-            workaround: "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame (from extract_last_frame). That produces a new shot continuing from the same image and works on the subscription session.",
-            auth: credential.source
+            ...result,
+            message: result.videoUrl ? "Clip generated. Use extract_last_frame on it to carry continuity into the next shot." : result.requestId ? "Generation submitted. Poll statusUrl for the finished clip." : "Stub response: no credential available, so nothing was generated.",
+            referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
+            unknownCharacters: missing.length > 0 ? missing : void 0,
+            args
           }, null, 2)
         }]
       };
     }
-    const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
-    const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: args.model,
-        prompt: args.prompt,
-        duration: args.durationSeconds,
-        video: { url: args.videoUrl }
+  );
+}
+function registerExtendClip(server) {
+  server.registerTool(
+    "extend_clip",
+    {
+      description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing.",
+      inputSchema: external_exports.object({
+        videoUrl: external_exports.string().describe("Public https URL of the source clip (2-15 seconds)."),
+        prompt: external_exports.string(),
+        durationSeconds: external_exports.number().min(2).max(10).default(6),
+        model: external_exports.string().default("grok-imagine-video"),
+        waitForCompletion: external_exports.boolean().default(true),
+        timeoutSeconds: external_exports.number().min(10).max(600).default(240)
       })
-    });
-    if (!submitRes.ok) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2)
-        }]
-      };
-    }
-    const submitted = await submitRes.json();
-    const requestId = submitted.request_id;
-    if (!requestId) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
-    }
-    if (!args.waitForCompletion) {
-      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
-    }
-    const deadline = Date.now() + args.timeoutSeconds * 1e3;
-    while (Date.now() < deadline) {
-      await sleep2(5e3);
-      const statusRes = await fetch(`${credential.baseUrl}/v1/videos/${requestId}`, { headers });
-      if (!statusRes.ok) continue;
-      const poll = await statusRes.json();
-      if (poll.status === "done" || poll.status === "completed") {
+    },
+    async (args) => {
+      const resolved = resolveVideoCredential();
+      if (resolved.ok === false) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
+      }
+      const credential = resolved.credential;
+      if (credential.kind === "session") {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              requestId,
-              status: "completed",
-              videoUrl: poll.video?.url,
-              durationSeconds: poll.video?.duration,
-              extendedBy: args.durationSeconds,
+              error: "Extension not available on the subscription session",
+              detail: "The Grok CLI inference proxy answers POST /v1/videos/extensions with HTTP 405. Extension needs an XAI_API_KEY pointed at api.x.ai.",
+              workaround: "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame (from extract_last_frame). That produces a new shot continuing from the same image and works on the subscription session.",
               auth: credential.source
             }, null, 2)
           }]
         };
       }
-      if (poll.status === "failed" || poll.status === "expired") {
-        return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
+      const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
+      const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: args.model,
+          prompt: args.prompt,
+          duration: args.durationSeconds,
+          video: { url: args.videoUrl }
+        })
+      });
+      if (!submitRes.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2)
+          }]
+        };
       }
+      const submitted = await submitRes.json();
+      const requestId = submitted.request_id;
+      if (!requestId) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
+      }
+      if (!args.waitForCompletion) {
+        return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+      }
+      const deadline = Date.now() + args.timeoutSeconds * 1e3;
+      while (Date.now() < deadline) {
+        await sleep2(5e3);
+        const statusRes = await fetch(`${credential.baseUrl}/v1/videos/${requestId}`, { headers });
+        if (!statusRes.ok) continue;
+        const poll = await statusRes.json();
+        if (poll.status === "done" || poll.status === "completed") {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                requestId,
+                status: "completed",
+                videoUrl: poll.video?.url,
+                durationSeconds: poll.video?.duration,
+                extendedBy: args.durationSeconds,
+                auth: credential.source
+              }, null, 2)
+            }]
+          };
+        }
+        if (poll.status === "failed" || poll.status === "expired") {
+          return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
+        }
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
     }
-    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
-  }
-);
+  );
+}
 var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
@@ -44234,170 +44240,165 @@ async function resolveToLocalFile(input2) {
   if (exists === void 0) throw new Error(`Not a readable media file: ${path}`);
   return path;
 }
-server.registerTool(
-  "extract_last_frame",
-  {
-    description: "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
-    inputSchema: external_exports.object({
-      videoUrl: external_exports.string().describe("Public https URL, file:// path, or a local path from a previous run."),
-      includeDataUri: external_exports.boolean().default(true)
-    })
-  },
-  async (args) => {
-    const localPath = await resolveToLocalFile(args.videoUrl);
-    const frame = await extractLastFrame({ file: localPath });
-    const durationSeconds = await probeDuration(localPath);
-    const payload = {
-      status: "ok",
-      framePath: frame.path,
-      frameBytes: frame.bytes,
-      sourceVideo: args.videoUrl,
-      sourceDurationSeconds: durationSeconds,
-      ffmpeg: frame.ffmpeg,
-      message: "Use framePath or dataUri as firstFrameUrl on the next shot to carry continuity. The data URI is self-contained, so it survives a copy into another machine."
-    };
-    if (args.includeDataUri) {
-      payload.dataUri = await pathToDataUrl(frame.path);
+function registerExtractLastFrame(server) {
+  server.registerTool(
+    "extract_last_frame",
+    {
+      description: "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
+      inputSchema: external_exports.object({
+        videoUrl: external_exports.string().describe("Public https URL, file:// path, or a local path from a previous run."),
+        includeDataUri: external_exports.boolean().default(true)
+      })
+    },
+    async (args) => {
+      const localPath = await resolveToLocalFile(args.videoUrl);
+      const frame = await extractLastFrame({ file: localPath });
+      const durationSeconds = await probeDuration(localPath);
+      const payload = {
+        status: "ok",
+        framePath: frame.path,
+        frameBytes: frame.bytes,
+        sourceVideo: args.videoUrl,
+        sourceDurationSeconds: durationSeconds,
+        ffmpeg: frame.ffmpeg,
+        message: "Use framePath or dataUri as firstFrameUrl on the next shot to carry continuity. The data URI is self-contained, so it survives a copy into another machine."
+      };
+      if (args.includeDataUri) {
+        payload.dataUri = await pathToDataUrl(frame.path);
+      }
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
     }
-    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-  }
-);
-server.registerTool(
-  "generate_still",
-  {
-    description: "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
-    inputSchema: external_exports.object({
-      prompt: external_exports.string().describe(
-        "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
-      ),
-      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
-        "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked."
-      ),
-      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-        "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
-      ),
-      characters: external_exports.array(external_exports.string()).optional().describe(
-        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
-      )
-    })
-  },
-  async (args) => {
-    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
-    const result = await generateGrokStill(
-      {
-        prompt: args.prompt,
-        aspectRatio: args.aspectRatio,
-        referenceImageUrls: urls.length > 0 ? urls : void 0
-      },
-      { outputDir: OUTPUT_DIR }
-    );
-    if (!result.localPath) {
+  );
+}
+function registerGenerateStill(server) {
+  server.registerTool(
+    "generate_still",
+    {
+      description: "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
+      inputSchema: external_exports.object({
+        prompt: external_exports.string().describe(
+          "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
+        ),
+        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
+          "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked."
+        ),
+        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+          "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
+        ),
+        characters: external_exports.array(external_exports.string()).optional().describe(
+          "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
+        )
+      })
+    },
+    async (args) => {
+      const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+      const result = await generateGrokStill(
+        {
+          prompt: args.prompt,
+          aspectRatio: args.aspectRatio,
+          referenceImageUrls: urls.length > 0 ? urls : void 0
+        },
+        { outputDir: OUTPUT_DIR }
+      );
+      if (!result.localPath) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: result.error ?? "Still generation failed",
+              detail: result.detail,
+              hint: result.hint,
+              costUsd: result.costUsd,
+              referenceImagesUsed: urls.length,
+              unknownCharacters: missing.length > 0 ? missing : void 0
+            }, null, 2)
+          }]
+        };
+      }
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            error: result.error ?? "Still generation failed",
-            detail: result.detail,
-            hint: result.hint,
+            status: "ok",
+            imageUrl: result.imageUrl,
+            imagePath: result.localPath,
+            fileUrl: `file://${result.localPath}`,
+            mimeType: result.mimeType,
+            aspectRatio: args.aspectRatio,
+            aspectRatioParam: result.aspectRatioParam,
             costUsd: result.costUsd,
+            usage: result.usage,
+            billedTo: result.billedTo,
+            auth: result.auth,
             referenceImagesUsed: urls.length,
-            unknownCharacters: missing.length > 0 ? missing : void 0
+            unknownCharacters: missing.length > 0 ? missing : void 0,
+            message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
           }, null, 2)
         }]
       };
     }
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          status: "ok",
-          imageUrl: result.imageUrl,
-          imagePath: result.localPath,
-          fileUrl: `file://${result.localPath}`,
-          mimeType: result.mimeType,
-          aspectRatio: args.aspectRatio,
-          aspectRatioParam: result.aspectRatioParam,
-          costUsd: result.costUsd,
-          usage: result.usage,
-          billedTo: result.billedTo,
-          auth: result.auth,
-          referenceImagesUsed: urls.length,
-          unknownCharacters: missing.length > 0 ? missing : void 0,
-          message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
-        }, null, 2)
-      }]
-    };
-  }
-);
-server.registerTool(
-  "assemble_film",
-  {
-    description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
-    inputSchema: external_exports.object({
-      clips: external_exports.array(external_exports.object({
-        url: external_exports.string(),
-        title: external_exports.string().optional(),
-        trimStart: external_exports.number().min(0).optional(),
-        trimEnd: external_exports.number().min(0).optional()
-      })).min(1),
-      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
-      ),
-      audioTrackUrl: external_exports.string().optional().describe(
-        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it."
-      ),
-      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25).describe(
-        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video."
-      ),
-      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5)
-    })
-  },
-  async (args) => {
-    const localFiles = [];
-    for (const clip of args.clips) {
-      const file2 = await resolveToLocalFile(clip.url);
-      localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
-    }
-    const result = await assembleClips({
-      clips: localFiles,
-      fadeDuration: args.fadeDuration,
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-      audioTrackVolume: args.audioTrackVolume,
-      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
-    });
-    const durationSeconds = await probeDuration(result.path);
-    const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
-    const payload = {
-      status: "ok",
-      filmPath: result.path,
-      fileUrl: `file://${result.path}`,
-      clipCount: args.clips.length,
-      durationSeconds,
-      fileBytes: await bytes,
-      crossFades: result.mode === "xfade",
-      mode: result.mode,
-      fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
-      audioBed: result.audioBed ? {
-        source: args.audioTrackUrl,
-        volume: args.audioTrackVolume,
-        note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio."
-      } : void 0,
-      message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
-    };
-    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-  }
-);
-async function main() {
-  await loadJobsFromDisk();
-  await loadCharactersFromDisk();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("theShow MCP server running on stdio (enhanced test build)");
+  );
 }
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+function registerAssembleFilm(server) {
+  server.registerTool(
+    "assemble_film",
+    {
+      description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
+      inputSchema: external_exports.object({
+        clips: external_exports.array(external_exports.object({
+          url: external_exports.string(),
+          title: external_exports.string().optional(),
+          trimStart: external_exports.number().min(0).optional(),
+          trimEnd: external_exports.number().min(0).optional()
+        })).min(1),
+        fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+          "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
+        ),
+        audioTrackUrl: external_exports.string().optional().describe(
+          "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it."
+        ),
+        audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25).describe(
+          "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video."
+        ),
+        audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5)
+      })
+    },
+    async (args) => {
+      const localFiles = [];
+      for (const clip of args.clips) {
+        const file2 = await resolveToLocalFile(clip.url);
+        localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
+      }
+      const result = await assembleClips({
+        clips: localFiles,
+        fadeDuration: args.fadeDuration,
+        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackVolume: args.audioTrackVolume,
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+      });
+      const durationSeconds = await probeDuration(result.path);
+      const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
+      const payload = {
+        status: "ok",
+        filmPath: result.path,
+        fileUrl: `file://${result.path}`,
+        clipCount: args.clips.length,
+        durationSeconds,
+        fileBytes: await bytes,
+        crossFades: result.mode === "xfade",
+        mode: result.mode,
+        fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
+        audioBed: result.audioBed ? {
+          source: args.audioTrackUrl,
+          volume: args.audioTrackVolume,
+          note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio."
+        } : void 0,
+        message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
+      };
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+  );
+}
 var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
 function ratePerSecond(resolution) {
   return RESOLUTION_RATES[resolution] ?? RESOLUTION_RATES["720p"];
@@ -44622,517 +44623,564 @@ async function runSequenceJob(job, args) {
     void persistJob(job);
   }
 }
-server.registerTool(
-  "render_sequence",
-  {
-    description: "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
-    inputSchema: external_exports.object({
-      shots: external_exports.array(external_exports.object({
-        prompt: external_exports.string().describe(
-          "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
+function registerRenderSequence(server) {
+  server.registerTool(
+    "render_sequence",
+    {
+      description: "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+      inputSchema: external_exports.object({
+        shots: external_exports.array(external_exports.object({
+          prompt: external_exports.string().describe(
+            "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
+          ),
+          durationSeconds: external_exports.number().min(1).max(15).default(8),
+          title: external_exports.string().optional(),
+          firstFrameUrl: external_exports.string().optional().describe(
+            "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
+          ),
+          lastFrameUrl: external_exports.string().optional().describe(
+            "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
+          )
+        })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
+        characters: external_exports.array(external_exports.string()).optional().describe(
+          "Character names from create_character. Their reference images go on every shot."
         ),
-        durationSeconds: external_exports.number().min(1).max(15).default(8),
-        title: external_exports.string().optional(),
+        continuity: external_exports.string().optional().describe(
+          "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this."
+        ),
         firstFrameUrl: external_exports.string().optional().describe(
-          "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
+          "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
         ),
-        lastFrameUrl: external_exports.string().optional().describe(
-          "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
-        )
-      })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
-      characters: external_exports.array(external_exports.string()).optional().describe(
-        "Character names from create_character. Their reference images go on every shot."
-      ),
-      continuity: external_exports.string().optional().describe(
-        "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this."
-      ),
-      firstFrameUrl: external_exports.string().optional().describe(
-        "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
-      ),
-      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
-        "Output resolution. 1080p costs roughly twice 720p per second of video."
-      ),
-      model: external_exports.string().default("grok-imagine-video-1.5"),
-      assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
-      audioTrackUrl: external_exports.string().optional().describe(
-        "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
-      ),
-      audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25),
-      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
-      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-        "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
-      ),
-      resumeFromJobId: external_exports.string().optional().describe(
-        "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
-      ),
-      confirm: external_exports.boolean().default(false).describe(
-        "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
-      ),
-      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
-    })
-  },
-  async (args) => {
-    const shotCount = args.shots.length;
-    const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
-    let resumeJob;
-    if (args.resumeFromJobId) {
-      resumeJob = sequenceJobs.get(args.resumeFromJobId);
-      if (!resumeJob) {
+        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+        resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+          "Output resolution. 1080p costs roughly twice 720p per second of video."
+        ),
+        model: external_exports.string().default("grok-imagine-video-1.5"),
+        assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
+        audioTrackUrl: external_exports.string().optional().describe(
+          "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
+        ),
+        audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25),
+        audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
+        fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+          "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
+        ),
+        resumeFromJobId: external_exports.string().optional().describe(
+          "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
+        ),
+        confirm: external_exports.boolean().default(false).describe(
+          "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+        ),
+        timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+      })
+    },
+    async (args) => {
+      const shotCount = args.shots.length;
+      const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
+      let resumeJob;
+      if (args.resumeFromJobId) {
+        resumeJob = sequenceJobs.get(args.resumeFromJobId);
+        if (!resumeJob) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                error: "Unknown resumeFromJobId",
+                detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+                known: Array.from(sequenceJobs.keys()).slice(-5)
+              }, null, 2)
+            }]
+          };
+        }
+        if (resumeJob.state === "running") {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                error: "That job is still running",
+                detail: "Wait for it to finish and poll check_sequence. Continuing a running job renders it twice.",
+                jobId: resumeJob.id
+              }, null, 2)
+            }]
+          };
+        }
+        if (resumeJob.shots.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                error: "That job rendered no shots to continue from",
+                jobId: resumeJob.id,
+                state: resumeJob.state,
+                detail: resumeJob.error ?? "Start a new film with firstFrameUrl instead."
+              }, null, 2)
+            }]
+          };
+        }
+      }
+      const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
+      const resumeFramePath = carried.at(-1)?.framePath;
+      const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
+      const estimate = Math.round(
+        args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
+      ) / 100;
+      const resumeWarnings = [];
+      if (resumeJob && continuationStartFrame) {
+        const oldEnd = carried.at(-1)?.framePath;
+        if (oldEnd && continuationStartFrame !== oldEnd) {
+          resumeWarnings.push(
+            `The new shot does not start on the frame the earlier film ends on. It will join the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut between them is an unpinned join and the cast may change across it. Either pass firstFrameUrl identical to the old film's last frame, or start a new film.`
+          );
+        }
+      }
+      const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
+      const sharedBoundaries = args.shots.reduce((count, shot, i) => {
+        const next = args.shots[i + 1];
+        return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
+      }, 0);
+      if (!args.confirm) {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              error: "Unknown resumeFromJobId",
+              action: "estimate-only",
+              willRender: false,
+              plan: {
+                shots: shotCount,
+                totalSeconds,
+                aspectRatio: args.aspectRatio,
+                resolution: args.resolution,
+                fadeSeconds: args.fadeDuration,
+                continuity: bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and last frames; the rest chain from the previous shot's last frame.` : "Each shot starts from the previous shot's last frame.",
+                bookendedShots,
+                sharedBoundaryFrames: sharedBoundaries,
+                rendersAsOneJob: true,
+                ...resumeJob ? {
+                  continuingJob: resumeJob.id,
+                  alreadyRenderedShots: carried.length,
+                  assembledFilmShots: carried.length + shotCount,
+                  note: `Shots 1-${carried.length} are already rendered and cost nothing more; they go into the final assembly. This estimate covers only the ${shotCount} new shots.`
+                } : {}
+              },
+              estimate: {
+                totalUsd: estimate,
+                resolution: args.resolution,
+                basis: `${shotCount} renders totalling ${totalSeconds}s at about $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
+                isEstimate: true
+              },
+              ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
+              next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
+            }, null, 2)
+          }]
+        };
+      }
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        // Total film length, not just this call's new shots.
+        shotCount: carried.length + shotCount,
+        completed: 0,
+        estimateUsd: estimate,
+        spentUsd: 0,
+        shots: [],
+        settings: {
+          aspectRatio: args.aspectRatio,
+          resolution: args.resolution,
+          model: args.model,
+          fadeDuration: args.fadeDuration,
+          continuity: args.continuity,
+          characters: args.characters,
+          audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+          audioTrackVolume: args.audioTrackVolume,
+          audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+          assemble: args.assemble
+        },
+        ...resumeJob ? {
+          resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
+          carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
+          // A continued film keeps the original start anchor, so repairing shot 1
+          // of the whole film still chains from where the film actually began.
+          startFramePath: resumeJob.startFramePath,
+          warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0
+        } : {
+          startFramePath: resumeFramePath ?? args.firstFrameUrl
+        }
+      };
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      void runSequenceJob(job, {
+        shots: args.shots,
+        characters: args.characters,
+        continuity: args.continuity,
+        firstFrameUrl: args.firstFrameUrl,
+        aspectRatio: args.aspectRatio,
+        resolution: args.resolution,
+        model: args.model,
+        assemble: args.assemble,
+        fadeDuration: args.fadeDuration,
+        // Resolved once, up front, so a bad path fails before any shot renders.
+        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackVolume: args.audioTrackVolume,
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: carried.length > 0 ? carried : void 0,
+        resumeFramePath
+      });
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+        await sleep2(500);
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
+    }
+  );
+}
+function registerBoardFilm(server) {
+  server.registerTool(
+    "board_film",
+    {
+      description: "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
+      inputSchema: external_exports.object({
+        shots: external_exports.array(external_exports.object({
+          prompt: external_exports.string().optional().describe("What happens in the shot."),
+          action: external_exports.string().optional().describe(
+            "Alias for prompt, so plan_storyboard output pastes in unchanged."
+          ),
+          title: external_exports.string().optional(),
+          durationSeconds: external_exports.number().min(1).max(15).default(8)
+        })).min(1).max(12).describe(
+          "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+        ),
+        look: external_exports.string().optional().describe(
+          "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
+        ),
+        cast: external_exports.string().optional().describe(
+          "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters."
+        ),
+        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+        characters: external_exports.array(external_exports.string()).optional().describe(
+          "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
+        ),
+        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+          "Extra reference stills for the board: https URLs, data URIs, or local paths."
+        ),
+        baseImageUrl: external_exports.string().optional().describe(
+          "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here."
+        ),
+        maxCostUsd: external_exports.number().min(0).optional().describe(
+          "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
+        ),
+        confirm: external_exports.boolean().default(false).describe(
+          "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+        )
+      })
+    },
+    async (args) => {
+      const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+      const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
+      const board = await boardFilm(
+        {
+          shots: args.shots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: args.confirm
+        },
+        {
+          outputDir: OUTPUT_DIR,
+          // A base image and a reference set compete for the same body, and the
+          // base is worth more: it holds the room. Keep the portraits that are
+          // not the base itself.
+          referenceImageUrls: urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0,
+          baseImageUrl,
+          // Injected so tests can board a whole film without reaching the network.
+          generateStill: async (job, opts) => generateGrokStill(job, opts)
+        }
+      );
+      const payload = {
+        ...board,
+        ...missing.length > 0 ? { unknownCharacters: missing } : {},
+        ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {}
+      };
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+  );
+}
+function registerRetryShot(server) {
+  server.registerTool(
+    "retry_shot",
+    {
+      description: "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
+      inputSchema: external_exports.object({
+        jobId: external_exports.string().describe("The finished job whose shot needs replacing."),
+        shotIndex: external_exports.number().int().min(1).describe("1-based shot number, as reported in the job."),
+        prompt: external_exports.string().optional().describe(
+          "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong."
+        ),
+        durationSeconds: external_exports.number().min(1).max(15).optional(),
+        confirm: external_exports.boolean().default(false),
+        timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+      })
+    },
+    async (args) => {
+      const original = sequenceJobs.get(args.jobId);
+      if (!original) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "Unknown jobId",
               detail: "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5)
             }, null, 2)
           }]
         };
       }
-      if (resumeJob.state === "running") {
+      if (original.state === "running") {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              error: "That job is still running",
-              detail: "Wait for it to finish and poll check_sequence. Continuing a running job renders it twice.",
-              jobId: resumeJob.id
+              error: "That film is still rendering",
+              detail: "Wait for check_sequence to report done before repairing a shot.",
+              jobId: original.id
             }, null, 2)
           }]
         };
       }
-      if (resumeJob.shots.length === 0) {
+      const index = args.shotIndex;
+      const target = original.shots.find((shot) => shot.index === index);
+      if (!target) {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              error: "That job rendered no shots to continue from",
-              jobId: resumeJob.id,
-              state: resumeJob.state,
-              detail: resumeJob.error ?? "Start a new film with firstFrameUrl instead."
+              error: `No shot ${index} in that film`,
+              shots: original.shots.map((shot) => ({ index: shot.index, title: shot.title }))
             }, null, 2)
           }]
         };
       }
-    }
-    const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
-    const resumeFramePath = carried.at(-1)?.framePath;
-    const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
-    const estimate = Math.round(
-      args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
-    ) / 100;
-    const resumeWarnings = [];
-    if (resumeJob && continuationStartFrame) {
-      const oldEnd = carried.at(-1)?.framePath;
-      if (oldEnd && continuationStartFrame !== oldEnd) {
-        resumeWarnings.push(
-          `The new shot does not start on the frame the earlier film ends on. It will join the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut between them is an unpinned join and the cast may change across it. Either pass firstFrameUrl identical to the old film's last frame, or start a new film.`
+      if (!target.prompt) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "That shot has no recorded prompt to re-render",
+              detail: "It was rendered before this version, or it was carried in from another film. Pass `prompt` explicitly.",
+              shotIndex: index
+            }, null, 2)
+          }]
+        };
+      }
+      const duration3 = args.durationSeconds ?? target.durationSeconds ?? 8;
+      const prompt = args.prompt ?? target.prompt;
+      const estimateUsd = Math.round(duration3 * ratePerSecond(original.settings?.resolution ?? "720p") * 100) / 100;
+      const before = original.shots.filter((shot) => shot.index < index);
+      const after = original.shots.filter((shot) => shot.index > index);
+      if (!args.confirm) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              action: "estimate-only",
+              willRender: false,
+              plan: {
+                repairing: original.id,
+                shotIndex: index,
+                shotTitle: target.title,
+                durationSeconds: duration3,
+                prompt,
+                reusedShots: before.length + after.length,
+                reRenderedShots: 1,
+                reassemblesFilm: original.settings?.assemble ?? true,
+                note: `Shot ${index} is re-rendered; the other ${before.length + after.length} are reused at no cost. The film is re-assembled with the original resolution, joins and audio.`
+              },
+              estimate: {
+                totalUsd: estimateUsd,
+                resolution: original.settings?.resolution ?? "720p",
+                basis: `1 render of ${duration3}s at the film's original resolution`,
+                isEstimate: true
+              },
+              caveat: after.length === 0 ? "This is the last shot, so nothing downstream depends on it." : after.length === 1 ? `Shot ${index + 1} was chained from the ORIGINAL shot ${index}'s last frame. It is kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair that shot too.` : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s last frame. They are kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair those shots too.`,
+              next: "Show this and the caveat to the user. Call again with confirm: true only after they approve."
+            }, null, 2)
+          }]
+        };
+      }
+      const settings = original.settings;
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        shotCount: original.shots.length,
+        completed: before.length,
+        estimateUsd,
+        spentUsd: 0,
+        shots: [],
+        settings,
+        startFramePath: original.startFramePath,
+        warnings: [...original.warnings ?? []],
+        repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+        // Every reused shot was paid for by the original film. Count it, so the
+        // reported film total is the film's real cost rather than this call's.
+        carriedOverUsd: Math.round(
+          [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
+        ) / 100
+      };
+      if (after.length > 0) {
+        const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
+        job.warnings.push(
+          `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
         );
       }
-    }
-    const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
-    const sharedBoundaries = args.shots.reduce((count, shot, i) => {
-      const next = args.shots[i + 1];
-      return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
-    }, 0);
-    if (!args.confirm) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            action: "estimate-only",
-            willRender: false,
-            plan: {
-              shots: shotCount,
-              totalSeconds,
-              aspectRatio: args.aspectRatio,
-              resolution: args.resolution,
-              fadeSeconds: args.fadeDuration,
-              continuity: bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and last frames; the rest chain from the previous shot's last frame.` : "Each shot starts from the previous shot's last frame.",
-              bookendedShots,
-              sharedBoundaryFrames: sharedBoundaries,
-              rendersAsOneJob: true,
-              ...resumeJob ? {
-                continuingJob: resumeJob.id,
-                alreadyRenderedShots: carried.length,
-                assembledFilmShots: carried.length + shotCount,
-                note: `Shots 1-${carried.length} are already rendered and cost nothing more; they go into the final assembly. This estimate covers only the ${shotCount} new shots.`
-              } : {}
-            },
-            estimate: {
-              totalUsd: estimate,
-              resolution: args.resolution,
-              basis: `${shotCount} renders totalling ${totalSeconds}s at about $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
-              isEstimate: true
-            },
-            ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
-            next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
-          }, null, 2)
-        }]
-      };
-    }
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      // Total film length, not just this call's new shots.
-      shotCount: carried.length + shotCount,
-      completed: 0,
-      estimateUsd: estimate,
-      spentUsd: 0,
-      shots: [],
-      settings: {
-        aspectRatio: args.aspectRatio,
-        resolution: args.resolution,
-        model: args.model,
-        fadeDuration: args.fadeDuration,
-        continuity: args.continuity,
-        characters: args.characters,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-        audioTrackVolume: args.audioTrackVolume,
-        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
-        assemble: args.assemble
-      },
-      ...resumeJob ? {
-        resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
-        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
-        // A continued film keeps the original start anchor, so repairing shot 1
-        // of the whole film still chains from where the film actually began.
-        startFramePath: resumeJob.startFramePath,
-        warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0
-      } : {
-        startFramePath: resumeFramePath ?? args.firstFrameUrl
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      void runSequenceJob(job, {
+        shots: [{ prompt, durationSeconds: duration3, title: target.title }],
+        characters: settings?.characters,
+        continuity: settings?.continuity,
+        firstFrameUrl: original.startFramePath,
+        aspectRatio: settings?.aspectRatio ?? "16:9",
+        resolution: settings?.resolution ?? "720p",
+        model: settings?.model ?? "grok-imagine-video-1.5",
+        assemble: settings?.assemble ?? true,
+        fadeDuration: settings?.fadeDuration ?? 0,
+        audioTrackFile: settings?.audioTrackFile,
+        audioTrackVolume: settings?.audioTrackVolume,
+        audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: before.length > 0 ? before : void 0,
+        trailingShots: after.length > 0 ? after : void 0,
+        // Chain the replacement from the shot that precedes it, exactly as the
+        // original film did, so the repaired shot fits the same join.
+        resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
+      });
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
+        await sleep2(500);
       }
-    };
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    void runSequenceJob(job, {
-      shots: args.shots,
-      characters: args.characters,
-      continuity: args.continuity,
-      firstFrameUrl: args.firstFrameUrl,
-      aspectRatio: args.aspectRatio,
-      resolution: args.resolution,
-      model: args.model,
-      assemble: args.assemble,
-      fadeDuration: args.fadeDuration,
-      // Resolved once, up front, so a bad path fails before any shot renders.
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-      audioTrackVolume: args.audioTrackVolume,
-      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: carried.length > 0 ? carried : void 0,
-      resumeFramePath
-    });
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
-      await sleep2(500);
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
     }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
-  }
-);
-server.registerTool(
-  "board_film",
-  {
-    description: "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
-    inputSchema: external_exports.object({
-      shots: external_exports.array(external_exports.object({
-        prompt: external_exports.string().optional().describe("What happens in the shot."),
-        action: external_exports.string().optional().describe(
-          "Alias for prompt, so plan_storyboard output pastes in unchanged."
-        ),
-        title: external_exports.string().optional(),
-        durationSeconds: external_exports.number().min(1).max(15).default(8)
-      })).min(1).max(12).describe(
-        "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
-      ),
-      look: external_exports.string().optional().describe(
-        "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
-      ),
-      cast: external_exports.string().optional().describe(
-        "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters."
-      ),
-      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-      characters: external_exports.array(external_exports.string()).optional().describe(
-        "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
-      ),
-      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-        "Extra reference stills for the board: https URLs, data URIs, or local paths."
-      ),
-      baseImageUrl: external_exports.string().optional().describe(
-        "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here."
-      ),
-      maxCostUsd: external_exports.number().min(0).optional().describe(
-        "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
-      ),
-      confirm: external_exports.boolean().default(false).describe(
-        "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
-      )
-    })
-  },
-  async (args) => {
-    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
-    const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
-    const board = await boardFilm(
-      {
-        shots: args.shots,
-        aspectRatio: args.aspectRatio,
-        look: args.look,
-        cast: args.cast,
-        maxCostUsd: args.maxCostUsd,
-        confirm: args.confirm
-      },
-      {
-        outputDir: OUTPUT_DIR,
-        // A base image and a reference set compete for the same body, and the
-        // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself.
-        referenceImageUrls: urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0,
-        baseImageUrl,
-        // Injected so tests can board a whole film without reaching the network.
-        generateStill: async (job, opts) => generateGrokStill(job, opts)
+  );
+}
+function registerListFilms(server) {
+  server.registerTool(
+    "list_films",
+    {
+      description: "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+      inputSchema: external_exports.object({
+        limit: external_exports.number().int().min(1).max(50).default(10),
+        includeUnfinished: external_exports.boolean().default(false).describe(
+          "Also list films that stopped or failed, which still hold every shot they paid for."
+        )
+      })
+    },
+    async (args) => {
+      const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
+      const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
+        jobId: job.id,
+        state: job.state,
+        startedAt: new Date(job.startedAt).toISOString(),
+        shots: job.shots.length,
+        durationSeconds: job.filmDurationSeconds,
+        spentUsd: Math.round(job.spentUsd * 100) / 100,
+        filmPath: job.filmPath,
+        firstShot: job.shots[0]?.title,
+        repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
+        error: job.error
+      }));
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            count: shown.length,
+            films: shown,
+            storage: JOBS_DIR,
+            next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
+          }, null, 2)
+        }]
+      };
+    }
+  );
+}
+function registerCheckSequence(server) {
+  server.registerTool(
+    "check_sequence",
+    {
+      description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+      inputSchema: external_exports.object({
+        jobId: external_exports.string().describe("The jobId render_sequence returned.")
+      })
+    },
+    async (args) => {
+      const job = sequenceJobs.get(args.jobId);
+      if (!job) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "Unknown jobId",
+              detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+              known: Array.from(sequenceJobs.keys()).slice(-5)
+            }, null, 2)
+          }]
+        };
       }
-    );
-    const payload = {
-      ...board,
-      ...missing.length > 0 ? { unknownCharacters: missing } : {},
-      ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {}
-    };
-    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-  }
-);
-server.registerTool(
-  "retry_shot",
-  {
-    description: "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
-    inputSchema: external_exports.object({
-      jobId: external_exports.string().describe("The finished job whose shot needs replacing."),
-      shotIndex: external_exports.number().int().min(1).describe("1-based shot number, as reported in the job."),
-      prompt: external_exports.string().optional().describe(
-        "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong."
-      ),
-      durationSeconds: external_exports.number().min(1).max(15).optional(),
-      confirm: external_exports.boolean().default(false),
-      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
-    })
-  },
-  async (args) => {
-    const original = sequenceJobs.get(args.jobId);
-    if (!original) {
       return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "Unknown jobId",
-            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-            known: Array.from(sequenceJobs.keys()).slice(-5)
-          }, null, 2)
-        }]
+        content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
       };
     }
-    if (original.state === "running") {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "That film is still rendering",
-            detail: "Wait for check_sequence to report done before repairing a shot.",
-            jobId: original.id
-          }, null, 2)
-        }]
-      };
-    }
-    const index = args.shotIndex;
-    const target = original.shots.find((shot) => shot.index === index);
-    if (!target) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: `No shot ${index} in that film`,
-            shots: original.shots.map((shot) => ({ index: shot.index, title: shot.title }))
-          }, null, 2)
-        }]
-      };
-    }
-    if (!target.prompt) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "That shot has no recorded prompt to re-render",
-            detail: "It was rendered before this version, or it was carried in from another film. Pass `prompt` explicitly.",
-            shotIndex: index
-          }, null, 2)
-        }]
-      };
-    }
-    const duration3 = args.durationSeconds ?? target.durationSeconds ?? 8;
-    const prompt = args.prompt ?? target.prompt;
-    const estimateUsd = Math.round(duration3 * ratePerSecond(original.settings?.resolution ?? "720p") * 100) / 100;
-    const before = original.shots.filter((shot) => shot.index < index);
-    const after = original.shots.filter((shot) => shot.index > index);
-    if (!args.confirm) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            action: "estimate-only",
-            willRender: false,
-            plan: {
-              repairing: original.id,
-              shotIndex: index,
-              shotTitle: target.title,
-              durationSeconds: duration3,
-              prompt,
-              reusedShots: before.length + after.length,
-              reRenderedShots: 1,
-              reassemblesFilm: original.settings?.assemble ?? true,
-              note: `Shot ${index} is re-rendered; the other ${before.length + after.length} are reused at no cost. The film is re-assembled with the original resolution, joins and audio.`
-            },
-            estimate: {
-              totalUsd: estimateUsd,
-              resolution: original.settings?.resolution ?? "720p",
-              basis: `1 render of ${duration3}s at the film's original resolution`,
-              isEstimate: true
-            },
-            caveat: after.length === 0 ? "This is the last shot, so nothing downstream depends on it." : after.length === 1 ? `Shot ${index + 1} was chained from the ORIGINAL shot ${index}'s last frame. It is kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair that shot too.` : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s last frame. They are kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair those shots too.`,
-            next: "Show this and the caveat to the user. Call again with confirm: true only after they approve."
-          }, null, 2)
-        }]
-      };
-    }
-    const settings = original.settings;
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      shotCount: original.shots.length,
-      completed: before.length,
-      estimateUsd,
-      spentUsd: 0,
-      shots: [],
-      settings,
-      startFramePath: original.startFramePath,
-      warnings: [...original.warnings ?? []],
-      repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
-      // Every reused shot was paid for by the original film. Count it, so the
-      // reported film total is the film's real cost rather than this call's.
-      carriedOverUsd: Math.round(
-        [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
-      ) / 100
-    };
-    if (after.length > 0) {
-      const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
-      job.warnings.push(
-        `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
-      );
-    }
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    void runSequenceJob(job, {
-      shots: [{ prompt, durationSeconds: duration3, title: target.title }],
-      characters: settings?.characters,
-      continuity: settings?.continuity,
-      firstFrameUrl: original.startFramePath,
-      aspectRatio: settings?.aspectRatio ?? "16:9",
-      resolution: settings?.resolution ?? "720p",
-      model: settings?.model ?? "grok-imagine-video-1.5",
-      assemble: settings?.assemble ?? true,
-      fadeDuration: settings?.fadeDuration ?? 0,
-      audioTrackFile: settings?.audioTrackFile,
-      audioTrackVolume: settings?.audioTrackVolume,
-      audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: before.length > 0 ? before : void 0,
-      trailingShots: after.length > 0 ? after : void 0,
-      // Chain the replacement from the shot that precedes it, exactly as the
-      // original film did, so the repaired shot fits the same join.
-      resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
-    });
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
-      await sleep2(500);
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
-  }
-);
-server.registerTool(
-  "list_films",
-  {
-    description: "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
-    inputSchema: external_exports.object({
-      limit: external_exports.number().int().min(1).max(50).default(10),
-      includeUnfinished: external_exports.boolean().default(false).describe(
-        "Also list films that stopped or failed, which still hold every shot they paid for."
-      )
-    })
-  },
-  async (args) => {
-    const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
-    const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
-      jobId: job.id,
-      state: job.state,
-      startedAt: new Date(job.startedAt).toISOString(),
-      shots: job.shots.length,
-      durationSeconds: job.filmDurationSeconds,
-      spentUsd: Math.round(job.spentUsd * 100) / 100,
-      filmPath: job.filmPath,
-      firstShot: job.shots[0]?.title,
-      repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
-      error: job.error
-    }));
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          count: shown.length,
-          films: shown,
-          storage: JOBS_DIR,
-          next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
-        }, null, 2)
-      }]
-    };
-  }
-);
-server.registerTool(
-  "check_sequence",
-  {
-    description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
-    inputSchema: external_exports.object({
-      jobId: external_exports.string().describe("The jobId render_sequence returned.")
-    })
-  },
-  async (args) => {
-    const job = sequenceJobs.get(args.jobId);
-    if (!job) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "Unknown jobId",
-            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-            known: Array.from(sequenceJobs.keys()).slice(-5)
-          }, null, 2)
-        }]
-      };
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
-    };
-  }
-);
+  );
+}
+function createTheShowServer() {
+  const server = new McpServer({
+    name: "theshow",
+    version: "0.1.0"
+  });
+  registerConfigureFilm(server);
+  registerCreateCharacter(server);
+  registerPlanStoryboard(server);
+  registerGenerateControlledClip(server);
+  registerExtendClip(server);
+  registerExtractLastFrame(server);
+  registerGenerateStill(server);
+  registerAssembleFilm(server);
+  registerRenderSequence(server);
+  registerBoardFilm(server);
+  registerRetryShot(server);
+  registerListFilms(server);
+  registerCheckSequence(server);
+  return server;
+}
+async function startStdioServer() {
+  await loadJobsFromDisk();
+  await loadCharactersFromDisk();
+  const server = createTheShowServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("theShow MCP server running on stdio (enhanced test build)");
+}
+async function main() {
+  await startStdioServer();
+}
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
 export {
-  resolutionFromLabel
+  createTheShowServer,
+  resolutionFromLabel,
+  startStdioServer
 };

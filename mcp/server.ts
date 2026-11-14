@@ -4,6 +4,11 @@
  * - Stubs for most tools
  * - generate_controlled_clip calls the real Grok Imagine Video backend, through
  *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation
+ *
+ * createTheShowServer builds the server and registers every tool.
+ * startStdioServer is the desktop entry: it loads saved state, then connects
+ * that server to stdio. main() calls startStdioServer, which is what
+ * mcp/launch.mjs and .mcp.json start.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -30,11 +35,6 @@ import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./character
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-
-const server = new McpServer({
-  name: "theshow",
-  version: "0.1.0",
-});
 
 const CharacterSchema = z.object({
   name: z.string(),
@@ -459,6 +459,7 @@ const FILM_FORM_SCHEMA = {
   required: ["scene"],
 };
 
+function registerConfigureFilm(server: McpServer) {
 server.registerTool(
   "configure_film",
   {
@@ -585,7 +586,10 @@ server.registerTool(
     };
   }
 );
+}
 
+
+function registerCreateCharacter(server: McpServer) {
 server.registerTool(
   "create_character",
   {
@@ -627,7 +631,10 @@ server.registerTool(
     };
   }
 );
+}
 
+
+function registerPlanStoryboard(server: McpServer) {
 server.registerTool(
   "plan_storyboard",
   {
@@ -680,6 +687,8 @@ server.registerTool(
     };
   }
 );
+}
+
 
 /**
  * Build the prompt actually sent for a shot.
@@ -743,6 +752,7 @@ type ClipResult = Omit<GrokClipResult, "status"> & { status?: string };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
+function registerGenerateControlledClip(server: McpServer) {
 server.registerTool(
   "generate_controlled_clip",
   {
@@ -813,7 +823,10 @@ server.registerTool(
     };
   }
 );
+}
 
+
+function registerExtendClip(server: McpServer) {
 server.registerTool(
   "extend_clip",
   {
@@ -914,6 +927,8 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
   }
 );
+}
+
 
 // Downloaded clips belong with the film, not in a temp folder.
 //
@@ -954,6 +969,7 @@ async function resolveToLocalFile(input: string): Promise<string> {
   return path;
 }
 
+function registerExtractLastFrame(server: McpServer) {
 server.registerTool(
   "extract_last_frame",
   {
@@ -989,6 +1005,8 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
+}
+
 
 /**
  * Generate one still image. This is the cheap half of the pipeline and the thing
@@ -996,6 +1014,7 @@ server.registerTool(
  * eight-shot film is about eighteen cents against roughly nine dollars of 720p
  * footage, so the pictures can be reviewed before the expensive half runs.
  */
+function registerGenerateStill(server: McpServer) {
 server.registerTool(
   "generate_still",
   {
@@ -1078,7 +1097,10 @@ server.registerTool(
     };
   }
 );
+}
 
+
+function registerAssembleFilm(server: McpServer) {
 server.registerTool(
   "assemble_film",
   {
@@ -1150,23 +1172,7 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
-
-async function main() {
-  // Load films saved by earlier sessions before taking requests, so a user who
-  // comes back tomorrow can still continue or repair what they paid for.
-  await loadJobsFromDisk();
-  // Same reason for the cast: a character created last week, with the photos
-  // that make it that character, has to be here for today's film.
-  await loadCharactersFromDisk();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("theShow MCP server running on stdio (enhanced test build)");
 }
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
 
 /**
  * Render a whole shot sequence as one continuous chain.
@@ -1637,6 +1643,7 @@ async function runSequenceJob(
   }
 }
 
+function registerRenderSequence(server: McpServer) {
 server.registerTool(
   "render_sequence",
   {
@@ -1919,6 +1926,8 @@ server.registerTool(
     };
   }
 );
+}
+
 
 /**
  * Board a film: render the stills each shot is pinned to, before any video.
@@ -1935,6 +1944,7 @@ server.registerTool(
  * The flow this enables: configure_film → board_film (pennies) → show the stills
  * → render_sequence with the returned shots (dollars).
  */
+function registerBoardFilm(server: McpServer) {
 server.registerTool(
   "board_film",
   {
@@ -2039,6 +2049,8 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
+}
+
 
 /**
  * Re-render one shot of a finished film and splice it back in.
@@ -2055,6 +2067,7 @@ server.registerTool(
  * therefore a genuine cut rather than a chained join. The tool says so in
  * `warnings` instead of implying the film is as continuous as before.
  */
+function registerRetryShot(server: McpServer) {
 server.registerTool(
   "retry_shot",
   {
@@ -2250,6 +2263,8 @@ server.registerTool(
     };
   }
 );
+}
+
 
 /**
  * List the films this user has made, newest first.
@@ -2258,6 +2273,7 @@ server.registerTool(
  * session that rendered it: come back a week later and the job id, the shot
  * count, the cost and the file are all still there to continue or repair.
  */
+function registerListFilms(server: McpServer) {
 server.registerTool(
   "list_films",
   {
@@ -2306,6 +2322,7 @@ server.registerTool(
     };
   }
 );
+}
 
 /**
  * Poll a render_sequence job.
@@ -2313,6 +2330,7 @@ server.registerTool(
  * Separate tool rather than a second mode on render_sequence, so polling can
  * never be mistaken for a new render and never spends anything.
  */
+function registerCheckSequence(server: McpServer) {
 server.registerTool(
   "check_sequence",
   {
@@ -2343,3 +2361,58 @@ server.registerTool(
     };
   }
 );
+}
+
+/**
+ * Build the MCP server and register every tool.
+ *
+ * The transport is the caller's choice. The character cache and the film-job
+ * map stay module-level, created when this file loads, so every server built
+ * here closes over the same stores the desktop process has always used.
+ */
+export function createTheShowServer(): McpServer {
+  const server = new McpServer({
+    name: "theshow",
+    version: "0.1.0",
+  });
+  registerConfigureFilm(server);
+  registerCreateCharacter(server);
+  registerPlanStoryboard(server);
+  registerGenerateControlledClip(server);
+  registerExtendClip(server);
+  registerExtractLastFrame(server);
+  registerGenerateStill(server);
+  registerAssembleFilm(server);
+  registerRenderSequence(server);
+  registerBoardFilm(server);
+  registerRetryShot(server);
+  registerListFilms(server);
+  registerCheckSequence(server);
+  return server;
+}
+
+/**
+ * Desktop entry point. Load films and characters saved by earlier sessions,
+ * then speak MCP over stdio. mcp/launch.mjs and .mcp.json start this path.
+ */
+export async function startStdioServer(): Promise<void> {
+  // Load films saved by earlier sessions before taking requests, so a user who
+  // comes back tomorrow can still continue or repair what they paid for.
+  await loadJobsFromDisk();
+  // Same reason for the cast: a character created last week, with the photos
+  // that make it that character, has to be here for today's film.
+  await loadCharactersFromDisk();
+  const server = createTheShowServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("theShow MCP server running on stdio (enhanced test build)");
+}
+
+async function main() {
+  await startStdioServer();
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
