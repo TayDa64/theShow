@@ -89,9 +89,21 @@ Subscription sessions cannot use `extend_clip`; the proxy answers `POST /v1/vide
 
 ## Remote MCP (Grok API / Connectors)
 
-1. Deploy the MCP server, using HTTP Streamable for remote access.
-2. In grok.com/connectors, choose New Connector, then Custom, and paste the public MCP URL.
-3. Alternatively pass `mcp(server_url=...)` in the xAI SDK tools array.
+The desktop plugin stays on stdio. HTTP is a separate process:
+
+```bash
+THESHOW_TRANSPORT=http \
+THESHOW_HTTP_TOKEN="$(openssl rand -hex 32)" \
+THESHOW_HTTP_HOST=127.0.0.1 \
+THESHOW_HTTP_PORT=8787 \
+node mcp/launch.mjs
+```
+
+The process exits if `THESHOW_HTTP_TOKEN` is unset. Clients send `Authorization: Bearer <token>` to `http://127.0.0.1:8787/mcp`. The default bind is loopback; put TLS in front before anything off-machine can reach it. The [main README](README.md#remote-http) has the curl example and a client config.
+
+1. Expose that `/mcp` URL over HTTPS.
+2. In grok.com/connectors, choose New Connector, then Custom, and paste the public MCP URL. The connector has to send the bearer token.
+3. Alternatively pass `mcp(server_url=...)` in the xAI SDK tools array, with the same bearer header.
 
 ## Cost
 

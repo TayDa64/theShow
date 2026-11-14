@@ -7,12 +7,15 @@
  *
  * createTheShowServer builds the server and registers every tool.
  * startStdioServer is the desktop entry: it loads saved state, then connects
- * that server to stdio. main() calls startStdioServer, which is what
- * mcp/launch.mjs and .mcp.json start.
+ * that server to stdio. mcp/launch.mjs and .mcp.json start this file with
+ * THESHOW_TRANSPORT unset, so main() takes that path and opens no port.
+ * THESHOW_TRANSPORT=http starts the Streamable HTTP transport instead.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { resolveVideoCredential } from "./grok-auth.ts";
 import {
@@ -34,7 +37,8 @@ import { boardFilm, toRenderShots } from "./storyboard.ts";
 import { loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 const CharacterSchema = z.object({
   name: z.string(),
@@ -2408,8 +2412,324 @@ export async function startStdioServer(): Promise<void> {
   console.error("theShow MCP server running on stdio (enhanced test build)");
 }
 
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+const DEFAULT_HTTP_PORT = 8787;
+/** Same ceiling the SDK uses when it reads a POST body itself. */
+const MAX_HTTP_BODY_BYTES = 4 * 1024 * 1024;
+
+type TransportName = "stdio" | "http";
+
+type HttpSession = {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+  closing: boolean;
+};
+
+/**
+ * Which transport this process speaks. Unset means stdio, which is the
+ * desktop plugin: .mcp.json never sets this, and that launch must not listen.
+ */
+function selectedTransport(): TransportName {
+  const raw = process.env.THESHOW_TRANSPORT;
+  if (raw === undefined || raw === "") return "stdio";
+  switch (raw) {
+    case "stdio":
+    case "http":
+      return raw;
+    default:
+      throw new Error(
+        `THESHOW_TRANSPORT must be "stdio" or "http" (got ${JSON.stringify(raw)}).`,
+      );
+  }
+}
+
+function requireHttpToken(): string {
+  const token = process.env.THESHOW_HTTP_TOKEN;
+  if (token === undefined || token.trim() === "") {
+    throw new Error(
+      "THESHOW_HTTP_TOKEN is required when THESHOW_TRANSPORT=http. " +
+        "Refusing to start an HTTP server without a bearer token.",
+    );
+  }
+  return token;
+}
+
+function httpBind(): { host: string; port: number } {
+  const host = process.env.THESHOW_HTTP_HOST?.trim() || DEFAULT_HTTP_HOST;
+  const raw = process.env.THESHOW_HTTP_PORT?.trim() || String(DEFAULT_HTTP_PORT);
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(
+      `THESHOW_HTTP_PORT must be an integer from 0 to 65535 (got ${JSON.stringify(process.env.THESHOW_HTTP_PORT)}).`,
+    );
+  }
+  const port = Number(raw);
+  if (port > 65535) {
+    throw new Error(`THESHOW_HTTP_PORT must be an integer from 0 to 65535 (got ${port}).`);
+  }
+  return { host, port };
+}
+
+function formatHost(host: string): string {
+  return host.includes(":") ? `[${host}]` : host;
+}
+
+function singleHeader(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function bearerAuthorized(authorization: string | undefined, token: string): boolean {
+  const prefix = "Bearer ";
+  if (!authorization?.startsWith(prefix)) return false;
+  const presented = Buffer.from(authorization.slice(prefix.length));
+  const expected = Buffer.from(token);
+  if (presented.length === 0 || presented.length !== expected.length) return false;
+  return timingSafeEqual(presented, expected);
+}
+
+function rpcError(code: number, message: string) {
+  return { jsonrpc: "2.0", error: { code, message }, id: null };
+}
+
+function writeJson(
+  res: ServerResponse,
+  status: number,
+  payload: unknown,
+  extraHeaders?: Record<string, string>,
+): void {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+    ...extraHeaders,
+  });
+  res.end(body);
+}
+
+function readHttpBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const declared = Number(req.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > limit) {
+    req.resume();
+    return Promise.reject(Object.assign(new Error("too large"), { code: "TOO_LARGE" }));
+  }
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    const finish = (err?: Error & { code?: string }) => {
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+      if (err) reject(err);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > limit) {
+        const err = Object.assign(new Error("too large"), { code: "TOO_LARGE" });
+        finish(err);
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      finish();
+      resolve(Buffer.concat(chunks));
+    };
+    const onError = (err: Error) => finish(err);
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+  });
+}
+
+function messageInitializes(body: unknown): boolean {
+  if (Array.isArray(body)) return body.some((entry) => isInitializeRequest(entry));
+  return isInitializeRequest(body);
+}
+
+/**
+ * Remote entry point. One MCP server and one Streamable HTTP transport per
+ * session. The character cache and the film-job map stay the module-level
+ * stores createTheShowServer already closes over, so a second session in this
+ * process sees the same cast and the same films.
+ *
+ * Saved state is loaded once, here, before listen. Loading it again per
+ * session would re-run the "running job becomes stopped" rule and mark a live
+ * render as stopped just because someone connected.
+ *
+ * Closing a session closes that session's transport only. It does not touch
+ * sequenceJobs, so a client disconnect or DELETE cannot cancel a render that
+ * runSequenceJob is already driving.
+ */
+export async function startHttpServer(): Promise<void> {
+  const token = requireHttpToken();
+  const { host, port } = httpBind();
+  await loadJobsFromDisk();
+  await loadCharactersFromDisk();
+
+  const sessions = new Map<string, HttpSession>();
+
+  async function retire(session: HttpSession): Promise<void> {
+    if (session.closing) return;
+    session.closing = true;
+    const id = session.transport.sessionId;
+    if (id) sessions.delete(id);
+    try {
+      await session.server.close();
+    } catch (err) {
+      console.error("theShow: failed to close MCP session:", err);
+    }
+  }
+
+  async function openSession(): Promise<HttpSession> {
+    let session: HttpSession;
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      enableJsonResponse: true,
+      onsessioninitialized: (id) => {
+        sessions.set(id, session);
+      },
+      onsessionclosed: () => retire(session),
+    });
+    session = {
+      server: createTheShowServer(),
+      transport,
+      closing: false,
+    };
+    transport.onclose = () => {
+      if (session.closing) return;
+      void retire(session);
+    };
+    transport.onerror = (error) => {
+      console.error("theShow HTTP session error:", error);
+    };
+    await session.server.connect(transport);
+    return session;
+  }
+
+  async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname !== "/mcp") {
+      writeJson(res, 404, rpcError(-32001, "Not found. The MCP endpoint is /mcp."));
+      req.resume();
+      return;
+    }
+
+    // Before any JSON-RPC method, including initialize and tools/call.
+    if (!bearerAuthorized(singleHeader(req, "authorization"), token)) {
+      writeJson(res, 401, rpcError(-32000, "Unauthorized"), {
+        "WWW-Authenticate": "Bearer",
+      });
+      req.resume();
+      return;
+    }
+
+    if (req.method !== "POST" && req.method !== "GET" && req.method !== "DELETE") {
+      writeJson(res, 405, rpcError(-32000, "Method not allowed."), {
+        Allow: "GET, POST, DELETE",
+      });
+      req.resume();
+      return;
+    }
+
+    let parsedBody: unknown;
+    if (req.method === "POST") {
+      let raw: Buffer;
+      try {
+        raw = await readHttpBody(req, MAX_HTTP_BODY_BYTES);
+      } catch (err) {
+        if ((err as { code?: string }).code === "TOO_LARGE") {
+          writeJson(res, 413, rpcError(-32000, "Request body too large"));
+          return;
+        }
+        throw err;
+      }
+      try {
+        parsedBody = JSON.parse(raw.toString("utf8"));
+      } catch {
+        writeJson(res, 400, rpcError(-32700, "Parse error: Invalid JSON"));
+        return;
+      }
+    }
+
+    const sessionId = singleHeader(req, "mcp-session-id");
+    if (!sessionId && req.method === "POST" && messageInitializes(parsedBody)) {
+      const session = await openSession();
+      try {
+        await session.transport.handleRequest(req, res, parsedBody);
+      } finally {
+        const id = session.transport.sessionId;
+        if (!id || !sessions.has(id)) await retire(session);
+      }
+      return;
+    }
+
+    if (!sessionId) {
+      writeJson(res, 400, rpcError(-32000, "Bad Request: No valid session ID provided"));
+      return;
+    }
+
+    const existing = sessions.get(sessionId);
+    if (!existing) {
+      writeJson(res, 404, rpcError(-32001, "Session not found"));
+      return;
+    }
+
+    await existing.transport.handleRequest(
+      req,
+      res,
+      req.method === "POST" ? parsedBody : undefined,
+    );
+  }
+
+  const httpServer = createServer((req, res) => {
+    void handleHttp(req, res).catch((err) => {
+      console.error("theShow: HTTP request failed:", err);
+      writeJson(res, 500, rpcError(-32603, "Internal server error"));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const onListenError = (err: Error) => reject(err);
+    httpServer.once("error", onListenError);
+    httpServer.listen(port, host, () => {
+      httpServer.removeListener("error", onListenError);
+      const bound = httpServer.address();
+      const boundPort = typeof bound === "object" && bound ? bound.port : port;
+      console.error(
+        `theShow MCP server running on http://${formatHost(host)}:${boundPort}/mcp`,
+      );
+      resolve();
+    });
+  });
+
+  const shutdown = () => {
+    httpServer.close();
+    for (const session of sessions.values()) void retire(session);
+    process.exit(0);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}
+
 async function main() {
-  await startStdioServer();
+  const transport = selectedTransport();
+  switch (transport) {
+    case "stdio":
+      await startStdioServer();
+      return;
+    case "http":
+      await startHttpServer();
+      return;
+    default: {
+      const unexpected: never = transport;
+      throw new Error(`Unhandled transport ${unexpected}`);
+    }
+  }
 }
 
 main().catch((err) => {
