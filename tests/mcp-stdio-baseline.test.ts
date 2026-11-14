@@ -214,6 +214,7 @@ describe("desktop stdio launch", () => {
       ]);
       expect(methods).not.toContain("tools/call");
       expect(stderr).toContain("theShow MCP server running on stdio");
+      expect(stderr).not.toContain("running on http");
 
       expect(tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
       expect(fixture.tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
