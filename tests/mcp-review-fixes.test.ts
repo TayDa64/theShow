@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, unlink, utimes, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -191,6 +191,10 @@ function film(id: string, extra: Partial<SequenceJob> = {}): SequenceJob {
 }
 
 describe("film claim", () => {
+  beforeEach(async () => {
+    await mkdir(JOBS_DIR, { recursive: true });
+  });
+
   it("blocks a second claim while the first owner is alive", async () => {
     const id = "seq_claim_block";
     await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
@@ -287,6 +291,10 @@ describe("film claim", () => {
 });
 
 describe("job write order", () => {
+  beforeEach(async () => {
+    await mkdir(JOBS_DIR, { recursive: true });
+  });
+
   it("does not let a heartbeat snapshot overwrite a completed film", async () => {
     const id = "seq_write_order";
     const job = film(id, {
