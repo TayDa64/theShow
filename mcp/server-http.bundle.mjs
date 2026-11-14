@@ -13050,7 +13050,7 @@ var require_dist = __commonJS({
 });
 
 // mcp/http-server.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { createServer as createServer2 } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -45127,7 +45127,8 @@ function jobShouldStop(owner, now = Date.now()) {
   if (!owner) return true;
   if (owner.token === processToken && owner.pid === process.pid) return false;
   const lease = leaseMs();
-  if (owner.heartbeatAt > now + 5e3) return true;
+  const futureSlack = owner.host === processHost ? 5e3 : 6e4;
+  if (owner.heartbeatAt > now + futureSlack) return true;
   const beat = Math.min(owner.heartbeatAt, now);
   if (now - beat > lease) return true;
   if (owner.host === processHost && !pidAlive(owner.pid)) return true;
@@ -45226,7 +45227,12 @@ function memoHttpRender(kind, material, run, succeeded) {
   const cached2 = cachedRender(key);
   if (cached2 !== void 0) return Promise.resolve(cached2);
   const pending = renderInflight.get(key);
-  if (pending) return pending;
+  if (pending) {
+    return pending.then((value) => {
+      if (!value || typeof value !== "object") return value;
+      return { ...value, costUsd: 0, reused: true };
+    });
+  }
   const promise2 = renderBypass.run(true, run).then((value) => {
     if (succeeded(value)) rememberRender(key, value);
     return value;
@@ -46410,7 +46416,7 @@ function toRenderShots(board) {
 // mcp/characters.ts
 import { createHash as createHash4 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir4, open as open2, readFile as readFile4, readdir, unlink, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdir as mkdir4, open as open2, readFile as readFile4, readdir, rename as rename2, unlink, writeFile as writeFile4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { basename as basename2, join as join6, sep as sep2 } from "node:path";
 
@@ -46875,8 +46881,14 @@ async function folderForWrite(root, name) {
   const record2 = await readRecord(plain, { quiet: true });
   return record2 && sameName(record2.name, name) ? plain : hashed;
 }
-var CHARACTER_LOCK_WAIT_MS = 5e3;
+var CHARACTER_LOCK_WAIT_MS = 6e4;
 var CHARACTER_LOCK_STALE_MS = 3e4;
+var CHARACTER_LOCK_REFRESH_MS = 1e4;
+function characterLockRefreshMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
+  if (Number.isFinite(raw) && raw >= 10) return raw;
+  return CHARACTER_LOCK_REFRESH_MS;
+}
 async function readCharacterLock(lockPath) {
   try {
     const parsed = JSON.parse(await readFile4(lockPath, "utf8"));
@@ -46898,25 +46910,56 @@ function characterLockIsStale(info, now = Date.now()) {
   if (info.host === processHost && !pidAlive(info.pid)) return true;
   return false;
 }
+function characterLockBody(token, at = Date.now()) {
+  return JSON.stringify({ pid: process.pid, token, host: processHost, at });
+}
+async function refreshCharacterLock(lockPath, token) {
+  const current = await readCharacterLock(lockPath);
+  if (current?.token !== token) return;
+  const tmp = `${lockPath}.${token}.refresh`;
+  await writeFile4(tmp, characterLockBody(token));
+  const again = await readCharacterLock(lockPath);
+  if (again?.token !== token) {
+    await unlink(tmp).catch(() => void 0);
+    return;
+  }
+  await rename2(tmp, lockPath).catch(() => void 0);
+  await unlink(tmp).catch(() => void 0);
+}
+async function releaseCharacterLock(lockPath, token) {
+  const tomb = `${lockPath}.unlock.${token}`;
+  try {
+    await rename2(lockPath, tomb);
+  } catch {
+    return;
+  }
+  const moved = await readCharacterLock(tomb);
+  if (moved?.token === token) {
+    await unlink(tomb).catch(() => void 0);
+    return;
+  }
+  await rename2(tomb, lockPath).catch(() => void 0);
+}
 async function withFolderLock(folder, body) {
   await mkdir4(folder, { recursive: true });
   const lockPath = join6(folder, ".write.lock");
   const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
   let delay = 20;
+  const token = processToken;
   while (true) {
     try {
       const handle = await open2(lockPath, "wx");
+      const refresh = setInterval(() => {
+        void refreshCharacterLock(lockPath, token);
+      }, characterLockRefreshMs());
+      refresh.unref?.();
       try {
-        await handle.writeFile(JSON.stringify({
-          pid: process.pid,
-          token: processToken,
-          host: processHost,
-          at: Date.now()
-        }));
+        await handle.writeFile(characterLockBody(token));
         return await body();
       } finally {
+        clearInterval(refresh);
+        await releaseCharacterLock(lockPath, token);
         await handle.close();
-        await unlink(lockPath).catch(() => void 0);
       }
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
@@ -46994,18 +47037,20 @@ async function saveCharacter(input2) {
       refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
       warnings
     });
-    const now = (/* @__PURE__ */ new Date()).toISOString();
     const wardrobeInput = input2.wardrobe ?? existing?.wardrobe;
     const wardrobe = wardrobeInput ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings }) : void 0;
+    const latest = await readRecord(folder, { quiet: true });
+    const base = latest ?? existing;
+    const now = (/* @__PURE__ */ new Date()).toISOString();
     const record2 = {
-      id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      id: base?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
       name,
-      role: input2.role ?? existing?.role,
-      description: input2.description ?? existing?.description,
-      appearance: input2.appearance ?? existing?.appearance,
-      wardrobe,
-      referenceImageUrls,
-      createdAt: existing?.createdAt || now,
+      role: input2.role ?? base?.role,
+      description: input2.description ?? base?.description,
+      appearance: input2.appearance ?? base?.appearance,
+      wardrobe: input2.wardrobe ? wardrobe : base?.wardrobe ?? wardrobe,
+      referenceImageUrls: input2.referenceImageUrls ? referenceImageUrls : base?.referenceImageUrls ?? referenceImageUrls,
+      createdAt: base?.createdAt || now,
       updatedAt: now,
       folder
     };
@@ -47015,7 +47060,7 @@ async function saveCharacter(input2) {
       role: record2.role,
       description: record2.description,
       appearance: record2.appearance,
-      wardrobe,
+      wardrobe: record2.wardrobe,
       referenceImageUrls: record2.referenceImageUrls,
       createdAt: record2.createdAt,
       updatedAt: record2.updatedAt
@@ -47810,9 +47855,9 @@ function runPreVideoGate(input2) {
 }
 
 // mcp/server.ts
-import { mkdir as mkdir5, open as open3, readFile as readFile5, readdir as readdir2, unlink as unlink2, writeFile as writeFile5 } from "node:fs/promises";
+import { link, mkdir as mkdir5, readFile as readFile5, readdir as readdir2, rename as rename3, stat as stat3, unlink as unlink2, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 var server = new McpServer({
   name: "theshow",
   version: "0.1.0"
@@ -49344,6 +49389,12 @@ function otherProcessHolds(owner) {
   return !jobShouldStop(owner);
 }
 var ALREADY_RUNNING = "already running in another process";
+var ALREADY_RUNNING_HERE = "already running in this process";
+var CLAIM_EMPTY_GRACE_MS = 1e3;
+function claimBusyMessage(owner) {
+  if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
+  return ALREADY_RUNNING;
+}
 function mergeFromDisk(memory, disk) {
   if (!memory) return disk;
   const memRev = memory.revision ?? 0;
@@ -49381,13 +49432,44 @@ async function refreshJobsFromDisk() {
 async function loadJobsFromDisk() {
   await refreshJobsFromDisk();
 }
-async function readClaim(jobId) {
+async function readClaimFile(path) {
   try {
-    const parsed = JSON.parse(await readFile5(claimPath(jobId), "utf8"));
+    const raw = await readFile5(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
     if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
     return parsed;
   } catch {
     return void 0;
+  }
+}
+async function readClaim(jobId) {
+  return readClaimFile(claimPath(jobId));
+}
+async function claimFileAge(jobId) {
+  try {
+    const info = await stat3(claimPath(jobId));
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function claimIsStale(owner, ageMs) {
+  if (!owner) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  return jobShouldStop(owner);
+}
+async function placeClaim(jobId, owner) {
+  const dest = claimPath(jobId);
+  const tmp = `${dest}.${process.pid}.${randomUUID2()}.tmp`;
+  await writeFile5(tmp, JSON.stringify(owner));
+  try {
+    await link(tmp, dest);
+    return true;
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+    return false;
+  } finally {
+    await unlink2(tmp).catch(() => void 0);
   }
 }
 async function claimFilm(jobId) {
@@ -49397,28 +49479,47 @@ async function claimFilm(jobId) {
   if (job.state === "running" && otherProcessHolds(job.owner)) {
     return { ok: false, message: ALREADY_RUNNING };
   }
-  if (job.claim && !jobShouldStop(job.claim)) return { ok: false, message: ALREADY_RUNNING };
-  const existing = await readClaim(jobId);
-  if (existing && !jobShouldStop(existing)) return { ok: false, message: ALREADY_RUNNING };
-  if (existing) await unlink2(claimPath(jobId)).catch(() => void 0);
-  const owner = thisOwner();
-  try {
-    const handle = await open3(claimPath(jobId), "wx");
-    try {
-      await handle.writeFile(JSON.stringify(owner));
-    } finally {
-      await handle.close();
-    }
-  } catch (err) {
-    if (err.code === "EEXIST") {
-      return { ok: false, message: ALREADY_RUNNING };
-    }
-    throw err;
+  if (job.claim && !jobShouldStop(job.claim)) {
+    return { ok: false, message: claimBusyMessage(job.claim) };
   }
-  job.claim = owner;
-  sequenceJobs.set(job.id, job);
-  await persistJob(job);
-  return { ok: true };
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const age = await claimFileAge(jobId);
+    const existing = age === void 0 ? void 0 : await readClaim(jobId);
+    if (age !== void 0 && !claimIsStale(existing, age)) {
+      return { ok: false, message: claimBusyMessage(existing) };
+    }
+    const owner = thisOwner();
+    if (age === void 0) {
+      if (await placeClaim(jobId, owner)) {
+        job.claim = owner;
+        sequenceJobs.set(job.id, job);
+        await persistJob(job);
+        return { ok: true };
+      }
+      continue;
+    }
+    const tomb = `${claimPath(jobId)}.tomb.${randomUUID2()}`;
+    try {
+      await rename3(claimPath(jobId), tomb);
+    } catch (err) {
+      if (err.code === "ENOENT") continue;
+      throw err;
+    }
+    const displaced = await readClaimFile(tomb);
+    if (existing?.token && displaced?.token && displaced.token !== existing.token) {
+      await link(tomb, claimPath(jobId)).catch(() => void 0);
+      await unlink2(tomb).catch(() => void 0);
+      continue;
+    }
+    const won = await placeClaim(jobId, owner);
+    await unlink2(tomb).catch(() => void 0);
+    if (!won) continue;
+    job.claim = owner;
+    sequenceJobs.set(job.id, job);
+    await persistJob(job);
+    return { ok: true };
+  }
+  return { ok: false, message: ALREADY_RUNNING };
 }
 async function releaseFilmClaim(jobId) {
   const job = sequenceJobs.get(jobId);
@@ -49942,6 +50043,10 @@ server.registerTool(
     }
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
     if (sessionRefusal) return sessionRefusal;
+    const preparedAudio = {
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0
+    };
+    const audioTrackFile = preparedAudio.audioTrackFile;
     if (resumeJob) {
       const claim2 = await claimFilm(resumeJob.id);
       if (!claim2.ok) {
@@ -49950,120 +50055,128 @@ server.registerTool(
             type: "text",
             text: JSON.stringify({
               error: claim2.message,
-              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
               jobId: resumeJob.id
             }, null, 2)
           }]
         };
       }
     }
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      owner: thisOwner(),
-      // Total film length, not just this call's new shots.
-      shotCount: carried.length + shotCount,
-      completed: 0,
-      estimateUsd: estimate,
-      spentUsd: 0,
-      shots: [],
-      settings: {
+    let handedToJob = false;
+    try {
+      if (process.env.THESHOW_THROW_AFTER_CLAIM === "1" && resumeJob) {
+        throw new Error("throw after claim");
+      }
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        owner: thisOwner(),
+        // Total film length, not just this call's new shots.
+        shotCount: carried.length + shotCount,
+        completed: 0,
+        estimateUsd: estimate,
+        spentUsd: 0,
+        shots: [],
+        settings: {
+          aspectRatio: args.aspectRatio,
+          resolution: args.resolution,
+          model: args.model,
+          fadeDuration: args.fadeDuration,
+          continuity: args.continuity,
+          characters: args.characters,
+          audioTrackFile,
+          audioTrackVolume: args.audioTrackVolume,
+          audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+          clipAudio: args.clipAudio,
+          pin: args.pin,
+          voiceId: args.voiceId,
+          assemble: args.assemble
+        },
+        ...resumeJob ? {
+          resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
+          carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
+          // A continued film keeps the original start anchor, so repairing shot 1
+          // of the whole film still chains from where the film actually began.
+          startFramePath: resumeJob.startFramePath,
+          warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
+          ledger: args.ledger ? {
+            locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
+            props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
+            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
+            propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
+            shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+            shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
+            voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+            promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
+            spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
+            humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
+            hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
+            scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
+            bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
+            tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
+          } : resumeJob.ledger
+        } : {
+          startFramePath: resumeFramePath ?? args.firstFrameUrl,
+          ...args.ledger ? {
+            ledger: {
+              locations: args.ledger.locations ?? [],
+              props: args.ledger.props ?? [],
+              wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+              propEvents: eventsWithShot(args.ledger.propEvents),
+              shots: args.ledger.shots,
+              shotSteps: args.ledger.shotSteps,
+              voiceId: args.voiceId ?? args.ledger.voiceId,
+              promptStyle: args.promptStyle ?? args.ledger.promptStyle,
+              spokenLines: args.ledger.spokenLines,
+              humanVisionSignOff: args.ledger.humanVisionSignOff,
+              hasPortrait: args.ledger.hasPortrait,
+              scaleMarks: args.ledger.scaleMarks,
+              bodyClearance: args.ledger.bodyClearance,
+              tier1: args.ledger.tier1
+            }
+          } : {}
+        }
+      };
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      const sourceId = resumeJob?.id;
+      void runSequenceJob(job, {
+        shots: args.shots,
+        characters: args.characters,
+        continuity: args.continuity,
+        firstFrameUrl: args.firstFrameUrl,
         aspectRatio: args.aspectRatio,
         resolution: args.resolution,
         model: args.model,
+        assemble: args.assemble,
         fadeDuration: args.fadeDuration,
-        continuity: args.continuity,
-        characters: args.characters,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio,
         pin: args.pin,
-        voiceId: args.voiceId,
-        assemble: args.assemble
-      },
-      ...resumeJob ? {
-        resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
-        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
-        // A continued film keeps the original start anchor, so repairing shot 1
-        // of the whole film still chains from where the film actually began.
-        startFramePath: resumeJob.startFramePath,
-        warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
-        ledger: args.ledger ? {
-          locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
-          props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
-          wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
-          propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
-          shots: args.ledger.shots ?? resumeJob.ledger?.shots,
-          shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
-          voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
-          promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
-          spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
-          humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
-          hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
-          scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
-          bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
-          tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
-        } : resumeJob.ledger
-      } : {
-        startFramePath: resumeFramePath ?? args.firstFrameUrl,
-        ...args.ledger ? {
-          ledger: {
-            locations: args.ledger.locations ?? [],
-            props: args.ledger.props ?? [],
-            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
-            propEvents: eventsWithShot(args.ledger.propEvents),
-            shots: args.ledger.shots,
-            shotSteps: args.ledger.shotSteps,
-            voiceId: args.voiceId ?? args.ledger.voiceId,
-            promptStyle: args.promptStyle ?? args.ledger.promptStyle,
-            spokenLines: args.ledger.spokenLines,
-            humanVisionSignOff: args.ledger.humanVisionSignOff,
-            hasPortrait: args.ledger.hasPortrait,
-            scaleMarks: args.ledger.scaleMarks,
-            bodyClearance: args.ledger.bodyClearance,
-            tier1: args.ledger.tier1
-          }
-        } : {}
+        voiceId: args.voiceId ?? ledgerForGate?.voiceId,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: carried.length > 0 ? carried : void 0,
+        resumeFramePath
+      }).finally(() => {
+        if (sourceId) void releaseFilmClaim(sourceId);
+      });
+      handedToJob = true;
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+        await sleep2(500);
       }
-    };
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    const sourceId = resumeJob?.id;
-    void runSequenceJob(job, {
-      shots: args.shots,
-      characters: args.characters,
-      continuity: args.continuity,
-      firstFrameUrl: args.firstFrameUrl,
-      aspectRatio: args.aspectRatio,
-      resolution: args.resolution,
-      model: args.model,
-      assemble: args.assemble,
-      fadeDuration: args.fadeDuration,
-      // Resolved once, up front, so a bad path fails before any shot renders.
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-      audioTrackVolume: args.audioTrackVolume,
-      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
-      clipAudio: args.clipAudio,
-      pin: args.pin,
-      voiceId: args.voiceId ?? ledgerForGate?.voiceId,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: carried.length > 0 ? carried : void 0,
-      resumeFramePath
-    }).finally(() => {
-      if (sourceId) void releaseFilmClaim(sourceId);
-    });
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
-      await sleep2(500);
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
+    } finally {
+      if (resumeJob && !handedToJob) await releaseFilmClaim(resumeJob.id);
     }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
   }
 );
 server.registerTool(
@@ -50464,74 +50577,80 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: claim2.message,
-            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
             jobId: original.id
           }, null, 2)
         }]
       };
     }
-    const settings = original.settings;
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      owner: thisOwner(),
-      shotCount: original.shots.length,
-      completed: before.length,
-      estimateUsd,
-      spentUsd: 0,
-      shots: [],
-      settings,
-      startFramePath: original.startFramePath,
-      warnings: [...original.warnings ?? []],
-      repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
-      ledger: original.ledger,
-      // Every reused shot was paid for by the original film. Count it, so the
-      // reported film total is the film's real cost rather than this call's.
-      carriedOverUsd: Math.round(
-        [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
-      ) / 100
-    };
-    if (after.length > 0) {
-      const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
-      job.warnings.push(
-        `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
-      );
+    let handedToJob = false;
+    try {
+      const settings = original.settings;
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        owner: thisOwner(),
+        shotCount: original.shots.length,
+        completed: before.length,
+        estimateUsd,
+        spentUsd: 0,
+        shots: [],
+        settings,
+        startFramePath: original.startFramePath,
+        warnings: [...original.warnings ?? []],
+        repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+        ledger: original.ledger,
+        // Every reused shot was paid for by the original film. Count it, so the
+        // reported film total is the film's real cost rather than this call's.
+        carriedOverUsd: Math.round(
+          [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
+        ) / 100
+      };
+      if (after.length > 0) {
+        const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
+        job.warnings.push(
+          `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
+        );
+      }
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      void withoutHttpRenderMemo(() => runSequenceJob(job, {
+        shots: [{ prompt, durationSeconds: duration3, title: target.title }],
+        characters: settings?.characters,
+        continuity: settings?.continuity,
+        firstFrameUrl: original.startFramePath,
+        aspectRatio: settings?.aspectRatio ?? "16:9",
+        resolution: settings?.resolution ?? "720p",
+        model: settings?.model ?? "grok-imagine-video-1.5",
+        assemble: settings?.assemble ?? true,
+        fadeDuration: settings?.fadeDuration ?? 0,
+        audioTrackFile: settings?.audioTrackFile,
+        audioTrackVolume: settings?.audioTrackVolume,
+        audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: before.length > 0 ? before : void 0,
+        trailingShots: after.length > 0 ? after : void 0,
+        // Chain the replacement from the shot that precedes it, exactly as the
+        // original film did, so the repaired shot fits the same join.
+        resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
+      }).finally(() => {
+        void releaseFilmClaim(original.id);
+      }));
+      handedToJob = true;
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
+        await sleep2(500);
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
+    } finally {
+      if (!handedToJob) await releaseFilmClaim(original.id);
     }
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    void withoutHttpRenderMemo(() => runSequenceJob(job, {
-      shots: [{ prompt, durationSeconds: duration3, title: target.title }],
-      characters: settings?.characters,
-      continuity: settings?.continuity,
-      firstFrameUrl: original.startFramePath,
-      aspectRatio: settings?.aspectRatio ?? "16:9",
-      resolution: settings?.resolution ?? "720p",
-      model: settings?.model ?? "grok-imagine-video-1.5",
-      assemble: settings?.assemble ?? true,
-      fadeDuration: settings?.fadeDuration ?? 0,
-      audioTrackFile: settings?.audioTrackFile,
-      audioTrackVolume: settings?.audioTrackVolume,
-      audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: before.length > 0 ? before : void 0,
-      trailingShots: after.length > 0 ? after : void 0,
-      // Chain the replacement from the shot that precedes it, exactly as the
-      // original film did, so the repaired shot fits the same join.
-      resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
-    }).finally(() => {
-      void releaseFilmClaim(original.id);
-    }));
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
-      await sleep2(500);
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
   }
 );
 server.registerTool(
@@ -50769,7 +50888,7 @@ async function startHttpServer() {
       sseConnected: false
     };
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID2(),
+      sessionIdGenerator: () => randomUUID3(),
       enableJsonResponse: true,
       enableDnsRebindingProtection: true,
       allowedHosts: allowHosts,

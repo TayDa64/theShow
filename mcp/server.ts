@@ -61,9 +61,9 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   atomicWriteFile,
   currentMcpServer,
@@ -2271,6 +2271,13 @@ function otherProcessHolds(owner: JobOwner | undefined): boolean {
 }
 
 const ALREADY_RUNNING = "already running in another process";
+const ALREADY_RUNNING_HERE = "already running in this process";
+const CLAIM_EMPTY_GRACE_MS = 1_000;
+
+function claimBusyMessage(owner: JobOwner | undefined): string {
+  if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
+  return ALREADY_RUNNING;
+}
 
 /** Keep a terminal in-memory film, including its path, ahead of a stale running copy on disk. */
 function mergeFromDisk(memory: SequenceJob | undefined, disk: SequenceJob): SequenceJob {
@@ -2315,9 +2322,11 @@ export async function loadJobsFromDisk() {
   await refreshJobsFromDisk();
 }
 
-async function readClaim(jobId: string): Promise<JobOwner | undefined> {
+async function readClaimFile(path: string): Promise<JobOwner | undefined> {
   try {
-    const parsed = JSON.parse(await readFile(claimPath(jobId), "utf8")) as JobOwner;
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as JobOwner;
     if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return undefined;
     return parsed;
   } catch {
@@ -2325,9 +2334,45 @@ async function readClaim(jobId: string): Promise<JobOwner | undefined> {
   }
 }
 
+async function readClaim(jobId: string): Promise<JobOwner | undefined> {
+  return readClaimFile(claimPath(jobId));
+}
+
+async function claimFileAge(jobId: string): Promise<number | undefined> {
+  try {
+    const info = await stat(claimPath(jobId));
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A missing owner is an empty or broken claim. Those are stale only after a short grace, so a writer can finish. */
+function claimIsStale(owner: JobOwner | undefined, ageMs: number | undefined): boolean {
+  if (!owner) return ageMs === undefined || ageMs > CLAIM_EMPTY_GRACE_MS;
+  return jobShouldStop(owner);
+}
+
+/** Publish a complete claim file. link fails if the destination already exists, so only one caller wins. */
+async function placeClaim(jobId: string, owner: JobOwner): Promise<boolean> {
+  const dest = claimPath(jobId);
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tmp, JSON.stringify(owner));
+  try {
+    await link(tmp, dest);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    return false;
+  } finally {
+    await unlink(tmp).catch(() => undefined);
+  }
+}
+
 /**
  * Exclusive on-disk claim for a film about to be resumed or repaired.
- * A live owner blocks the second process. A dead owner's claim is removed.
+ * A live owner blocks the second caller. Taking over a dead claim renames that
+ * file aside first, so two processes cannot both delete it and both create a new one.
  */
 export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
   await refreshJobsFromDisk();
@@ -2336,28 +2381,48 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
   if (job.state === "running" && otherProcessHolds(job.owner)) {
     return { ok: false, message: ALREADY_RUNNING };
   }
-  if (job.claim && !jobShouldStop(job.claim)) return { ok: false, message: ALREADY_RUNNING };
-  const existing = await readClaim(jobId);
-  if (existing && !jobShouldStop(existing)) return { ok: false, message: ALREADY_RUNNING };
-  if (existing) await unlink(claimPath(jobId)).catch(() => undefined);
-  const owner = thisOwner();
-  try {
-    const handle = await open(claimPath(jobId), "wx");
-    try {
-      await handle.writeFile(JSON.stringify(owner));
-    } finally {
-      await handle.close();
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-      return { ok: false, message: ALREADY_RUNNING };
-    }
-    throw err;
+  if (job.claim && !jobShouldStop(job.claim)) {
+    return { ok: false, message: claimBusyMessage(job.claim) };
   }
-  job.claim = owner;
-  sequenceJobs.set(job.id, job);
-  await persistJob(job);
-  return { ok: true };
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const age = await claimFileAge(jobId);
+    const existing = age === undefined ? undefined : await readClaim(jobId);
+    if (age !== undefined && !claimIsStale(existing, age)) {
+      return { ok: false, message: claimBusyMessage(existing) };
+    }
+    const owner = thisOwner();
+    if (age === undefined) {
+      if (await placeClaim(jobId, owner)) {
+        job.claim = owner;
+        sequenceJobs.set(job.id, job);
+        await persistJob(job);
+        return { ok: true };
+      }
+      continue;
+    }
+    const tomb = `${claimPath(jobId)}.tomb.${randomUUID()}`;
+    try {
+      await rename(claimPath(jobId), tomb);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
+    }
+    const displaced = await readClaimFile(tomb);
+    if (existing?.token && displaced?.token && displaced.token !== existing.token) {
+      await link(tomb, claimPath(jobId)).catch(() => undefined);
+      await unlink(tomb).catch(() => undefined);
+      continue;
+    }
+    const won = await placeClaim(jobId, owner);
+    await unlink(tomb).catch(() => undefined);
+    if (!won) continue;
+    job.claim = owner;
+    sequenceJobs.set(job.id, job);
+    await persistJob(job);
+    return { ok: true };
+  }
+  return { ok: false, message: ALREADY_RUNNING };
 }
 
 export async function releaseFilmClaim(jobId: string): Promise<void> {
@@ -3084,6 +3149,13 @@ server.registerTool(
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
     if (sessionRefusal) return sessionRefusal;
 
+    // Downloads and other fallible prep happen before the film is claimed, so a
+    // bad audio URL cannot leave a claim that the heartbeat keeps fresh.
+    const preparedAudio = {
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+    };
+    const audioTrackFile = preparedAudio.audioTrackFile;
+
     if (resumeJob) {
       const claim = await claimFilm(resumeJob.id);
       if (!claim.ok) {
@@ -3092,13 +3164,21 @@ server.registerTool(
             type: "text",
             text: JSON.stringify({
               error: claim.message,
-              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              detail: claim.message === ALREADY_RUNNING_HERE
+                ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films."
+                : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
               jobId: resumeJob.id,
             }, null, 2),
           }],
         };
       }
     }
+
+    let handedToJob = false;
+    try {
+      if (process.env.THESHOW_THROW_AFTER_CLAIM === "1" && resumeJob) {
+        throw new Error("throw after claim");
+      }
 
     const job: SequenceJob = {
       id: sequenceJobId(),
@@ -3118,7 +3198,7 @@ server.registerTool(
         fadeDuration: args.fadeDuration,
         continuity: args.continuity,
         characters: args.characters,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+        audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio,
@@ -3189,8 +3269,7 @@ server.registerTool(
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,
-      // Resolved once, up front, so a bad path fails before any shot renders.
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+      audioTrackFile,
       audioTrackVolume: args.audioTrackVolume,
       audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
       clipAudio: args.clipAudio,
@@ -3202,6 +3281,7 @@ server.registerTool(
     }).finally(() => {
       if (sourceId) void releaseFilmClaim(sourceId);
     });
+    handedToJob = true;
 
     // Give the first shot a short window so a single quick shot can come back
     // inline; anything longer is picked up by polling.
@@ -3216,6 +3296,9 @@ server.registerTool(
         ...jobPayload(job),
       }, null, 2) }],
     };
+    } finally {
+      if (resumeJob && !handedToJob) await releaseFilmClaim(resumeJob.id);
+    }
   }
 );
 
@@ -3735,13 +3818,17 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             error: claim.message,
-            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            detail: claim.message === ALREADY_RUNNING_HERE
+              ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films."
+              : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
             jobId: original.id,
           }, null, 2),
         }],
       };
     }
 
+    let handedToJob = false;
+    try {
     const settings = original.settings;
     const job: SequenceJob = {
       id: sequenceJobId(),
@@ -3800,6 +3887,7 @@ server.registerTool(
     }).finally(() => {
       void releaseFilmClaim(original.id);
     }));
+    handedToJob = true;
 
     const inlineDeadline = Date.now() + 25_000;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
@@ -3812,6 +3900,9 @@ server.registerTool(
         ...jobPayload(job),
       }, null, 2) }],
     };
+    } finally {
+      if (!handedToJob) await releaseFilmClaim(original.id);
+    }
   }
 );
 

@@ -2,19 +2,20 @@
  * Review fixes for elicitation, character locks, render claims, and job writes.
  * No generator is called and no credential file is read.
  */
-import { readFileSync } from "node:fs";
-import { mkdtemp, mkdir, unlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, unlink, utimes, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { saveCharacter } from "../mcp/characters.ts";
+import { holdCharacterLock, saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { flushJobWrites, jobShouldStop } from "../mcp/runtime.ts";
 import {
   claimFilm,
+  createTheShowServer,
   persistJob,
   refreshJobsFromDisk,
   releaseFilmClaim,
@@ -106,6 +107,73 @@ describe("character lock", () => {
       else process.env.THESHOW_CHARACTERS_DIR = previous;
     }
   });
+
+  it("keeps the lock while a save runs longer than the stale window", async () => {
+    const previous = process.env.THESHOW_CHARACTERS_DIR;
+    const previousRefresh = process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS;
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-lock-"));
+    process.env.THESHOW_CHARACTERS_DIR = dir;
+    process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS = "20";
+    const now = vi.spyOn(Date, "now");
+    let releaseHold: () => void = () => undefined;
+    try {
+      const hold = new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      });
+      let acquired: () => void = () => undefined;
+      const acquiredPromise = new Promise<void>((resolve) => {
+        acquired = resolve;
+      });
+      const started = Date.now();
+      now.mockReturnValue(started);
+      const holder = holdCharacterLock("Ada", async () => {
+        await writeFile(path.join(dir, "ada", "character.json"), JSON.stringify({
+          id: "char_ada",
+          name: "Ada",
+          referenceImageUrls: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }));
+        acquired();
+        await hold;
+        await writeFile(path.join(dir, "ada", "character.json"), JSON.stringify({
+          id: "char_ada",
+          name: "Ada",
+          description: "tall",
+          referenceImageUrls: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }));
+      });
+      await acquiredPromise;
+      now.mockReturnValue(started + 35_000);
+      const lockPath = path.join(dir, "ada", ".write.lock");
+      await vi.waitFor(() => {
+        const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as { at: number };
+        expect(parsed.at).toBeGreaterThanOrEqual(started + 35_000);
+      }, { timeout: 1_000, interval: 10 });
+
+      let saverDone = false;
+      const saver = saveCharacter({ name: "Ada", role: "lead" }).then((record) => {
+        saverDone = true;
+        return record;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(saverDone).toBe(false);
+      releaseHold();
+      const saved = await saver;
+      await holder;
+      expect(saved.role).toBe("lead");
+      expect(saved.description).toBe("tall");
+    } finally {
+      releaseHold();
+      now.mockRestore();
+      if (previous === undefined) delete process.env.THESHOW_CHARACTERS_DIR;
+      else process.env.THESHOW_CHARACTERS_DIR = previous;
+      if (previousRefresh === undefined) delete process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS;
+      else process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS = previousRefresh;
+    }
+  });
 });
 
 function film(id: string, extra: Partial<SequenceJob> = {}): SequenceJob {
@@ -130,11 +198,91 @@ describe("film claim", () => {
     expect(first.ok).toBe(true);
     const second = await claimFilm(id);
     expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.message).toBe("already running in another process");
+    if (!second.ok) expect(second.message).toBe("already running in this process");
     await releaseFilmClaim(id);
     const third = await claimFilm(id);
     expect(third.ok).toBe(true);
     await releaseFilmClaim(id);
+  });
+
+  it("lets exactly one resume take a dead claim, over many races", async () => {
+    for (let round = 0; round < 20; round++) {
+      const id = `seq_race_${round}_${Date.now().toString(36)}`;
+      await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
+      await writeFile(path.join(JOBS_DIR, `${id}.claim`), JSON.stringify({
+        pid: 2_000_000_000,
+        token: "dead",
+        host: hostname(),
+        heartbeatAt: Date.now(),
+      }));
+      const results = await Promise.all(Array.from({ length: 8 }, () => claimFilm(id)));
+      const wins = results.filter((result) => result.ok);
+      expect(wins, JSON.stringify(results)).toHaveLength(1);
+      await releaseFilmClaim(id);
+    }
+  });
+
+  it("recovers an empty claim after a short grace period", async () => {
+    const id = "seq_empty_claim";
+    const claim = path.join(JOBS_DIR, `${id}.claim`);
+    await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
+    await writeFile(claim, "");
+    const fresh = await claimFilm(id);
+    expect(fresh.ok).toBe(false);
+    const past = new Date(Date.now() - 2_000);
+    await utimes(claim, past, past);
+    const recovered = await claimFilm(id);
+    expect(recovered.ok).toBe(true);
+    const body = await readFile(claim, "utf8");
+    expect(body.length).toBeGreaterThan(0);
+    expect(JSON.parse(body).pid).toBe(process.pid);
+    await releaseFilmClaim(id);
+  });
+
+  it("releases the claim when resume throws after it was taken", async () => {
+    const id = `seq_throw_${Date.now().toString(36)}`;
+    await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
+    process.env.XAI_API_KEY = "test-key-not-a-real-credential";
+    process.env.THESHOW_THROW_AFTER_CLAIM = "1";
+    const show = createTheShowServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await show.connect(serverTransport);
+    const client = new Client({ name: "claim-throw", version: "0.0.0" });
+    await client.connect(clientTransport);
+    const arguments_ = {
+      confirm: true,
+      overrideValidation: true,
+      resumeFromJobId: id,
+      shots: [{ prompt: "He sits.", durationSeconds: 4 }],
+    };
+    try {
+      let thrown = "";
+      try {
+        const result = await client.callTool({ name: "render_sequence", arguments: arguments_ });
+        thrown = toolText(result);
+      } catch (err) {
+        thrown = err instanceof Error ? err.message : String(err);
+      }
+      expect(thrown).toContain("throw after claim");
+      expect(thrown).not.toContain("already running");
+      expect(existsSync(path.join(JOBS_DIR, `${id}.claim`))).toBe(false);
+
+      let secondText = "";
+      try {
+        const second = await client.callTool({ name: "render_sequence", arguments: arguments_ });
+        secondText = toolText(second);
+      } catch (err) {
+        secondText = err instanceof Error ? err.message : String(err);
+      }
+      expect(secondText).toContain("throw after claim");
+      expect(secondText).not.toContain("already running");
+      expect(existsSync(path.join(JOBS_DIR, `${id}.claim`))).toBe(false);
+    } finally {
+      delete process.env.THESHOW_THROW_AFTER_CLAIM;
+      delete process.env.XAI_API_KEY;
+      await client.close();
+      await show.close();
+    }
   });
 });
 

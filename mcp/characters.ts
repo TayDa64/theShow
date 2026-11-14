@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
@@ -174,8 +174,15 @@ async function folderForWrite(root: string, name: string) {
   return record && sameName(record.name, name) ? plain : hashed;
 }
 
-const CHARACTER_LOCK_WAIT_MS = 5_000;
+const CHARACTER_LOCK_WAIT_MS = 60_000;
 const CHARACTER_LOCK_STALE_MS = 30_000;
+const CHARACTER_LOCK_REFRESH_MS = 10_000;
+
+function characterLockRefreshMs(): number {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
+  if (Number.isFinite(raw) && raw >= 10) return raw;
+  return CHARACTER_LOCK_REFRESH_MS;
+}
 
 type CharacterLock = { pid: number; token: string; host: string; at: number };
 
@@ -202,25 +209,60 @@ function characterLockIsStale(info: CharacterLock | undefined, now = Date.now())
   return false;
 }
 
+function characterLockBody(token: string, at = Date.now()): string {
+  return JSON.stringify({ pid: process.pid, token, host: processHost, at });
+}
+
+async function refreshCharacterLock(lockPath: string, token: string): Promise<void> {
+  const current = await readCharacterLock(lockPath);
+  if (current?.token !== token) return;
+  const tmp = `${lockPath}.${token}.refresh`;
+  await writeFile(tmp, characterLockBody(token));
+  const again = await readCharacterLock(lockPath);
+  if (again?.token !== token) {
+    await unlink(tmp).catch(() => undefined);
+    return;
+  }
+  await rename(tmp, lockPath).catch(() => undefined);
+  await unlink(tmp).catch(() => undefined);
+}
+
+/** Remove the lock only when the file still names this holder. */
+async function releaseCharacterLock(lockPath: string, token: string): Promise<void> {
+  const tomb = `${lockPath}.unlock.${token}`;
+  try {
+    await rename(lockPath, tomb);
+  } catch {
+    return;
+  }
+  const moved = await readCharacterLock(tomb);
+  if (moved?.token === token) {
+    await unlink(tomb).catch(() => undefined);
+    return;
+  }
+  await rename(tomb, lockPath).catch(() => undefined);
+}
+
 async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
   await mkdir(folder, { recursive: true });
   const lockPath = join(folder, ".write.lock");
   const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
   let delay = 20;
+  const token = processToken;
   while (true) {
     try {
       const handle = await open(lockPath, "wx");
+      const refresh = setInterval(() => {
+        void refreshCharacterLock(lockPath, token);
+      }, characterLockRefreshMs());
+      refresh.unref?.();
       try {
-        await handle.writeFile(JSON.stringify({
-          pid: process.pid,
-          token: processToken,
-          host: processHost,
-          at: Date.now(),
-        }));
+        await handle.writeFile(characterLockBody(token));
         return await body();
       } finally {
+        clearInterval(refresh);
+        await releaseCharacterLock(lockPath, token);
         await handle.close();
-        await unlink(lockPath).catch(() => undefined);
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -325,6 +367,12 @@ async function keepWardrobeReferences(input: {
   return { ...input.wardrobe, stateImages: kept };
 }
 
+/** Hold this character's folder lock while `body` runs, refreshing it so a slow save is not treated as abandoned. */
+export async function holdCharacterLock<T>(name: string, body: () => Promise<T>): Promise<T> {
+  const folder = await folderForWrite(charactersRoot(), name.trim());
+  return withFolderLock(folder, body);
+}
+
 /**
  * Create or update a character on disk and return the record as written.
  *
@@ -346,20 +394,26 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
       refs: input.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
       warnings,
     });
-    const now = new Date().toISOString();
     const wardrobeInput = input.wardrobe ?? existing?.wardrobe;
     const wardrobe = wardrobeInput
       ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings })
       : undefined;
+    // The copy above can take longer than the stale window. Read again so a
+    // field written by the previous holder is not dropped.
+    const latest = await readRecord(folder, { quiet: true });
+    const base = latest ?? existing;
+    const now = new Date().toISOString();
     const record: CharacterRecord = {
-      id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      id: base?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
       name,
-      role: input.role ?? existing?.role,
-      description: input.description ?? existing?.description,
-      appearance: input.appearance ?? existing?.appearance,
-      wardrobe,
-      referenceImageUrls,
-      createdAt: existing?.createdAt || now,
+      role: input.role ?? base?.role,
+      description: input.description ?? base?.description,
+      appearance: input.appearance ?? base?.appearance,
+      wardrobe: input.wardrobe ? wardrobe : (base?.wardrobe ?? wardrobe),
+      referenceImageUrls: input.referenceImageUrls
+        ? referenceImageUrls
+        : (base?.referenceImageUrls ?? referenceImageUrls),
+      createdAt: base?.createdAt || now,
       updatedAt: now,
       folder,
     };
@@ -369,7 +423,7 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
       role: record.role,
       description: record.description,
       appearance: record.appearance,
-      wardrobe,
+      wardrobe: record.wardrobe,
       referenceImageUrls: record.referenceImageUrls,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,

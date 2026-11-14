@@ -72,6 +72,21 @@ describe("job lease", () => {
     })).toBe(true);
   });
 
+  it("allows a minute of clock skew for a live owner on another host", () => {
+    expect(jobShouldStop({
+      pid: process.pid,
+      token: "someone-else",
+      host: "other-host",
+      heartbeatAt: Date.now() + 10_000,
+    })).toBe(false);
+    expect(jobShouldStop({
+      pid: process.pid,
+      token: "someone-else",
+      host: "other-host",
+      heartbeatAt: Date.now() + 120_000,
+    })).toBe(true);
+  });
+
   it("treats EPERM from kill as a live process", () => {
     const kill = vi.spyOn(process, "kill").mockImplementation(() => {
       const error = new Error("operation not permitted") as NodeJS.ErrnoException;
@@ -149,6 +164,31 @@ describe("HTTP render memo", () => {
       const again = await withoutHttpRenderMemo(() => memoHttpRender("clip", { prompt: "same" }, run, () => true));
       expect(again.costUsd).toBe(1.25);
       expect(calls).toBe(2);
+    });
+  });
+
+  it("charges only the originator when two identical renders are in flight", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const run = async () => {
+      calls += 1;
+      await gate;
+      return { costUsd: 1.25, status: "completed" as const };
+    };
+    await runRequest({ kind: "http", sseConnected: false }, server, async () => {
+      const first = memoHttpRender("clip", { prompt: "overlap" }, run, () => true);
+      const second = memoHttpRender("clip", { prompt: "overlap" }, run, () => true);
+      release();
+      const origin = await first;
+      const joiner = await second as { costUsd?: number; reused?: boolean };
+      expect(calls).toBe(1);
+      expect(origin.costUsd).toBe(1.25);
+      expect((origin as { reused?: boolean }).reused).toBeUndefined();
+      expect(joiner.costUsd).toBe(0);
+      expect(joiner.reused).toBe(true);
     });
   });
 });

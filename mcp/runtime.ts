@@ -86,14 +86,20 @@ export function pidAlive(pid: number): boolean {
 /**
  * A running job is reaped only when its owner is provably gone or its lease
  * has expired. A fresh heartbeat from a live pid on this machine is kept.
+ * A stamp more than five seconds ahead is expired only when that owner is on
+ * this host. An owner on another host may be a minute ahead by clock skew
+ * before the stamp is treated as bogus.
  */
 export function jobShouldStop(owner: JobOwner | undefined, now = Date.now()): boolean {
   if (!owner) return true;
   if (owner.token === processToken && owner.pid === process.pid) return false;
   const lease = leaseMs();
-  // A heartbeat far in the future never ages out if we trust it. Treat that as expired.
-  // A few seconds of clock skew is clamped to now so it can still expire normally.
-  if (owner.heartbeatAt > now + 5_000) return true;
+  // A heartbeat dated in the future never ages out if we trust it. On this machine,
+  // more than five seconds ahead is treated as expired. Another host may be that
+  // far ahead by clock skew, so cross-host stamps get a minute of slack before
+  // they are treated as bogus. A small skew is clamped to now and can still expire.
+  const futureSlack = owner.host === processHost ? 5_000 : 60_000;
+  if (owner.heartbeatAt > now + futureSlack) return true;
   const beat = Math.min(owner.heartbeatAt, now);
   if (now - beat > lease) return true;
   if (owner.host === processHost && !pidAlive(owner.pid)) return true;
@@ -226,7 +232,12 @@ export function memoHttpRender<T>(
   const cached = cachedRender<T>(key);
   if (cached !== undefined) return Promise.resolve(cached);
   const pending = renderInflight.get(key);
-  if (pending) return pending as Promise<T>;
+  if (pending) {
+    return pending.then((value) => {
+      if (!value || typeof value !== "object") return value as T;
+      return { ...(value as object), costUsd: 0, reused: true } as T;
+    });
+  }
   const promise = renderBypass.run(true, run).then((value) => {
     if (succeeded(value)) rememberRender(key, value);
     return value;
