@@ -36,6 +36,7 @@ const renderInflight = new Map<string, Promise<unknown>>();
 const renderDone = new Map<string, { at: number; value: unknown }>();
 
 const RENDER_MEMORY_MS = 10 * 60 * 1000;
+const RENDER_MEMORY_MAX = 64;
 
 export function jobsDirectory(): string {
   return process.env.THESHOW_JOBS_DIR || JOBS_DIR;
@@ -76,8 +77,9 @@ export function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // Another OS user owns the process. kill(pid, 0) cannot see it, but it is alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -88,7 +90,12 @@ export function pidAlive(pid: number): boolean {
 export function jobShouldStop(owner: JobOwner | undefined, now = Date.now()): boolean {
   if (!owner) return true;
   if (owner.token === processToken && owner.pid === process.pid) return false;
-  if (now - owner.heartbeatAt > leaseMs()) return true;
+  const lease = leaseMs();
+  // A heartbeat far in the future never ages out if we trust it. Treat that as expired.
+  // A few seconds of clock skew is clamped to now so it can still expire normally.
+  if (owner.heartbeatAt > now + 5_000) return true;
+  const beat = Math.min(owner.heartbeatAt, now);
+  if (now - beat > lease) return true;
   if (owner.host === processHost && !pidAlive(owner.pid)) return true;
   return false;
 }
@@ -175,9 +182,38 @@ function renderKey(kind: string, material: unknown): string {
   return `${kind}:${createHash("sha256").update(JSON.stringify(material)).digest("hex")}`;
 }
 
+function rememberRender(key: string, value: unknown): void {
+  renderDone.delete(key);
+  renderDone.set(key, { at: Date.now(), value });
+  while (renderDone.size > RENDER_MEMORY_MAX) {
+    const oldest = renderDone.keys().next().value;
+    if (oldest === undefined) break;
+    renderDone.delete(oldest);
+  }
+}
+
+function cachedRender<T>(key: string): T | undefined {
+  const done = renderDone.get(key);
+  if (!done) return undefined;
+  if (Date.now() - done.at >= RENDER_MEMORY_MS) {
+    renderDone.delete(key);
+    return undefined;
+  }
+  renderDone.delete(key);
+  renderDone.set(key, done);
+  if (!done.value || typeof done.value !== "object") return done.value as T;
+  return { ...(done.value as object), costUsd: 0, reused: true } as T;
+}
+
+/** retry_shot must call the generator again. The memo would hand back the failed take. */
+export function withoutHttpRenderMemo<T>(fn: () => Promise<T>): Promise<T> {
+  return renderBypass.run(true, fn);
+}
+
 /**
  * On HTTP, a second identical in-flight render shares the first call, and a
- * successful result is reused for a few minutes. Stdio always runs the call.
+ * successful result is reused for a few minutes. A reused result reports no
+ * extra charge. Stdio always runs the call.
  */
 export function memoHttpRender<T>(
   kind: string,
@@ -187,12 +223,12 @@ export function memoHttpRender<T>(
 ): Promise<T> {
   if (transportKind() !== "http" || renderBypass.getStore()) return run();
   const key = renderKey(kind, material);
-  const done = renderDone.get(key);
-  if (done && Date.now() - done.at < RENDER_MEMORY_MS) return Promise.resolve(done.value as T);
+  const cached = cachedRender<T>(key);
+  if (cached !== undefined) return Promise.resolve(cached);
   const pending = renderInflight.get(key);
   if (pending) return pending as Promise<T>;
   const promise = renderBypass.run(true, run).then((value) => {
-    if (succeeded(value)) renderDone.set(key, { at: Date.now(), value });
+    if (succeeded(value)) rememberRender(key, value);
     return value;
   }).finally(() => {
     renderInflight.delete(key);

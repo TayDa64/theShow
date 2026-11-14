@@ -87,6 +87,8 @@ export type GrokClipResult = {
   progress?: number;
   /** Exact amount billed for this request, converted from usage.cost_in_usd_ticks. */
   costUsd?: number;
+  /** Set when HTTP served a remembered result. The new cost is zero. */
+  reused?: boolean;
   /**
    * The render failed in a way that succeeded on the next identical attempt, so
    * the caller may re-chain rather than give up on the film. Retrying is left to
@@ -617,6 +619,8 @@ export type GrokStillResult = {
   model?: string;
   usage?: Record<string, unknown>;
   costUsd?: number;
+  /** Set when HTTP served a remembered still. The new cost is zero. */
+  reused?: boolean;
   /** Which body key the API accepted for the shape, so a caller knows what happened. */
   aspectRatioParam?: "aspect_ratio" | "aspectRatio" | "none";
   /** Which route produced the picture: a fresh generation or an edit of a base. */

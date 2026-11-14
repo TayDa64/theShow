@@ -45089,6 +45089,7 @@ var pendingWrites = /* @__PURE__ */ new Set();
 var renderInflight = /* @__PURE__ */ new Map();
 var renderDone = /* @__PURE__ */ new Map();
 var RENDER_MEMORY_MS = 10 * 60 * 1e3;
+var RENDER_MEMORY_MAX = 64;
 function leaseMs() {
   const raw = Number(process.env.THESHOW_JOB_LEASE_MS ?? 3e4);
   return Number.isFinite(raw) && raw >= 1e3 ? raw : 3e4;
@@ -45118,14 +45119,17 @@ function pidAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    return err.code === "EPERM";
   }
 }
 function jobShouldStop(owner, now = Date.now()) {
   if (!owner) return true;
   if (owner.token === processToken && owner.pid === process.pid) return false;
-  if (now - owner.heartbeatAt > leaseMs()) return true;
+  const lease = leaseMs();
+  if (owner.heartbeatAt > now + 5e3) return true;
+  const beat = Math.min(owner.heartbeatAt, now);
+  if (now - beat > lease) return true;
   if (owner.host === processHost && !pidAlive(owner.pid)) return true;
   return false;
 }
@@ -45192,15 +45196,39 @@ function installShutdown(drain) {
 function renderKey(kind, material) {
   return `${kind}:${createHash2("sha256").update(JSON.stringify(material)).digest("hex")}`;
 }
+function rememberRender(key, value) {
+  renderDone.delete(key);
+  renderDone.set(key, { at: Date.now(), value });
+  while (renderDone.size > RENDER_MEMORY_MAX) {
+    const oldest = renderDone.keys().next().value;
+    if (oldest === void 0) break;
+    renderDone.delete(oldest);
+  }
+}
+function cachedRender(key) {
+  const done = renderDone.get(key);
+  if (!done) return void 0;
+  if (Date.now() - done.at >= RENDER_MEMORY_MS) {
+    renderDone.delete(key);
+    return void 0;
+  }
+  renderDone.delete(key);
+  renderDone.set(key, done);
+  if (!done.value || typeof done.value !== "object") return done.value;
+  return { ...done.value, costUsd: 0, reused: true };
+}
+function withoutHttpRenderMemo(fn) {
+  return renderBypass.run(true, fn);
+}
 function memoHttpRender(kind, material, run, succeeded) {
   if (transportKind() !== "http" || renderBypass.getStore()) return run();
   const key = renderKey(kind, material);
-  const done = renderDone.get(key);
-  if (done && Date.now() - done.at < RENDER_MEMORY_MS) return Promise.resolve(done.value);
+  const cached2 = cachedRender(key);
+  if (cached2 !== void 0) return Promise.resolve(cached2);
   const pending = renderInflight.get(key);
   if (pending) return pending;
   const promise2 = renderBypass.run(true, run).then((value) => {
-    if (succeeded(value)) renderDone.set(key, { at: Date.now(), value });
+    if (succeeded(value)) rememberRender(key, value);
     return value;
   }).finally(() => {
     renderInflight.delete(key);
@@ -46847,13 +46875,44 @@ async function folderForWrite(root, name) {
   const record2 = await readRecord(plain, { quiet: true });
   return record2 && sameName(record2.name, name) ? plain : hashed;
 }
+var CHARACTER_LOCK_WAIT_MS = 5e3;
+var CHARACTER_LOCK_STALE_MS = 3e4;
+async function readCharacterLock(lockPath) {
+  try {
+    const parsed = JSON.parse(await readFile4(lockPath, "utf8"));
+    if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return void 0;
+    return {
+      pid: parsed.pid,
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: parsed.at
+    };
+  } catch {
+    return void 0;
+  }
+}
+function characterLockIsStale(info, now = Date.now()) {
+  if (!info) return true;
+  if (info.at > now + 5e3) return true;
+  if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return false;
+}
 async function withFolderLock(folder, body) {
   await mkdir4(folder, { recursive: true });
   const lockPath = join6(folder, ".write.lock");
-  for (let attempt = 0; attempt < 40; attempt++) {
+  const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
+  let delay = 20;
+  while (true) {
     try {
       const handle = await open2(lockPath, "wx");
       try {
+        await handle.writeFile(JSON.stringify({
+          pid: process.pid,
+          token: processToken,
+          host: processHost,
+          at: Date.now()
+        }));
         return await body();
       } finally {
         await handle.close();
@@ -46861,10 +46920,15 @@ async function withFolderLock(folder, body) {
       }
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
-      await new Promise((resolve2) => setTimeout(resolve2, 5));
+      if (characterLockIsStale(await readCharacterLock(lockPath))) {
+        await unlink(lockPath).catch(() => void 0);
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+      await new Promise((resolve2) => setTimeout(resolve2, delay));
+      delay = Math.min(delay * 2, 250);
     }
   }
-  throw new Error(`Could not lock ${folder}.`);
 }
 function copyNameFor(source) {
   const file2 = basename2(source);
@@ -47746,7 +47810,7 @@ function runPreVideoGate(input2) {
 }
 
 // mcp/server.ts
-import { mkdir as mkdir5, readFile as readFile5, readdir as readdir2, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir5, open as open3, readFile as readFile5, readdir as readdir2, unlink as unlink2, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
 import { createHash as createHash5 } from "node:crypto";
 var server = new McpServer({
@@ -48237,19 +48301,21 @@ server.registerTool(
     let result;
     let timeout;
     try {
-      const timer = new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
-        extra?.signal?.addEventListener("abort", () => {
-          reject(new Error("elicitation aborted"));
-        }, { once: true });
+      const elicitation = mcp.server.elicitInput({
+        message: title,
+        requestedSchema: schema
       });
-      result = await Promise.race([
-        mcp.server.elicitInput({
-          message: title,
-          requestedSchema: schema
-        }),
-        timer
-      ]);
+      if (scope?.kind !== "http") {
+        result = await elicitation;
+      } else {
+        const timer = new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+          extra?.signal?.addEventListener("abort", () => {
+            reject(new Error("elicitation aborted"));
+          }, { once: true });
+        });
+        result = await Promise.race([elicitation, timer]);
+      }
     } catch (err) {
       const timedOut = err instanceof Error && err.message === "elicitation timed out";
       if (timedOut) {
@@ -49212,8 +49278,11 @@ function startOwnedJobHeartbeat() {
   return startJobHeartbeat(() => {
     const now = Date.now();
     for (const job of sequenceJobs.values()) {
-      if (job.state !== "running" || job.owner?.token !== processToken) continue;
-      job.owner.heartbeatAt = now;
+      const ownsRun = job.state === "running" && job.owner?.token === processToken;
+      const ownsClaim = job.claim?.token === processToken;
+      if (!ownsRun && !ownsClaim) continue;
+      if (ownsRun && job.owner) job.owner.heartbeatAt = now;
+      if (ownsClaim && job.claim) job.claim.heartbeatAt = now;
       void persistJob(job);
     }
   });
@@ -49228,26 +49297,63 @@ function resolutionFromLabel(value) {
   return match?.[1] ?? void 0;
 }
 var sequenceJobs = /* @__PURE__ */ new Map();
+var jobRevision = /* @__PURE__ */ new Map();
+var jobWriteChain = /* @__PURE__ */ new Map();
+function claimPath(jobId) {
+  return join7(JOBS_DIR, `${jobId}.claim`);
+}
+function noteRevision(job) {
+  if (typeof job.revision === "number") {
+    jobRevision.set(job.id, Math.max(jobRevision.get(job.id) ?? 0, job.revision));
+  }
+}
 async function persistJob(job) {
-  const write = (async () => {
+  const revision = (jobRevision.get(job.id) ?? 0) + 1;
+  job.revision = revision;
+  jobRevision.set(job.id, revision);
+  const snapshot = structuredClone(job);
+  const previous = jobWriteChain.get(job.id) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (jobRevision.get(job.id) !== revision) return;
     try {
-      await atomicWriteFile(
-        join7(JOBS_DIR, `${job.id}.json`),
-        JSON.stringify(job, null, 2)
-      );
+      await atomicWriteFile(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
+      else await unlink2(claimPath(job.id)).catch(() => void 0);
     } catch (err) {
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
-  })();
+  });
+  jobWriteChain.set(job.id, write);
   trackWrite(write);
   await write;
 }
-function reapIfOwnerGone(job) {
+async function reapIfOwnerGone(job) {
   if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  const filmPath = job.filmPath;
+  const fileUrl = job.fileUrl;
   job.state = "stopped";
   job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
   job.finishedAt = job.finishedAt ?? Date.now();
-  void persistJob(job);
+  if (filmPath) job.filmPath = filmPath;
+  if (fileUrl) job.fileUrl = fileUrl;
+  await persistJob(job);
+}
+function otherProcessHolds(owner) {
+  if (!owner) return false;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  return !jobShouldStop(owner);
+}
+var ALREADY_RUNNING = "already running in another process";
+function mergeFromDisk(memory, disk) {
+  if (!memory) return disk;
+  const memRev = memory.revision ?? 0;
+  const diskRev = disk.revision ?? 0;
+  if (memRev > diskRev) return memory;
+  if (memory.state !== "running" && disk.state === "running") return memory;
+  if (memory.filmPath && !disk.filmPath) {
+    return { ...disk, filmPath: memory.filmPath, fileUrl: disk.fileUrl ?? memory.fileUrl };
+  }
+  return disk;
 }
 async function refreshJobsFromDisk() {
   let names;
@@ -49264,14 +49370,64 @@ async function refreshJobsFromDisk() {
       if (!job?.id) continue;
       const memory = sequenceJobs.get(job.id);
       if (memory?.owner?.token === processToken && memory.state === "running") continue;
-      reapIfOwnerGone(job);
-      sequenceJobs.set(job.id, job);
+      const chosen = mergeFromDisk(memory, job);
+      if (chosen === job) await reapIfOwnerGone(chosen);
+      noteRevision(chosen);
+      sequenceJobs.set(chosen.id, chosen);
     } catch {
     }
   }
 }
 async function loadJobsFromDisk() {
   await refreshJobsFromDisk();
+}
+async function readClaim(jobId) {
+  try {
+    const parsed = JSON.parse(await readFile5(claimPath(jobId), "utf8"));
+    if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return parsed;
+  } catch {
+    return void 0;
+  }
+}
+async function claimFilm(jobId) {
+  await refreshJobsFromDisk();
+  const job = sequenceJobs.get(jobId);
+  if (!job) return { ok: false, message: "Unknown job" };
+  if (job.state === "running" && otherProcessHolds(job.owner)) {
+    return { ok: false, message: ALREADY_RUNNING };
+  }
+  if (job.claim && !jobShouldStop(job.claim)) return { ok: false, message: ALREADY_RUNNING };
+  const existing = await readClaim(jobId);
+  if (existing && !jobShouldStop(existing)) return { ok: false, message: ALREADY_RUNNING };
+  if (existing) await unlink2(claimPath(jobId)).catch(() => void 0);
+  const owner = thisOwner();
+  try {
+    const handle = await open3(claimPath(jobId), "wx");
+    try {
+      await handle.writeFile(JSON.stringify(owner));
+    } finally {
+      await handle.close();
+    }
+  } catch (err) {
+    if (err.code === "EEXIST") {
+      return { ok: false, message: ALREADY_RUNNING };
+    }
+    throw err;
+  }
+  job.claim = owner;
+  sequenceJobs.set(job.id, job);
+  await persistJob(job);
+  return { ok: true };
+}
+async function releaseFilmClaim(jobId) {
+  const job = sequenceJobs.get(jobId);
+  if (job?.claim?.token === processToken) {
+    job.claim = void 0;
+    await persistJob(job);
+  } else {
+    await unlink2(claimPath(jobId)).catch(() => void 0);
+  }
 }
 function sequenceJobId() {
   return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -49602,6 +49758,7 @@ server.registerTool(
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
     let resumeJob;
     if (args.resumeFromJobId) {
+      await refreshJobsFromDisk();
       resumeJob = sequenceJobs.get(args.resumeFromJobId);
       if (!resumeJob) {
         return {
@@ -49611,6 +49768,18 @@ server.registerTool(
               error: "Unknown resumeFromJobId",
               detail: "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5)
+            }, null, 2)
+          }]
+        };
+      }
+      if (otherProcessHolds(resumeJob.owner) || otherProcessHolds(resumeJob.claim)) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: ALREADY_RUNNING,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
             }, null, 2)
           }]
         };
@@ -49773,6 +49942,21 @@ server.registerTool(
     }
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
     if (sessionRefusal) return sessionRefusal;
+    if (resumeJob) {
+      const claim2 = await claimFilm(resumeJob.id);
+      if (!claim2.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: claim2.message,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+    }
     const job = {
       id: sequenceJobId(),
       startedAt: Date.now(),
@@ -49846,6 +50030,7 @@ server.registerTool(
     };
     sequenceJobs.set(job.id, job);
     void persistJob(job);
+    const sourceId = resumeJob?.id;
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
@@ -49866,6 +50051,8 @@ server.registerTool(
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : void 0,
       resumeFramePath
+    }).finally(() => {
+      if (sourceId) void releaseFilmClaim(sourceId);
     });
     const inlineDeadline = Date.now() + 25e3;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
@@ -50122,6 +50309,7 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    await refreshJobsFromDisk();
     const original = sequenceJobs.get(args.jobId);
     if (!original) {
       return {
@@ -50131,6 +50319,18 @@ server.registerTool(
             error: "Unknown jobId",
             detail: "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5)
+          }, null, 2)
+        }]
+      };
+    }
+    if (otherProcessHolds(original.owner) || otherProcessHolds(original.claim)) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: ALREADY_RUNNING,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
           }, null, 2)
         }]
       };
@@ -50257,6 +50457,19 @@ server.registerTool(
     }
     const repairSession = await refuseIfSessionWillNotLast(duration3 * 1e3);
     if (repairSession) return repairSession;
+    const claim2 = await claimFilm(original.id);
+    if (!claim2.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: claim2.message,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
+    }
     const settings = original.settings;
     const job = {
       id: sequenceJobId(),
@@ -50287,7 +50500,7 @@ server.registerTool(
     }
     sequenceJobs.set(job.id, job);
     void persistJob(job);
-    void runSequenceJob(job, {
+    void withoutHttpRenderMemo(() => runSequenceJob(job, {
       shots: [{ prompt, durationSeconds: duration3, title: target.title }],
       characters: settings?.characters,
       continuity: settings?.continuity,
@@ -50306,7 +50519,9 @@ server.registerTool(
       // Chain the replacement from the shot that precedes it, exactly as the
       // original film did, so the repaired shot fits the same join.
       resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
-    });
+    }).finally(() => {
+      void releaseFilmClaim(original.id);
+    }));
     const inlineDeadline = Date.now() + 25e3;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
       await sleep2(500);

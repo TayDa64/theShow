@@ -61,7 +61,7 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
@@ -77,6 +77,7 @@ import {
   thisOwner,
   toolAuth,
   trackWrite,
+  withoutHttpRenderMemo,
   type JobOwner,
 } from "./runtime.ts";
 
@@ -755,19 +756,23 @@ server.registerTool(
     let result;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const timer = new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
-        extra?.signal?.addEventListener("abort", () => {
-          reject(new Error("elicitation aborted"));
-        }, { once: true });
-      });
-      result = await Promise.race([
-        mcp.server.elicitInput({
-          message: title,
-          requestedSchema: schema,
-        } as Parameters<typeof mcp.server.elicitInput>[0]),
-        timer,
-      ]);
+      const elicitation = mcp.server.elicitInput({
+        message: title,
+        requestedSchema: schema,
+      } as Parameters<typeof mcp.server.elicitInput>[0]);
+      // Desktop stdio waits for the form. The timeout is only for HTTP, where a
+      // client can advertise elicitation and then never answer.
+      if (scope?.kind !== "http") {
+        result = await elicitation;
+      } else {
+        const timer = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+          extra?.signal?.addEventListener("abort", () => {
+            reject(new Error("elicitation aborted"));
+          }, { once: true });
+        });
+        result = await Promise.race([elicitation, timer]);
+      }
     } catch (err) {
       const timedOut = err instanceof Error && err.message === "elicitation timed out";
       if (timedOut) {
@@ -2017,8 +2022,11 @@ export function startOwnedJobHeartbeat(): () => void {
   return startJobHeartbeat(() => {
     const now = Date.now();
     for (const job of sequenceJobs.values()) {
-      if (job.state !== "running" || job.owner?.token !== processToken) continue;
-      job.owner.heartbeatAt = now;
+      const ownsRun = job.state === "running" && job.owner?.token === processToken;
+      const ownsClaim = job.claim?.token === processToken;
+      if (!ownsRun && !ownsClaim) continue;
+      if (ownsRun && job.owner) job.owner.heartbeatAt = now;
+      if (ownsClaim && job.claim) job.claim.heartbeatAt = now;
       void persistJob(job);
     }
   });
@@ -2091,13 +2099,17 @@ export function resolutionFromLabel(value: unknown): "480p" | "720p" | "1080p" |
  * timeout instead of a film. So a long sequence now registers a job, returns its
  * id immediately, and is polled with check_sequence.
  */
-type SequenceJob = {
+export type SequenceJob = {
   id: string;
   startedAt: number;
   finishedAt?: number;
   state: "running" | "completed" | "stopped" | "failed";
   /** Who is driving a running render, so another process does not reap it. */
   owner?: JobOwner;
+  /** Set while this film is being resumed or repaired, so a second process does not start another render. */
+  claim?: JobOwner;
+  /** Increases on every queued write. An older snapshot is not written over a newer one. */
+  revision?: number;
   shotCount: number;
   completed: number;
   estimateUsd: number;
@@ -2197,32 +2209,80 @@ type SequenceJob = {
  * finds on startup.
  */
 const sequenceJobs = new Map<string, SequenceJob>();
+const jobRevision = new Map<string, number>();
+const jobWriteChain = new Map<string, Promise<void>>();
 
-async function persistJob(job: SequenceJob) {
-  const write = (async () => {
+function claimPath(jobId: string): string {
+  return join(JOBS_DIR, `${jobId}.claim`);
+}
+
+function noteRevision(job: SequenceJob): void {
+  if (typeof job.revision === "number") {
+    jobRevision.set(job.id, Math.max(jobRevision.get(job.id) ?? 0, job.revision));
+  }
+}
+
+/**
+ * One writer chain per job. Each call snapshots the job and takes the next
+ * revision. A heartbeat that was queued before completion is dropped once a
+ * later snapshot exists, so disk cannot go back to "running" and lose the film path.
+ */
+export async function persistJob(job: SequenceJob): Promise<void> {
+  const revision = (jobRevision.get(job.id) ?? 0) + 1;
+  job.revision = revision;
+  jobRevision.set(job.id, revision);
+  const snapshot = structuredClone(job);
+  const previous = jobWriteChain.get(job.id) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (jobRevision.get(job.id) !== revision) return;
     try {
-      await atomicWriteFile(
-        join(JOBS_DIR, `${job.id}.json`),
-        JSON.stringify(job, null, 2),
-      );
+      await atomicWriteFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
+      else await unlink(claimPath(job.id)).catch(() => undefined);
     } catch (err) {
       // A failed write must never lose the render. The job is already in memory,
       // and the next state change tries again.
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
-  })();
+  });
+  jobWriteChain.set(job.id, write);
   trackWrite(write);
   await write;
 }
 
-function reapIfOwnerGone(job: SequenceJob): void {
+async function reapIfOwnerGone(job: SequenceJob): Promise<void> {
   if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  const filmPath = job.filmPath;
+  const fileUrl = job.fileUrl;
   job.state = "stopped";
   job.error =
     "The server stopped while this film was rendering. Shots already finished are kept; " +
     "the rest were never rendered.";
   job.finishedAt = job.finishedAt ?? Date.now();
-  void persistJob(job);
+  if (filmPath) job.filmPath = filmPath;
+  if (fileUrl) job.fileUrl = fileUrl;
+  await persistJob(job);
+}
+
+function otherProcessHolds(owner: JobOwner | undefined): boolean {
+  if (!owner) return false;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  return !jobShouldStop(owner);
+}
+
+const ALREADY_RUNNING = "already running in another process";
+
+/** Keep a terminal in-memory film, including its path, ahead of a stale running copy on disk. */
+function mergeFromDisk(memory: SequenceJob | undefined, disk: SequenceJob): SequenceJob {
+  if (!memory) return disk;
+  const memRev = memory.revision ?? 0;
+  const diskRev = disk.revision ?? 0;
+  if (memRev > diskRev) return memory;
+  if (memory.state !== "running" && disk.state === "running") return memory;
+  if (memory.filmPath && !disk.filmPath) {
+    return { ...disk, filmPath: memory.filmPath, fileUrl: disk.fileUrl ?? memory.fileUrl };
+  }
+  return disk;
 }
 
 /** Re-read job files so a film started by the other transport is visible here. */
@@ -2241,8 +2301,10 @@ export async function refreshJobsFromDisk(): Promise<void> {
       if (!job?.id) continue;
       const memory = sequenceJobs.get(job.id);
       if (memory?.owner?.token === processToken && memory.state === "running") continue;
-      reapIfOwnerGone(job);
-      sequenceJobs.set(job.id, job);
+      const chosen = mergeFromDisk(memory, job);
+      if (chosen === job) await reapIfOwnerGone(chosen);
+      noteRevision(chosen);
+      sequenceJobs.set(chosen.id, chosen);
     } catch {
       // One unreadable file must not stop the others from loading.
     }
@@ -2251,6 +2313,61 @@ export async function refreshJobsFromDisk(): Promise<void> {
 
 export async function loadJobsFromDisk() {
   await refreshJobsFromDisk();
+}
+
+async function readClaim(jobId: string): Promise<JobOwner | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(claimPath(jobId), "utf8")) as JobOwner;
+    if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Exclusive on-disk claim for a film about to be resumed or repaired.
+ * A live owner blocks the second process. A dead owner's claim is removed.
+ */
+export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  await refreshJobsFromDisk();
+  const job = sequenceJobs.get(jobId);
+  if (!job) return { ok: false, message: "Unknown job" };
+  if (job.state === "running" && otherProcessHolds(job.owner)) {
+    return { ok: false, message: ALREADY_RUNNING };
+  }
+  if (job.claim && !jobShouldStop(job.claim)) return { ok: false, message: ALREADY_RUNNING };
+  const existing = await readClaim(jobId);
+  if (existing && !jobShouldStop(existing)) return { ok: false, message: ALREADY_RUNNING };
+  if (existing) await unlink(claimPath(jobId)).catch(() => undefined);
+  const owner = thisOwner();
+  try {
+    const handle = await open(claimPath(jobId), "wx");
+    try {
+      await handle.writeFile(JSON.stringify(owner));
+    } finally {
+      await handle.close();
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      return { ok: false, message: ALREADY_RUNNING };
+    }
+    throw err;
+  }
+  job.claim = owner;
+  sequenceJobs.set(job.id, job);
+  await persistJob(job);
+  return { ok: true };
+}
+
+export async function releaseFilmClaim(jobId: string): Promise<void> {
+  const job = sequenceJobs.get(jobId);
+  if (job?.claim?.token === processToken) {
+    job.claim = undefined;
+    await persistJob(job);
+  } else {
+    await unlink(claimPath(jobId)).catch(() => undefined);
+  }
 }
 
 function sequenceJobId(): string {
@@ -2728,6 +2845,7 @@ server.registerTool(
     // Resolve a resume target up front so a bad id fails before anything spends.
     let resumeJob: SequenceJob | undefined;
     if (args.resumeFromJobId) {
+      await refreshJobsFromDisk();
       resumeJob = sequenceJobs.get(args.resumeFromJobId);
       if (!resumeJob) {
         return {
@@ -2738,6 +2856,18 @@ server.registerTool(
               detail:
               "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5),
+            }, null, 2),
+          }],
+        };
+      }
+      if (otherProcessHolds(resumeJob.owner) || otherProcessHolds(resumeJob.claim)) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: ALREADY_RUNNING,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id,
             }, null, 2),
           }],
         };
@@ -2954,6 +3084,22 @@ server.registerTool(
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
     if (sessionRefusal) return sessionRefusal;
 
+    if (resumeJob) {
+      const claim = await claimFilm(resumeJob.id);
+      if (!claim.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: claim.message,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id,
+            }, null, 2),
+          }],
+        };
+      }
+    }
+
     const job: SequenceJob = {
       id: sequenceJobId(),
       startedAt: Date.now(),
@@ -3032,6 +3178,7 @@ server.registerTool(
 
     // Deliberately not awaited: a multi-shot chain outlives the client's request
     // timeout, and awaiting it turns a finished film into a timeout error.
+    const sourceId = resumeJob?.id;
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
@@ -3052,6 +3199,8 @@ server.registerTool(
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : undefined,
       resumeFramePath,
+    }).finally(() => {
+      if (sourceId) void releaseFilmClaim(sourceId);
     });
 
     // Give the first shot a short window so a single quick shot can come back
@@ -3406,6 +3555,7 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    await refreshJobsFromDisk();
     const original = sequenceJobs.get(args.jobId);
     if (!original) {
       return {
@@ -3416,6 +3566,18 @@ server.registerTool(
             detail:
               "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5),
+          }, null, 2),
+        }],
+      };
+    }
+    if (otherProcessHolds(original.owner) || otherProcessHolds(original.claim)) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: ALREADY_RUNNING,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id,
           }, null, 2),
         }],
       };
@@ -3566,6 +3728,20 @@ server.registerTool(
     const repairSession = await refuseIfSessionWillNotLast(duration * 1000);
     if (repairSession) return repairSession;
 
+    const claim = await claimFilm(original.id);
+    if (!claim.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: claim.message,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id,
+          }, null, 2),
+        }],
+      };
+    }
+
     const settings = original.settings;
     const job: SequenceJob = {
       id: sequenceJobId(),
@@ -3602,7 +3778,7 @@ server.registerTool(
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
-    void runSequenceJob(job, {
+    void withoutHttpRenderMemo(() => runSequenceJob(job, {
       shots: [{ prompt, durationSeconds: duration, title: target.title }],
       characters: settings?.characters,
       continuity: settings?.continuity,
@@ -3621,7 +3797,9 @@ server.registerTool(
       // Chain the replacement from the shot that precedes it, exactly as the
       // original film did, so the repaired shot fits the same join.
       resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath,
-    });
+    }).finally(() => {
+      void releaseFilmClaim(original.id);
+    }));
 
     const inlineDeadline = Date.now() + 25_000;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {

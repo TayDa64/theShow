@@ -18,7 +18,7 @@ import { mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promi
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
-import { atomicWriteFile } from "./runtime.ts";
+import { atomicWriteFile, pidAlive, processHost, processToken } from "./runtime.ts";
 
 export const CHARACTERS_DIR =
   process.env.THESHOW_CHARACTERS_DIR || join(homedir(), ".theshow", "characters");
@@ -174,13 +174,49 @@ async function folderForWrite(root: string, name: string) {
   return record && sameName(record.name, name) ? plain : hashed;
 }
 
+const CHARACTER_LOCK_WAIT_MS = 5_000;
+const CHARACTER_LOCK_STALE_MS = 30_000;
+
+type CharacterLock = { pid: number; token: string; host: string; at: number };
+
+async function readCharacterLock(lockPath: string): Promise<CharacterLock | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as Partial<CharacterLock>;
+    if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return undefined;
+    return {
+      pid: parsed.pid,
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: parsed.at,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function characterLockIsStale(info: CharacterLock | undefined, now = Date.now()): boolean {
+  if (!info) return true;
+  if (info.at > now + 5_000) return true;
+  if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return false;
+}
+
 async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
   await mkdir(folder, { recursive: true });
   const lockPath = join(folder, ".write.lock");
-  for (let attempt = 0; attempt < 40; attempt++) {
+  const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
+  let delay = 20;
+  while (true) {
     try {
       const handle = await open(lockPath, "wx");
       try {
+        await handle.writeFile(JSON.stringify({
+          pid: process.pid,
+          token: processToken,
+          host: processHost,
+          at: Date.now(),
+        }));
         return await body();
       } finally {
         await handle.close();
@@ -188,10 +224,15 @@ async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promis
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (characterLockIsStale(await readCharacterLock(lockPath))) {
+        await unlink(lockPath).catch(() => undefined);
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 250);
     }
   }
-  throw new Error(`Could not lock ${folder}.`);
 }
 
 /** A stable filename for a copied photo, recognisable and unique per source. */

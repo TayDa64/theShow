@@ -220,7 +220,7 @@ The endpoint is `http://127.0.0.1:8787/mcp`. Every request needs `Authorization:
 
 HTTP tool results leave out the `auth` field, so a remote client does not receive the operator email from `~/.grok/auth.json`. Without `THESHOW_HTTP_ALLOW_GROK_SESSION=1`, HTTP renders require `XAI_API_KEY` and bill API credits. Desktop stdio still tries the API key first, then the subscription session.
 
-`configure_film` returns the form fields as `needsInput` when the HTTP client has no GET stream to receive elicitation. A client that does open the stream gets the form, and a missing answer comes back after `THESHOW_ELICIT_TIMEOUT_MS` (default 10 seconds) instead of hanging.
+`configure_film` returns the form fields as `needsInput` when the HTTP client has no GET stream to receive elicitation. A client that does open the stream gets the form, and on HTTP a missing answer comes back after `THESHOW_ELICIT_TIMEOUT_MS` (default 10 seconds) instead of hanging. Desktop stdio waits for the form with no timeout.
 
 The desktop bundle is `mcp/server.bundle.mjs` (`mcp/stdio-main.ts`). HTTP is `mcp/server-http.bundle.mjs` (`mcp/http-server.ts`). `node mcp/launch.mjs` picks from `THESHOW_TRANSPORT`. Importing `mcp/server.ts` does not listen and does not start stdio.
 

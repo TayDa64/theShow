@@ -5,15 +5,18 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadCharacter, saveCharacter } from "../mcp/characters.ts";
 import { resolveVideoCredential } from "../mcp/grok-auth.ts";
 import {
   bearerMatches,
   jobShouldStop,
+  memoHttpRender,
+  pidAlive,
   processToken,
   runRequest,
   toolAuth,
+  withoutHttpRenderMemo,
 } from "../mcp/runtime.ts";
 import { server } from "../mcp/server.ts";
 
@@ -58,6 +61,28 @@ describe("job lease", () => {
 
   it("reaps a legacy running job that has no owner", () => {
     expect(jobShouldStop(undefined)).toBe(true);
+  });
+
+  it("reaps a heartbeat dated far in the future", () => {
+    expect(jobShouldStop({
+      pid: process.pid,
+      token: "someone-else",
+      host: hostname(),
+      heartbeatAt: Date.now() + 60 * 60 * 1000,
+    })).toBe(true);
+  });
+
+  it("treats EPERM from kill as a live process", () => {
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    });
+    try {
+      expect(pidAlive(424242)).toBe(true);
+    } finally {
+      kill.mockRestore();
+    }
   });
 });
 
@@ -104,6 +129,27 @@ describe("HTTP credential boundary", () => {
     expect(bearerMatches("Bearer short", "a-much-longer-token")).toBe(false);
     expect(bearerMatches("Bearer exact-token", "exact-token")).toBe(true);
     expect(bearerMatches(undefined, "exact-token")).toBe(false);
+  });
+});
+
+describe("HTTP render memo", () => {
+  it("reports a reused result at zero cost and skips the memo when asked", async () => {
+    let calls = 0;
+    const run = async () => {
+      calls += 1;
+      return { costUsd: 1.25, status: "completed" as const };
+    };
+    await runRequest({ kind: "http", sseConnected: false }, server, async () => {
+      const first = await memoHttpRender("clip", { prompt: "same" }, run, () => true);
+      const second = await memoHttpRender("clip", { prompt: "same" }, run, () => true) as { costUsd?: number; reused?: boolean };
+      expect(first.costUsd).toBe(1.25);
+      expect(second.costUsd).toBe(0);
+      expect(second.reused).toBe(true);
+      expect(calls).toBe(1);
+      const again = await withoutHttpRenderMemo(() => memoHttpRender("clip", { prompt: "same" }, run, () => true));
+      expect(again.costUsd).toBe(1.25);
+      expect(calls).toBe(2);
+    });
   });
 });
 
