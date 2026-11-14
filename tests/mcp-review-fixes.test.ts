@@ -168,6 +168,7 @@ describe("character lock", () => {
     } finally {
       releaseHold();
       now.mockRestore();
+      vi.useRealTimers();
       if (previous === undefined) delete process.env.THESHOW_CHARACTERS_DIR;
       else process.env.THESHOW_CHARACTERS_DIR = previous;
       if (previousRefresh === undefined) delete process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS;
@@ -231,9 +232,13 @@ describe("film claim", () => {
     const claim = path.join(JOBS_DIR, `${id}.claim`);
     await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
     await writeFile(claim, "");
+    // Stamp the file from the same clock claimFilm reads. A bare write can look
+    // old when Date.now is ahead of the filesystem clock.
+    const freshStamp = new Date(Date.now() + 5_000);
+    await utimes(claim, freshStamp, freshStamp);
     const fresh = await claimFilm(id);
     expect(fresh.ok).toBe(false);
-    const past = new Date(Date.now() - 2_000);
+    const past = new Date(Date.now() - 3_000);
     await utimes(claim, past, past);
     const recovered = await claimFilm(id);
     expect(recovered.ok).toBe(true);
