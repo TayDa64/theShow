@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -19405,9 +19404,9 @@ var asciiTabOrNewline = /[\t\n\r]/g;
 function stripTabAndNewline(value) {
   return value.replace(asciiTabOrNewline, "");
 }
-function urlHostnameOk(url2, hostname3) {
-  hostname3.lastIndex = 0;
-  return hostname3.test(url2.hostname);
+function urlHostnameOk(url2, hostname4) {
+  hostname4.lastIndex = 0;
+  return hostname4.test(url2.hostname);
 }
 function urlProtocolOk(url2, protocol) {
   protocol.lastIndex = 0;
@@ -21802,9 +21801,9 @@ var memo = {
     if (!bucket)
       return empty;
     handoff = void 0;
-    const entry2 = { value: empty, issues: null };
-    bucket.set(payload.value, entry2);
-    open.push(entry2);
+    const entry = { value: empty, issues: null };
+    bucket.set(payload.value, entry);
+    open.push(entry);
     return empty;
   },
   guard(inst) {
@@ -21878,16 +21877,16 @@ var memo = {
         const depth = open.length;
         const result = base(payload, ctx);
         handoff = void 0;
-        const entry2 = open.length > depth ? open.pop() : void 0;
+        const entry = open.length > depth ? open.pop() : void 0;
         if (result instanceof Promise) {
           return result.then((r) => {
-            if (entry2)
-              entry2.issues = r.issues.length ? cloneIssues(r.issues) : NO_ISSUES;
+            if (entry)
+              entry.issues = r.issues.length ? cloneIssues(r.issues) : NO_ISSUES;
             return r;
           });
         }
-        if (entry2)
-          entry2.issues = result.issues.length ? cloneIssues(result.issues) : NO_ISSUES;
+        if (entry)
+          entry.issues = result.issues.length ? cloneIssues(result.issues) : NO_ISSUES;
         return result;
       };
       inst._zod.parse = wrapped;
@@ -32301,42 +32300,42 @@ function extractDefs(ctx, schema) {
   if (ctx.external && ctx.sharedDefsExtractedFor === ctx.external)
     return;
   const idToSchema = /* @__PURE__ */ new Map();
-  for (const entry2 of ctx.seen.entries()) {
-    const id = ctx.metadataRegistry.get(entry2[0])?.id;
+  for (const entry of ctx.seen.entries()) {
+    const id = ctx.metadataRegistry.get(entry[0])?.id;
     if (id) {
       const existing = idToSchema.get(id);
-      if (existing && existing !== entry2[0]) {
+      if (existing && existing !== entry[0]) {
         throw new Error(`Duplicate schema id "${id}" detected during JSON Schema conversion. Two different schemas cannot share the same id when converted together.`);
       }
-      idToSchema.set(id, entry2[0]);
+      idToSchema.set(id, entry[0]);
     }
   }
-  const makeURI = (entry2) => {
+  const makeURI = (entry) => {
     const defsSegment = ctx.target === "draft-2020-12" ? "$defs" : "definitions";
     if (ctx.external) {
-      const externalId = ctx.external.registry.get(entry2[0])?.id;
+      const externalId = ctx.external.registry.get(entry[0])?.id;
       const uriGenerator = ctx.external.uri ?? ((id2) => id2);
       if (externalId) {
         return { ref: uriGenerator(externalId) };
       }
-      const id = entry2[1].defId ?? entry2[1].schema.id ?? `schema${ctx.counter++}`;
-      entry2[1].defId = id;
+      const id = entry[1].defId ?? entry[1].schema.id ?? `schema${ctx.counter++}`;
+      entry[1].defId = id;
       return { defId: id, ref: `${uriGenerator("__shared")}#/${defsSegment}/${encodeJSONPointerSegment(id)}` };
     }
     const uriPrefix = `#`;
     const defUriPrefix = `${uriPrefix}/${defsSegment}/`;
-    if (entry2[1] === root && !entry2[1].schema.id) {
+    if (entry[1] === root && !entry[1].schema.id) {
       return { ref: uriPrefix };
     }
-    const defId = entry2[1].schema.id ?? `__schema${ctx.counter++}`;
+    const defId = entry[1].schema.id ?? `__schema${ctx.counter++}`;
     return { defId, ref: defUriPrefix + encodeJSONPointerSegment(defId) };
   };
-  const extractToDef = (entry2) => {
-    if (entry2[1].schema.$ref) {
+  const extractToDef = (entry) => {
+    if (entry[1].schema.$ref) {
       return;
     }
-    const seen = entry2[1];
-    const { ref, defId } = makeURI(entry2);
+    const seen = entry[1];
+    const { ref, defId } = makeURI(entry);
     seen.def = { ...seen.schema };
     if (defId)
       seen.defId = defId;
@@ -32347,8 +32346,8 @@ function extractDefs(ctx, schema) {
     schema2.$ref = ref;
   };
   if (ctx.cycles === "throw") {
-    for (const entry2 of ctx.seen.entries()) {
-      const seen = entry2[1];
+    for (const entry of ctx.seen.entries()) {
+      const seen = entry[1];
       if (seen.cycle) {
         throw new Error(`Cycle detected: #/${seen.cycle?.join("/")}/<root>
 
@@ -32356,31 +32355,31 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
     }
   }
-  for (const entry2 of ctx.seen.entries()) {
-    const seen = entry2[1];
-    if (schema === entry2[0]) {
-      extractToDef(entry2);
+  for (const entry of ctx.seen.entries()) {
+    const seen = entry[1];
+    if (schema === entry[0]) {
+      extractToDef(entry);
       continue;
     }
     if (ctx.external) {
-      const ext = ctx.external.registry.get(entry2[0])?.id;
-      if (schema !== entry2[0] && ext) {
-        extractToDef(entry2);
+      const ext = ctx.external.registry.get(entry[0])?.id;
+      if (schema !== entry[0] && ext) {
+        extractToDef(entry);
         continue;
       }
     }
-    const id = ctx.metadataRegistry.get(entry2[0])?.id;
+    const id = ctx.metadataRegistry.get(entry[0])?.id;
     if (id) {
-      extractToDef(entry2);
+      extractToDef(entry);
       continue;
     }
     if (seen.cycle) {
-      extractToDef(entry2);
+      extractToDef(entry);
       continue;
     }
     if (seen.count > 1) {
       if (ctx.reused === "ref") {
-        extractToDef(entry2);
+        extractToDef(entry);
       }
     }
   }
@@ -32562,12 +32561,12 @@ function finalize(ctx, schema) {
     });
   };
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
-    for (const entry2 of [...ctx.seen.entries()].reverse()) {
-      flattenRef(entry2[0]);
+    for (const entry of [...ctx.seen.entries()].reverse()) {
+      flattenRef(entry[0]);
     }
     if (ctx.target !== "openapi-3.0") {
-      for (const entry2 of ctx.seen.entries()) {
-        compactTypeUnion(entry2[1].def ?? entry2[1].schema);
+      for (const entry of ctx.seen.entries()) {
+        compactTypeUnion(entry[1].def ?? entry[1].schema);
       }
     }
     for (const rewrite of ctx.deferred)
@@ -32614,8 +32613,8 @@ function finalize(ctx, schema) {
     delete result.id;
   const defs = ctx.external?.defs ?? {};
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
-    for (const entry2 of ctx.seen.entries()) {
-      const seen = entry2[1];
+    for (const entry of ctx.seen.entries()) {
+      const seen = entry[1];
       if (seen.def && seen.defId) {
         if (seen.def.id === seen.defId)
           delete seen.def.id;
@@ -33227,9 +33226,9 @@ function stringifyKeyNames(bySchema, json2, visited) {
 var pendingRecords = /* @__PURE__ */ new WeakMap();
 function rewriteKeyNames(ctx) {
   const bySchema = /* @__PURE__ */ new Map();
-  for (const entry2 of ctx.seen.values()) {
-    if (entry2.def && !bySchema.has(entry2.schema))
-      bySchema.set(entry2.schema, entry2);
+  for (const entry of ctx.seen.values()) {
+    if (entry.def && !bySchema.has(entry.schema))
+      bySchema.set(entry.schema, entry);
   }
   const rewrites = /* @__PURE__ */ new Map();
   for (const record2 of pendingRecords.get(ctx) ?? []) {
@@ -33243,8 +33242,8 @@ function rewriteKeyNames(ctx) {
   }
   if (!rewrites.size)
     return;
-  for (const entry2 of ctx.seen.values()) {
-    for (const carrier of [entry2.schema, entry2.def]) {
+  for (const entry of ctx.seen.values()) {
+    for (const carrier of [entry.schema, entry.def]) {
       const rewritten = carrier && rewrites.get(carrier.propertyNames);
       if (rewritten)
         carrier.propertyNames = rewritten;
@@ -33438,8 +33437,8 @@ function toJSONSchema(input2, params) {
     const registry2 = input2;
     const ctx2 = initializeContext({ ...params, processors: allProcessors });
     const defs = {};
-    for (const entry2 of registry2._idmap.entries()) {
-      const [_, schema] = entry2;
+    for (const entry of registry2._idmap.entries()) {
+      const [_, schema] = entry;
       processSchema(schema, ctx2);
     }
     const schemas = {};
@@ -33449,8 +33448,8 @@ function toJSONSchema(input2, params) {
       defs
     };
     ctx2.external = external;
-    for (const entry2 of registry2._idmap.entries()) {
-      const [key, schema] = entry2;
+    for (const entry of registry2._idmap.entries()) {
+      const [key, schema] = entry;
       extractDefs(ctx2, schema);
       assignProp(schemas, key, finalize(ctx2, schema));
     }
@@ -39554,13 +39553,13 @@ var zodToJsonSchema = (schema, options) => {
     }, true) ?? parseAnyDef(refs)
   }), {}) : void 0;
   const name = typeof options === "string" ? options : options?.nameStrategy === "title" ? void 0 : options?.name;
-  const main2 = parseDef(schema._def, name === void 0 ? refs : {
+  const main = parseDef(schema._def, name === void 0 ? refs : {
     ...refs,
     currentPath: [...refs.basePath, refs.definitionPath, name]
   }, false) ?? parseAnyDef(refs);
   const title = typeof options === "object" && options.name !== void 0 && options.nameStrategy === "title" ? options.name : void 0;
   if (title !== void 0) {
-    main2.title = title;
+    main.title = title;
   }
   if (refs.flags.hasReferencedOpenAiAnyType) {
     if (!definitions) {
@@ -39581,9 +39580,9 @@ var zodToJsonSchema = (schema, options) => {
     }
   }
   const combined = name === void 0 ? definitions ? {
-    ...main2,
+    ...main,
     [refs.definitionPath]: definitions
-  } : main2 : {
+  } : main : {
     $ref: [
       ...refs.$refStrategy === "relative" ? [] : refs.basePath,
       refs.definitionPath,
@@ -39591,7 +39590,7 @@ var zodToJsonSchema = (schema, options) => {
     ].join("/"),
     [refs.definitionPath]: {
       ...definitions,
-      [name]: main2
+      [name]: main
     }
   };
   if (refs.target === "jsonSchema7") {
@@ -42946,7 +42945,223 @@ async function featheredSubjectCutout(sourcePath) {
 import { randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { dirname as dirname3, join as join3 } from "node:path";
+
+// mcp/runtime.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash as createHash2, randomUUID, timingSafeEqual } from "node:crypto";
+import { link, mkdir as mkdir2, open as open2, readFile as readFile3, rename, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { hostname as hostname3 } from "node:os";
+import { dirname as dirname2 } from "node:path";
+var processToken = randomUUID();
+var processHost = hostname3();
+var scopeStore = new AsyncLocalStorage();
+var serverStore = new AsyncLocalStorage();
+var renderBypass = new AsyncLocalStorage();
+var pendingWrites = /* @__PURE__ */ new Set();
+var renderInflight = /* @__PURE__ */ new Map();
+var renderDone = /* @__PURE__ */ new Map();
+var RENDER_MEMORY_MS = 10 * 60 * 1e3;
+var RENDER_MEMORY_MAX = 64;
+function leaseMs() {
+  const raw = Number(process.env.THESHOW_JOB_LEASE_MS ?? 3e4);
+  return Number.isFinite(raw) && raw >= 1e3 ? raw : 3e4;
+}
+function heartbeatMs() {
+  const raw = Number(process.env.THESHOW_JOB_HEARTBEAT_MS ?? 1e4);
+  return Number.isFinite(raw) && raw >= 200 ? raw : 1e4;
+}
+function elicitTimeoutMs() {
+  const raw = Number(process.env.THESHOW_ELICIT_TIMEOUT_MS ?? 1e4);
+  return Number.isFinite(raw) && raw >= 200 ? raw : 1e4;
+}
+function thisOwner(now = Date.now()) {
+  return { pid: process.pid, token: processToken, host: processHost, heartbeatAt: now };
+}
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function jobShouldStop(owner, now = Date.now()) {
+  if (!owner) return true;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  const lease = leaseMs();
+  const futureSlack = owner.host === processHost ? 5e3 : 6e4;
+  if (owner.heartbeatAt > now + futureSlack) return true;
+  const beat = Math.min(owner.heartbeatAt, now);
+  if (now - beat > lease) return true;
+  if (owner.host === processHost && !pidAlive(owner.pid)) return true;
+  return false;
+}
+function requestScope() {
+  return scopeStore.getStore();
+}
+function currentMcpServer(fallback) {
+  return serverStore.getStore() ?? fallback;
+}
+function transportKind() {
+  return scopeStore.getStore()?.kind ?? "stdio";
+}
+function toolAuth(source) {
+  if (source === void 0) return void 0;
+  if (transportKind() === "http") return void 0;
+  return source;
+}
+function httpAllowsGrokSession() {
+  const flag = process.env.THESHOW_HTTP_ALLOW_GROK_SESSION?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+async function atomicWriteFile(path, data) {
+  await mkdir2(dirname2(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile2(tmp, data, "utf8");
+  await rename(tmp, path);
+}
+var LINK_UNSUPPORTED = /* @__PURE__ */ new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS", "EINVAL"]);
+function linkUnsupported(err) {
+  const code = err.code;
+  return typeof code === "string" && LINK_UNSUPPORTED.has(code);
+}
+var exclusiveFs = {
+  link: (existing, hardLink) => link(existing, hardLink)
+};
+async function publishExclusive(dest, body) {
+  await mkdir2(dirname2(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile2(tmp, body, "utf8");
+  try {
+    try {
+      await exclusiveFs.link(tmp, dest);
+      return true;
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      if (!linkUnsupported(err)) throw err;
+    }
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      throw err;
+    }
+    try {
+      await handle.writeFile(body, "utf8");
+      await handle.sync();
+      return true;
+    } catch (err) {
+      await unlink(dest).catch(() => void 0);
+      throw err;
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await unlink(tmp).catch(() => void 0);
+  }
+}
+async function restoreIfAbsent(source, dest) {
+  try {
+    await exclusiveFs.link(source, dest);
+  } catch (err) {
+    if (err.code === "EEXIST") return "occupied";
+    if (!linkUnsupported(err)) throw err;
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (openErr) {
+      if (openErr.code === "EEXIST") return "occupied";
+      throw openErr;
+    }
+    try {
+      await handle.writeFile(await readFile3(source));
+      await handle.sync();
+    } catch (writeErr) {
+      await unlink(dest).catch(() => void 0);
+      throw writeErr;
+    } finally {
+      await handle.close();
+    }
+  }
+  await unlink(source).catch(() => void 0);
+  return "restored";
+}
+function trackWrite(work) {
+  pendingWrites.add(work);
+  void work.finally(() => pendingWrites.delete(work));
+}
+async function flushJobWrites() {
+  await Promise.all([...pendingWrites]);
+}
+function startJobHeartbeat(beat) {
+  const timer = setInterval(beat, heartbeatMs());
+  timer.unref();
+  return () => clearInterval(timer);
+}
+function installShutdown(drain) {
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void drain().finally(() => process.exit(0));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+function renderKey(kind, material) {
+  return `${kind}:${createHash2("sha256").update(JSON.stringify(material)).digest("hex")}`;
+}
+function rememberRender(key, value) {
+  renderDone.delete(key);
+  renderDone.set(key, { at: Date.now(), value });
+  while (renderDone.size > RENDER_MEMORY_MAX) {
+    const oldest = renderDone.keys().next().value;
+    if (oldest === void 0) break;
+    renderDone.delete(oldest);
+  }
+}
+function cachedRender(key) {
+  const done = renderDone.get(key);
+  if (!done) return void 0;
+  if (Date.now() - done.at >= RENDER_MEMORY_MS) {
+    renderDone.delete(key);
+    return void 0;
+  }
+  renderDone.delete(key);
+  renderDone.set(key, done);
+  if (!done.value || typeof done.value !== "object") return done.value;
+  return { ...done.value, costUsd: 0, reused: true };
+}
+function withoutHttpRenderMemo(fn) {
+  return renderBypass.run(true, fn);
+}
+function memoHttpRender(kind, material, run, succeeded) {
+  if (transportKind() !== "http" || renderBypass.getStore()) return run();
+  const key = renderKey(kind, material);
+  const cached2 = cachedRender(key);
+  if (cached2 !== void 0) return Promise.resolve(cached2);
+  const pending = renderInflight.get(key);
+  if (pending) {
+    return pending.then((value) => {
+      if (!value || typeof value !== "object") return value;
+      return { ...value, costUsd: 0, reused: true };
+    });
+  }
+  const promise2 = renderBypass.run(true, run).then((value) => {
+    if (succeeded(value)) rememberRender(key, value);
+    return value;
+  }).finally(() => {
+    renderInflight.delete(key);
+  });
+  renderInflight.set(key, promise2);
+  return promise2;
+}
+
+// mcp/grok-auth.ts
 var API_BASE_URL = "https://api.x.ai";
 var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
 var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
@@ -42957,7 +43172,7 @@ function grokSessionRefreshEnabled() {
 }
 var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
 function writeSessionFileAtomic(path, contents) {
-  const tmp = join3(dirname2(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  const tmp = join3(dirname3(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
   try {
     writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
     chmodSync(tmp, 384);
@@ -43000,13 +43215,13 @@ function readGrokAuthFile() {
     return Boolean(value) && typeof value === "object" && typeof value.key === "string" && value.key.length > 0;
   });
   if (withToken.length === 0) return void 0;
-  const expiryMs = (entry3) => {
-    const parsedExpiry = typeof entry3.expires_at === "string" ? Date.parse(entry3.expires_at) : NaN;
+  const expiryMs = (entry2) => {
+    const parsedExpiry = typeof entry2.expires_at === "string" ? Date.parse(entry2.expires_at) : NaN;
     return Number.isNaN(parsedExpiry) ? 0 : parsedExpiry;
   };
   withToken.sort((a, b) => expiryMs(b[1]) - expiryMs(a[1]));
-  const [keyName, entry2] = withToken[0];
-  return { keyName, entry: entry2 };
+  const [keyName, entry] = withToken[0];
+  return { keyName, entry };
 }
 function oauthTokenUrl(authKeyName) {
   const override = process.env.GROK_OAUTH_TOKEN_URL;
@@ -43062,16 +43277,23 @@ function resolveVideoCredential() {
       }
     };
   }
+  if (transportKind() === "http" && !httpAllowsGrokSession()) {
+    return {
+      ok: false,
+      code: "missing",
+      reason: "HTTP mode bills XAI_API_KEY (xAI API credits), not the Grok subscription. Set XAI_API_KEY, or set THESHOW_HTTP_ALLOW_GROK_SESSION=1 to use ~/.grok/auth.json. That opt-in spends the subscription of whoever owns the auth file on this machine."
+    };
+  }
   const stored = readGrokAuthFile();
-  const entry2 = stored?.entry;
-  if (!entry2 || typeof entry2.key !== "string") {
+  const entry = stored?.entry;
+  if (!entry || typeof entry.key !== "string") {
     return {
       ok: false,
       code: "missing",
       reason: "No credential found. Set XAI_API_KEY, or sign in with the Grok CLI (`grok login --device-code`) so ~/.grok/auth.json exists."
     };
   }
-  const expiresAt = typeof entry2.expires_at === "string" ? entry2.expires_at : void 0;
+  const expiresAt = typeof entry.expires_at === "string" ? entry.expires_at : void 0;
   if (expiresAt) {
     const expiryMs = Date.parse(expiresAt);
     if (!Number.isNaN(expiryMs) && expiryMs <= Date.now()) {
@@ -43082,13 +43304,13 @@ function resolveVideoCredential() {
       };
     }
   }
-  const who = typeof entry2.email === "string" ? ` as ${entry2.email}` : "";
+  const who = typeof entry.email === "string" ? ` as ${entry.email}` : "";
   return {
     ok: true,
     credential: {
       kind: "session",
       baseUrl: PROXY_BASE_URL,
-      token: entry2.key,
+      token: entry.key,
       source: `Grok CLI session${who}`,
       expiresAt
     }
@@ -43270,7 +43492,7 @@ function hangerSentence(slots, layers) {
   return `Hangers from the door side: ${labels.join(", ")}.`;
 }
 function floorSentence(floorAt) {
-  const text = floorAt?.map((entry2) => entry2.text.trim()).filter(Boolean).join("; ");
+  const text = floorAt?.map((entry) => entry.text.trim()).filter(Boolean).join("; ");
   if (!text) return void 0;
   return `Floor: ${ensurePeriod(text)}`;
 }
@@ -43346,9 +43568,9 @@ function renderSectionsV2(beat, ctx) {
 // mcp/grokVideo.ts
 import { execFile as execFile3 } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir as mkdir2, readFile as readFile3, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile4, rm as rm2, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname as dirname3, join as join4, resolve, sep } from "node:path";
+import { basename, dirname as dirname4, join as join4, resolve, sep } from "node:path";
 import { promisify as promisify3 } from "node:util";
 var exec3 = promisify3(execFile3);
 var USD_TICKS_PER_DOLLAR = 1e10;
@@ -43405,7 +43627,7 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
       String(attempt.quality),
       target
     ], { maxBuffer: 16 * 1024 * 1024 });
-    const shrunk = await readFile3(target);
+    const shrunk = await readFile4(target);
     await rm2(target, { force: true });
     lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
     if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
@@ -43439,7 +43661,7 @@ function localImageRefAllowed(ref, roots) {
       real = missing.reduceRight((path, part) => join4(path, part), realpathSync(current));
       break;
     } catch {
-      const parent = dirname3(current);
+      const parent = dirname4(current);
       if (parent === current) break;
       missing.push(basename(current));
       current = parent;
@@ -43453,7 +43675,7 @@ async function toApiImageRef(ref, opts = {}) {
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
   const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-  const buffer = await readFile3(path);
+  const buffer = await readFile4(path);
   if (buffer.byteLength > budget) {
     return shrinkLocalImage(path, budget);
   }
@@ -43494,6 +43716,17 @@ function rejectedPrompt(prompt, negative) {
   return { error: lint.reason, code: "prompt-rejected" };
 }
 async function generateGrokClip(job, opts) {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "clip",
+      { job, opts },
+      () => generateGrokClipNow(job, opts),
+      (result) => result.status === "completed" || Boolean(result.videoUrl)
+    );
+  }
+  return generateGrokClipNow(job, opts);
+}
+async function generateGrokClipNow(job, opts) {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
   const resolved = resolveVideoCredential();
@@ -43557,7 +43790,7 @@ async function generateGrokClip(job, opts) {
       error: "Submit failed",
       code: "submit-failed",
       detail: transportError instanceof Error ? transportError.message : String(transportError ?? "unknown transport error"),
-      auth: credential.source
+      auth: toolAuth(credential.source)
     };
   }
   if (!submitRes.ok) {
@@ -43567,20 +43800,20 @@ async function generateGrokClip(job, opts) {
       error: `Grok Imagine Video answered ${submitRes.status}`,
       code: rejected ? "rejected" : "submit-failed",
       detail: describeHttpFailure(submitRes.status, text),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
       hint: rejected ? "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json." : submitRes.status >= 500 ? "The render proxy was unavailable. Retry the shot in a few seconds." : void 0
     };
   }
   const submitted = await submitRes.json();
   const requestId = submitted.request_id;
   if (!requestId) {
-    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: credential.source };
+    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: toolAuth(credential.source) };
   }
   const base = {
     requestId,
     baseUrl: credential.baseUrl,
     statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
     billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
   };
   if (!opts.waitForCompletion) {
@@ -43642,6 +43875,17 @@ async function inlineReferenceSet(urls) {
   return Promise.all(urls.map((url2) => toApiImageRef(url2, { budgetBytes: perImage })));
 }
 async function generateGrokStill(job, opts) {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "still",
+      { job, opts },
+      () => generateGrokStillNow(job, opts),
+      (result) => Boolean(result.localPath)
+    );
+  }
+  return generateGrokStillNow(job, opts);
+}
+async function generateGrokStillNow(job, opts) {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
   const resolved = resolveVideoCredential();
@@ -43694,7 +43938,7 @@ async function generateGrokStill(job, opts) {
         error: "Image request failed",
         code: "submit-failed",
         detail: err instanceof Error ? err.message : String(err),
-        auth: credential.source
+        auth: toolAuth(credential.source)
       };
     }
     if (response.ok) {
@@ -43705,7 +43949,7 @@ async function generateGrokStill(job, opts) {
           error: "The image route returned no image URL",
           code: "failed",
           raw: payload,
-          auth: credential.source
+          auth: toolAuth(credential.source)
         };
       }
       const localPath = await downloadGrokStill(
@@ -43719,7 +43963,7 @@ async function generateGrokStill(job, opts) {
         return {
           error: `Still failed the checklist: ${accepted.failures.join("; ")}. The prompt that was sent: ${job.prompt}. The file was discarded and will not be used as a pin. No vision model ran.`,
           code: "rejected",
-          auth: credential.source,
+          auth: toolAuth(credential.source),
           costUsd: costUsdFromUsage(payload.usage)
         };
       }
@@ -43732,7 +43976,7 @@ async function generateGrokStill(job, opts) {
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
         route,
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
       };
     }
@@ -43743,7 +43987,7 @@ async function generateGrokStill(job, opts) {
         error: `Image generation was rejected (HTTP ${response.status})`,
         code: "rejected",
         detail: describeHttpFailure(response.status, text),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         hint: "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json."
       };
     }
@@ -43753,11 +43997,11 @@ async function generateGrokStill(job, opts) {
     error: lastFailure ? `Image generation answered ${lastFailure.status}` : "Image generation failed",
     code: "submit-failed",
     detail: lastFailure ? describeHttpFailure(lastFailure.status, lastFailure.text) : void 0,
-    auth: credential.source
+    auth: toolAuth(credential.source)
   };
 }
 async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
-  await mkdir2(outputDir, { recursive: true });
+  await mkdir3(outputDir, { recursive: true });
   const ext = mimeType?.includes("jpeg") || mimeType?.includes("jpg") ? "jpg" : mimeType?.includes("webp") ? "webp" : "png";
   const digest = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const named = filename && !/\.[a-z0-9]{2,5}$/i.test(filename) ? `${filename}.${ext}` : filename;
@@ -43765,19 +44009,19 @@ async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
   if (imageUrl.startsWith("data:")) {
     const comma = imageUrl.indexOf(",");
     if (comma === -1) throw new Error("Malformed data URI for generated still.");
-    await writeFile2(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
+    await writeFile3(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
     return destination;
   }
   const response = await fetch(imageUrl, { redirect: "follow" });
   if (!response.ok) throw new Error(`Still download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.byteLength === 0) throw new Error("Still download returned no data.");
-  await writeFile2(destination, bytes);
+  await writeFile3(destination, bytes);
   return destination;
 }
 
 // mcp/storyboard.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 
 // mcp/cast.ts
 var GARMENT = /\b(shirts?|blazers?|jackets?|coats?|suits?|ties?|necktie|bowtie|dress(?:es)?|gowns?|sweaters?|jumpers?|hoodies?|vests?|waistcoats?|trousers?|pants|jeans|shorts|skirts?|kilts?|robes?|capes?|cloaks?|parkas?|trench|sherpa|fleece|pullovers?|cardigans?|polos?|t-?shirts?|button-?downs?|henleys?|uniforms?|aprons?|overalls?|dungarees?|leggings?|tights|socks?|stockings?|shoes?|boots?|trainers|sneakers|loafers?|sandals?|heels|hats?|caps?|beanies?|berets?|helmets?|scar(?:f|ves)|gloves?|mittens?|belts?|suspenders?|braces|watches?|wristwatch|necklaces?|earrings?|bracelets?|rings?|glasses|spectacles|sunglasses|goggles|lapels?|cuffs?|collars?|sleeves?|hem|pockets?|buttons?|zippers?|pinstripes?|plaid|tartan|houndstooth|tweed|denim|corduroy|linen|silk|satin|leather|wool|cashmere|velvet|khaki|chinos|attire|outfit|wardrobe|clothing|clothes|dressed|wearing|dress shirt)\b/i;
@@ -43851,7 +44095,7 @@ function planBoardFrames(opts) {
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
-    const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
+    const stem = `board-${createHash3("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
     return {
       index,
       prompt: full,
@@ -43916,7 +44160,7 @@ async function boardFilm(input2, deps) {
     };
   }
   const heroRefsForStem = deps.baseImageUrl ? deps.referenceImageUrls ?? [] : [];
-  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash2("sha1").update(
+  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash3("sha1").update(
     `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}|${input2.look ?? ""}|${input2.scene ?? ""}`
   ).digest("hex").slice(0, 16)}` : void 0;
   const planned = planBoardFrames({
@@ -43934,7 +44178,7 @@ async function boardFilm(input2, deps) {
       path: await findExistingStill(deps.outputDir, frame.stem)
     }))
   );
-  const missing = existing.filter((entry2) => !entry2.path);
+  const missing = existing.filter((entry) => !entry.path);
   const heroStills = deps.baseImageUrl && (deps.referenceImageUrls ?? []).length > 0 ? 1 : 0;
   const billable = missing.length + heroStills;
   const estimatedUsd = Math.round(billable * STILL_USD * 100) / 100;
@@ -43955,11 +44199,11 @@ async function boardFilm(input2, deps) {
       willSpend: false,
       aspectRatio,
       shots: [],
-      frames: existing.map((entry2) => ({
-        index: entry2.frame.index,
-        prompt: entry2.frame.prompt,
-        path: entry2.path,
-        reused: Boolean(entry2.path)
+      frames: existing.map((entry) => ({
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        path: entry.path,
+        reused: Boolean(entry.path)
       })),
       estimate: baseEstimate,
       maxCostUsd: input2.maxCostUsd,
@@ -43989,45 +44233,45 @@ async function boardFilm(input2, deps) {
       spentUsd += heroResult.costUsd ?? STILL_USD;
     }
   }
-  for (const entry2 of existing) {
-    if (entry2.path) {
-      paths.set(entry2.frame.index, entry2.path);
+  for (const entry of existing) {
+    if (entry.path) {
+      paths.set(entry.frame.index, entry.path);
       frames.push({
-        index: entry2.frame.index,
-        prompt: entry2.frame.prompt,
-        path: entry2.path,
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
+        path: entry.path,
         reused: true
       });
       continue;
     }
-    const previousFrame = entry2.frame.index > 0 ? paths.get(entry2.frame.index - 1) : void 0;
+    const previousFrame = entry.frame.index > 0 ? paths.get(entry.frame.index - 1) : void 0;
     const refs = [
       ...boardBase ? [] : deps.referenceImageUrls ?? [],
       ...boardBase ? [] : previousFrame ? [previousFrame] : []
     ];
     let result = await deps.generateStill(
       {
-        prompt: entry2.frame.prompt,
+        prompt: entry.frame.prompt,
         aspectRatio,
         baseImageUrl: boardBase,
         referenceImageUrls: refs.length > 0 ? refs : void 0
       },
-      { outputDir: deps.outputDir, filename: entry2.frame.stem }
+      { outputDir: deps.outputDir, filename: entry.frame.stem }
     );
     if (result.localPath) {
-      paths.set(entry2.frame.index, result.localPath);
+      paths.set(entry.frame.index, result.localPath);
       spentUsd += result.costUsd ?? STILL_USD;
       frames.push({
-        index: entry2.frame.index,
-        prompt: entry2.frame.prompt,
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
         path: result.localPath,
         reused: false,
         costUsd: result.costUsd
       });
     } else {
       frames.push({
-        index: entry2.frame.index,
-        prompt: entry2.frame.prompt,
+        index: entry.frame.index,
+        prompt: entry.frame.prompt,
         reused: false,
         error: result.error ?? "no image returned"
       });
@@ -44088,9 +44332,9 @@ function toRenderShots(board) {
 }
 
 // mcp/characters.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile4, readdir, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir, rename as rename2, stat as stat3, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { basename as basename2, join as join6, sep as sep2 } from "node:path";
 
@@ -44118,7 +44362,7 @@ function defaultWorn(wardrobe) {
   return wardrobe.layers.map((layer) => layer.id);
 }
 function findStateImage(wardrobe, worn) {
-  return (wardrobe.stateImages ?? []).find((entry2) => sameWorn(entry2.worn, worn));
+  return (wardrobe.stateImages ?? []).find((entry) => sameWorn(entry.worn, worn));
 }
 function resolveProp(props, dest, locationId) {
   const key = dest.trim().toLowerCase();
@@ -44149,9 +44393,9 @@ function startCharacters(characters) {
 function pickCharacter(runtimes, event) {
   if (event.character?.trim()) {
     const key = event.character.trim().toLowerCase();
-    return runtimes.find((entry2) => entry2.name.trim().toLowerCase() === key);
+    return runtimes.find((entry) => entry.name.trim().toLowerCase() === key);
   }
-  const withLayers = runtimes.filter((entry2) => (entry2.wardrobe?.layers.length ?? 0) > 0);
+  const withLayers = runtimes.filter((entry) => (entry.wardrobe?.layers.length ?? 0) > 0);
   if (withLayers.length === 1) return withLayers[0];
   if (runtimes.length === 1) return runtimes[0];
   return void 0;
@@ -44272,7 +44516,7 @@ function checklistFor(runtime, props, warnings) {
   const worn = sortLayers(wardrobe.layers.filter((layer) => runtime.worn.has(layer.id)));
   const outermost = sortLayers(worn.filter((layer) => layerType(layer) === "clothing")).at(-1);
   const staged = props.filter((prop) => wardrobe.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
-    const layer = wardrobe.layers.find((entry2) => stagedPropId(runtime.name, entry2.id) === prop.id);
+    const layer = wardrobe.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
     return {
       layerId: layer?.id ?? prop.id,
       item: prop.name,
@@ -44315,7 +44559,7 @@ function checklistFor(runtime, props, warnings) {
 }
 function locationName(locations, locationId) {
   if (!locationId) return void 0;
-  return locations?.find((entry2) => entry2.id === locationId)?.name ?? locationId;
+  return locations?.find((entry) => entry.id === locationId)?.name ?? locationId;
 }
 function describeWorn(checklist) {
   if (checklist.worn.length === 0) {
@@ -44344,7 +44588,7 @@ function setDressingLine(props, locationId, locations) {
   if (inView.length === 0) return "";
   const room = locationName(locations, locationId) ?? locationId;
   const items = inView.map((prop) => {
-    const holderProp = prop.holder ? props.find((entry2) => entry2.id === prop.holder) : void 0;
+    const holderProp = prop.holder ? props.find((entry) => entry.id === prop.holder) : void 0;
     const alreadyNamesHolder = holderProp ? prop.placement.toLowerCase().includes(holderProp.name.toLowerCase()) : false;
     const heldBy = holderProp && !alreadyNamesHolder ? `, on the ${holderProp.name}` : !holderProp && prop.holder ? `, held by ${prop.holder}` : "";
     return `${prop.name}${prop.placement ? `, ${prop.placement}` : ""}${heldBy}`;
@@ -44405,7 +44649,7 @@ function replayContinuity(plan) {
     const propEvents = (plan.propEvents ?? []).filter((event) => event.shot === index);
     for (const event of propEvents) applyPropEvent(props, event, warnings);
     for (const event of wardrobeEvents) applyWardrobeEvent(runtimes, props, event, locationId, warnings);
-    const checklists = runtimes.map((runtime) => checklistFor(runtime, props, warnings)).filter((entry2) => Boolean(entry2));
+    const checklists = runtimes.map((runtime) => checklistFor(runtime, props, warnings)).filter((entry) => Boolean(entry));
     const propsInView = locationId ? props.filter((prop) => prop.locationId === locationId).map((prop) => ({ ...prop })) : [];
     const wardrobeText = wardrobePrompt({
       checklists,
@@ -44422,7 +44666,7 @@ function replayContinuity(plan) {
       checklists,
       propsInView,
       prompt,
-      warnings: [...warnings, ...checklists.flatMap((entry2) => entry2.warnings)].filter(
+      warnings: [...warnings, ...checklists.flatMap((entry) => entry.warnings)].filter(
         (value, i, all) => all.indexOf(value) === i
       )
     });
@@ -44451,9 +44695,9 @@ function parseWardrobe(raw) {
   const value = raw;
   if (!Array.isArray(value.layers)) return void 0;
   const layers = [];
-  for (const entry2 of value.layers) {
-    if (!entry2 || typeof entry2 !== "object") continue;
-    const layer = entry2;
+  for (const entry of value.layers) {
+    if (!entry || typeof entry !== "object") continue;
+    const layer = entry;
     if (typeof layer.id !== "string" || !layer.id.trim()) continue;
     if (typeof layer.item !== "string" || !layer.item.trim()) continue;
     if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) continue;
@@ -44474,10 +44718,10 @@ function parseWardrobe(raw) {
   }
   if (layers.length === 0) return void 0;
   const worn = Array.isArray(value.startState?.worn) ? value.startState.worn.filter((id) => typeof id === "string" && id.trim().length > 0) : layers.map((layer) => layer.id);
-  const stateImages = Array.isArray(value.stateImages) ? value.stateImages.flatMap((entry2) => {
-    if (!entry2 || typeof entry2 !== "object") return [];
-    const wornIds = Array.isArray(entry2.worn) ? entry2.worn.filter((id) => typeof id === "string" && Boolean(id.trim())) : [];
-    const urls = Array.isArray(entry2.referenceImageUrls) ? entry2.referenceImageUrls.filter((url2) => typeof url2 === "string") : [];
+  const stateImages = Array.isArray(value.stateImages) ? value.stateImages.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const wornIds = Array.isArray(entry.worn) ? entry.worn.filter((id) => typeof id === "string" && Boolean(id.trim())) : [];
+    const urls = Array.isArray(entry.referenceImageUrls) ? entry.referenceImageUrls.filter((url2) => typeof url2 === "string") : [];
     return [{ worn: wornIds, referenceImageUrls: urls }];
   }) : void 0;
   return {
@@ -44501,7 +44745,7 @@ function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
 function shortHash(value) {
-  return createHash3("sha1").update(value).digest("hex").slice(0, 8);
+  return createHash4("sha1").update(value).digest("hex").slice(0, 8);
 }
 function slugFor(name) {
   const slug = name.trim().toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/g, "");
@@ -44541,7 +44785,7 @@ function parseRecord(folder, raw) {
 async function readRecord(folder, options = {}) {
   const file2 = join6(folder, "character.json");
   try {
-    return parseRecord(folder, await readFile4(file2, "utf8"));
+    return parseRecord(folder, await readFile5(file2, "utf8"));
   } catch (err) {
     if (!options.quiet) {
       console.error(`theShow: skipping character folder ${folder}:`, err);
@@ -44554,6 +44798,227 @@ async function folderForWrite(root, name) {
   if (!existsSync(plain)) return plain;
   const record2 = await readRecord(plain, { quiet: true });
   return record2 && sameName(record2.name, name) ? plain : hashed;
+}
+var CHARACTER_LOCK_WAIT_MS = 1e4;
+var CHARACTER_LOCK_STALE_MS = 3e4;
+var CHARACTER_LOCK_REFRESH_MS = 1e4;
+var CHARACTER_LOCK_EMPTY_GRACE_MS = 1e3;
+function characterLockRefreshMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
+  if (Number.isFinite(raw) && raw >= 10) return raw;
+  return CHARACTER_LOCK_REFRESH_MS;
+}
+function characterLockWaitMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_WAIT_MS);
+  if (Number.isFinite(raw) && raw >= 50) return raw;
+  return CHARACTER_LOCK_WAIT_MS;
+}
+async function readCharacterLock(lockPath) {
+  try {
+    const parsed = JSON.parse(await readFile5(lockPath, "utf8"));
+    if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return void 0;
+    return {
+      pid: parsed.pid,
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: parsed.at
+    };
+  } catch {
+    return void 0;
+  }
+}
+async function lockFileAge(lockPath) {
+  try {
+    const info = await stat3(lockPath);
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function characterLockIsStale(info, ageMs, now = Date.now()) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (info.at > now + 5e3) return true;
+  if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return false;
+}
+function characterLockBody(token, at = Date.now()) {
+  return JSON.stringify({ pid: process.pid, token, host: processHost, at });
+}
+async function refreshCharacterLock(lockPath, token) {
+  let handle;
+  try {
+    handle = await open3(lockPath, "r+");
+    const raw = await handle.readFile("utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed.token !== token) return;
+    const body = Buffer.from(characterLockBody(token));
+    await handle.write(body, 0, body.length, 0);
+    await handle.truncate(body.length);
+    await handle.sync();
+  } catch {
+  } finally {
+    await handle?.close();
+  }
+}
+async function releaseCharacterLock(lockPath, token) {
+  const tomb = `${lockPath}.unlock.${randomUUID2()}`;
+  try {
+    await rename2(lockPath, tomb);
+  } catch {
+    return;
+  }
+  const moved = await readCharacterLock(tomb);
+  if (moved?.token === token) {
+    await unlink2(tomb).catch(() => void 0);
+    return;
+  }
+  await restoreIfAbsent(tomb, lockPath);
+}
+var activeLockTurns = /* @__PURE__ */ new Set();
+function lockTurnPath(lockPath) {
+  return `${lockPath}.turn`;
+}
+async function readLockTurn(path) {
+  try {
+    const raw = await readFile5(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
+  }
+}
+function lockTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CHARACTER_LOCK_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeLockTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function acquireLockTurn(lockPath) {
+  const token = randomUUID2();
+  const dest = lockTurnPath(lockPath);
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  const age = await lockFileAge(dest);
+  const current = await readLockTurn(dest);
+  if (age === void 0 || !lockTurnIsStale(current, age)) return void 0;
+  let raw = "";
+  try {
+    raw = await readFile5(dest, "utf8");
+  } catch {
+    return void 0;
+  }
+  const tomb = `${dest}.steal.${randomUUID2()}`;
+  try {
+    await rename2(dest, tomb);
+    const moved = await readFile5(tomb, "utf8").catch(() => "");
+    if (moved !== raw) {
+      await restoreIfAbsent(tomb, dest);
+      return void 0;
+    }
+    await unlink2(tomb).catch(() => void 0);
+  } catch (err) {
+    await unlink2(tomb).catch(() => void 0);
+    if (err.code === "ENOENT") return void 0;
+    throw err;
+  }
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  return void 0;
+}
+async function releaseLockTurn(lockPath, token) {
+  activeLockTurns.delete(token);
+  const dest = lockTurnPath(lockPath);
+  const current = await readLockTurn(dest);
+  if (current?.token !== token) return;
+  await unlink2(dest).catch(() => void 0);
+}
+async function stealStaleLock(lockPath) {
+  const turn = await acquireLockTurn(lockPath);
+  if (!turn) return;
+  let tomb;
+  let drop = false;
+  try {
+    const age = await lockFileAge(lockPath);
+    const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
+    if (age === void 0 || !characterLockIsStale(info, age)) return;
+    let raw = "";
+    try {
+      raw = await readFile5(lockPath, "utf8");
+    } catch {
+      return;
+    }
+    tomb = `${lockPath}.steal.${randomUUID2()}`;
+    try {
+      await rename2(lockPath, tomb);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        tomb = void 0;
+        return;
+      }
+      throw err;
+    }
+    let tombRaw = "";
+    try {
+      tombRaw = await readFile5(tomb, "utf8");
+    } catch {
+      tombRaw = "";
+    }
+    const tombAge = await lockFileAge(tomb);
+    const tombInfo = await readCharacterLock(tomb);
+    if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    drop = true;
+  } finally {
+    if (tomb && !drop) await restoreIfAbsent(tomb, lockPath).catch(() => void 0);
+    if (tomb) await unlink2(tomb).catch(() => void 0);
+    await releaseLockTurn(lockPath, turn);
+  }
+}
+async function withFolderLock(folder, body) {
+  await mkdir4(folder, { recursive: true });
+  const lockPath = join6(folder, ".write.lock");
+  const deadline = Date.now() + characterLockWaitMs();
+  let delay = 20;
+  const token = randomUUID2();
+  while (true) {
+    const published = await publishExclusive(lockPath, characterLockBody(token));
+    if (published) {
+      const refresh = setInterval(() => {
+        void refreshCharacterLock(lockPath, token);
+      }, characterLockRefreshMs());
+      refresh.unref?.();
+      try {
+        return await body();
+      } finally {
+        clearInterval(refresh);
+        await releaseCharacterLock(lockPath, token);
+      }
+    }
+    if (characterLockIsStale(await readCharacterLock(lockPath), await lockFileAge(lockPath))) {
+      await stealStaleLock(lockPath);
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+    await new Promise((resolve2) => setTimeout(resolve2, delay));
+    delay = Math.min(delay * 2, 250);
+  }
 }
 function copyNameFor(source) {
   const file2 = basename2(source);
@@ -44580,9 +45045,9 @@ async function keepReferences(input2) {
     }
     const target = join6(refsDir, copyNameFor(source));
     try {
-      const bytes = await readFile4(source);
-      await mkdir3(refsDir, { recursive: true });
-      await writeFile3(target, bytes);
+      const bytes = await readFile5(source);
+      await mkdir4(refsDir, { recursive: true });
+      await writeFile4(target, bytes);
       kept.push(target);
     } catch (err) {
       input2.warnings.push(
@@ -44596,13 +45061,13 @@ async function keepWardrobeReferences(input2) {
   const stateImages = input2.wardrobe.stateImages ?? [];
   if (stateImages.length === 0) return input2.wardrobe;
   const kept = [];
-  for (const entry2 of stateImages) {
+  for (const entry of stateImages) {
     const referenceImageUrls = await keepReferences({
       folder: input2.folder,
-      refs: entry2.referenceImageUrls,
+      refs: entry.referenceImageUrls,
       warnings: input2.warnings
     });
-    kept.push({ worn: entry2.worn, referenceImageUrls });
+    kept.push({ worn: entry.worn, referenceImageUrls });
   }
   return { ...input2.wardrobe, stateImages: kept };
 }
@@ -44611,52 +45076,56 @@ async function saveCharacter(input2) {
   if (!name) throw new Error("A character needs a name.");
   const root = charactersRoot();
   const folder = await folderForWrite(root, name);
-  const existing = await readRecord(folder, { quiet: true });
-  const warnings = [];
-  const referenceImageUrls = await keepReferences({
-    folder,
-    refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
-    warnings
+  return withFolderLock(folder, async () => {
+    const warnings = [];
+    const existing = await readRecord(folder, { quiet: true });
+    const referenceImageUrls = await keepReferences({
+      folder,
+      refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
+      warnings
+    });
+    const wardrobeInput = input2.wardrobe ?? existing?.wardrobe;
+    const wardrobe = wardrobeInput ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings }) : void 0;
+    const latest = await readRecord(folder, { quiet: true });
+    const base = latest ?? existing;
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const record2 = {
+      id: base?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      name,
+      role: input2.role ?? base?.role,
+      description: input2.description ?? base?.description,
+      appearance: input2.appearance ?? base?.appearance,
+      wardrobe: input2.wardrobe ? wardrobe : base?.wardrobe ?? wardrobe,
+      referenceImageUrls: input2.referenceImageUrls ? referenceImageUrls : base?.referenceImageUrls ?? referenceImageUrls,
+      createdAt: base?.createdAt || now,
+      updatedAt: now,
+      folder
+    };
+    const onDisk = {
+      id: record2.id,
+      name: record2.name,
+      role: record2.role,
+      description: record2.description,
+      appearance: record2.appearance,
+      wardrobe: record2.wardrobe,
+      referenceImageUrls: record2.referenceImageUrls,
+      createdAt: record2.createdAt,
+      updatedAt: record2.updatedAt
+    };
+    for (const key of Object.keys(onDisk)) {
+      if (onDisk[key] === void 0) delete onDisk[key];
+    }
+    try {
+      await mkdir4(folder, { recursive: true });
+      await atomicWriteFile(join6(folder, "character.json"), JSON.stringify(onDisk, null, 2));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not write ${join6(folder, "character.json")}: ${message}`);
+      console.error(`theShow: could not save character ${name}:`, err);
+    }
+    if (warnings.length > 0) record2.warnings = warnings;
+    return record2;
   });
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const record2 = {
-    id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
-    name,
-    role: input2.role ?? existing?.role,
-    description: input2.description ?? existing?.description,
-    appearance: input2.appearance ?? existing?.appearance,
-    wardrobe: input2.wardrobe ?? existing?.wardrobe,
-    referenceImageUrls,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    folder
-  };
-  const wardrobe = record2.wardrobe ? await keepWardrobeReferences({ folder, wardrobe: record2.wardrobe, warnings }) : void 0;
-  const onDisk = {
-    id: record2.id,
-    name: record2.name,
-    role: record2.role,
-    description: record2.description,
-    appearance: record2.appearance,
-    wardrobe,
-    referenceImageUrls: record2.referenceImageUrls,
-    createdAt: record2.createdAt,
-    updatedAt: record2.updatedAt
-  };
-  for (const key of Object.keys(onDisk)) {
-    if (onDisk[key] === void 0) delete onDisk[key];
-  }
-  if (wardrobe) record2.wardrobe = wardrobe;
-  try {
-    await mkdir3(folder, { recursive: true });
-    await writeFile3(join6(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    warnings.push(`Could not write ${join6(folder, "character.json")}: ${message}`);
-    console.error(`theShow: could not save character ${name}:`, err);
-  }
-  if (warnings.length > 0) record2.warnings = warnings;
-  return record2;
 }
 function loadCharacterSync(name) {
   const root = charactersRoot();
@@ -44681,8 +45150,8 @@ async function loadAllCharacters() {
     return [];
   }
   const newest = /* @__PURE__ */ new Map();
-  for (const entry2 of folders) {
-    const record2 = await readRecord(join6(root, entry2));
+  for (const entry of folders) {
+    const record2 = await readRecord(join6(root, entry));
     if (!record2) continue;
     const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
     const previous = newest.get(key);
@@ -44772,7 +45241,7 @@ function evaluateWeighted(plan) {
     if (!prop.fixed) continue;
     for (const shot of shots) {
       if (shot.locationId && shot.locationId !== prop.locationId) continue;
-      const found = shot.propsInView.find((entry2) => entry2.id === prop.id);
+      const found = shot.propsInView.find((entry) => entry.id === prop.id);
       if (!found) {
         violations.push(violation(
           "set-geometry",
@@ -44803,10 +45272,10 @@ function evaluateWeighted(plan) {
   }
   for (const event of plan.propEvents ?? []) {
     if (event.action !== "move") continue;
-    const prop = initialProps.find((entry2) => entry2.id === event.propId);
+    const prop = initialProps.find((entry) => entry.id === event.propId);
     if (!prop?.solid) continue;
     const clearance = (plan.bodyClearance ?? []).find(
-      (entry2) => entry2.shot === event.shot && entry2.solidId === prop.id
+      (entry) => entry.shot === event.shot && entry.solidId === prop.id
     );
     if (clearance && clearance.clear === false) {
       violations.push(violation(
@@ -44833,7 +45302,7 @@ function evaluateWeighted(plan) {
   }
   for (const spoken of plan.spokenLines ?? []) {
     if (!spoken.line.trim()) continue;
-    const prompt = (plan.shotPrompts ?? []).find((entry2) => entry2.shot === spoken.shot)?.prompt;
+    const prompt = (plan.shotPrompts ?? []).find((entry) => entry.shot === spoken.shot)?.prompt;
     if (!prompt || !prompt.includes(spoken.line)) {
       violations.push(violation(
         "speech-verbatim",
@@ -44854,13 +45323,13 @@ function evaluateWeighted(plan) {
     const spokenShots = new Set(
       (plan.spokenLines ?? []).filter((spoken) => spoken.line.trim().length > 0).map((spoken) => spoken.shot)
     );
-    for (const entry2 of plan.shotPrompts ?? []) {
-      if (entry2.prompt.includes("<AUDIO_0>")) continue;
-      const speaks = spokenShots.has(entry2.shot);
+    for (const entry of plan.shotPrompts ?? []) {
+      if (entry.prompt.includes("<AUDIO_0>")) continue;
+      const speaks = spokenShots.has(entry.shot);
       if (plan.promptStyle === "sections-v2" && !speaks) continue;
-      const message = speaks ? `Shot ${entry2.shot} speaks a line but the prompt has no <AUDIO_0> tag.` : `Shot ${entry2.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      const message = speaks ? `Shot ${entry.shot} speaks a line but the prompt has no <AUDIO_0> tag.` : `Shot ${entry.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
       if (plan.promptStyle === "sections-v2") {
-        violations.push(violation("voice", entry2.shot, message));
+        violations.push(violation("voice", entry.shot, message));
       } else {
         warnings.push(message);
       }
@@ -45036,7 +45505,7 @@ function expandPropEventToSteps(event, props) {
   return [];
 }
 function stepsForShot(plan, shot) {
-  const named = (plan.shotSteps ?? []).find((entry2) => entry2.shot === shot);
+  const named = (plan.shotSteps ?? []).find((entry) => entry.shot === shot);
   if (named) return [...named.steps];
   const wardrobe = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
   const props = (plan.propEvents ?? []).filter((event) => event.shot === shot);
@@ -45050,7 +45519,7 @@ function holdersFromProps(props) {
   for (const prop of props) {
     const held = props.filter((other) => other.holder === prop.id);
     if (held.length === 0 && !hangerLike(prop)) continue;
-    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry2) => entry2.name).join(" and ")}`;
+    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry) => entry.name).join(" and ")}`;
   }
   return holders;
 }
@@ -45301,7 +45770,7 @@ function validateContractsAgainstPlan(plan, contracts) {
   const authored = contracts ?? derived2;
   const result = validateContracts(authored);
   for (const contract of contracts ?? []) {
-    const expected = derived2.find((entry2) => entry2.shot === contract.shot);
+    const expected = derived2.find((entry) => entry.shot === contract.shot);
     if (!expected) continue;
     const stateMatches = sameShotState(contract.requires, expected.requires) && sameShotState(contract.ensures, expected.ensures);
     const textMatches = sameTextList(contract.steps, expected.steps) && sameTextList(contract.invariants, expected.invariants) && sameTextList(contract.forbidden, expected.forbidden);
@@ -45433,13 +45902,26 @@ function runPreVideoGate(input2) {
 }
 
 // mcp/server.ts
-import { mkdir as mkdir4, readFile as readFile5, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdir as mkdir5, readFile as readFile6, readdir as readdir2, rename as rename3, stat as stat4, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
-import { pathToFileURL } from "node:url";
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+
+// mcp/resume-claim-probe.ts
+var probe;
+async function runResumeClaimProbe() {
+  if (probe) await probe();
+}
+
+// mcp/server.ts
 var server = new McpServer({
   name: "theshow",
   version: "0.1.0"
+});
+var recordedTools = [];
+var registerRecordedTool = server.registerTool.bind(server);
+server.registerTool = ((name, config2, handler) => {
+  recordedTools.push({ name, config: config2, handler });
+  return registerRecordedTool(name, config2, handler);
 });
 var CharacterSchema = external_exports.object({
   name: external_exports.string(),
@@ -45531,42 +46013,50 @@ var ShotContractSchema = external_exports.object({
 var characterStore = /* @__PURE__ */ new Map();
 async function rememberCharacter(args) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
   const saved = await saveCharacter({
     name: args.name,
-    role: args.role ?? existing?.role,
-    description: args.description ?? existing?.description,
-    appearance: args.appearance ?? existing?.appearance,
-    wardrobe: args.wardrobe ?? existing?.wardrobe,
-    referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls
+    role: args.role,
+    description: args.description,
+    appearance: args.appearance,
+    wardrobe: args.wardrobe,
+    referenceImageUrls: args.referenceImageUrls
   });
-  const entry2 = {
+  const entry = {
     id: saved.id,
     name: saved.name,
     role: saved.role,
     description: saved.description,
     appearance: saved.appearance,
     wardrobe: saved.wardrobe,
-    referenceImageUrls: saved.referenceImageUrls
+    referenceImageUrls: saved.referenceImageUrls,
+    updatedAt: saved.updatedAt
   };
-  characterStore.set(key, entry2);
-  return { entry: entry2, folder: saved.folder, warnings: saved.warnings };
+  characterStore.set(key, entry);
+  return { entry, folder: saved.folder, warnings: saved.warnings };
+}
+function storedFrom(record2) {
+  return {
+    id: record2.id,
+    name: record2.name,
+    role: record2.role,
+    description: record2.description,
+    appearance: record2.appearance,
+    wardrobe: record2.wardrobe,
+    referenceImageUrls: record2.referenceImageUrls,
+    updatedAt: record2.updatedAt
+  };
 }
 function lookupCharacter(name) {
   const key = name.trim().toLowerCase();
-  const cached2 = characterStore.get(key);
-  if (cached2) return cached2;
   const fromDisk = loadCharacterSync(name);
-  if (!fromDisk) return void 0;
-  characterStore.set(key, {
-    id: fromDisk.id,
-    name: fromDisk.name,
-    role: fromDisk.role,
-    description: fromDisk.description,
-    appearance: fromDisk.appearance,
-    wardrobe: fromDisk.wardrobe,
-    referenceImageUrls: fromDisk.referenceImageUrls
-  });
+  if (!fromDisk) {
+    characterStore.delete(key);
+    return void 0;
+  }
+  const cached2 = characterStore.get(key);
+  if (!cached2 || cached2.updatedAt !== fromDisk.updatedAt) {
+    characterStore.set(key, storedFrom(fromDisk));
+  }
   return characterStore.get(key);
 }
 var LOCATION_ROLE = /\b(location|place|set|environment|interior|exterior)\b/i;
@@ -45600,7 +46090,8 @@ async function loadCharactersFromDisk() {
         description: character.description,
         appearance: character.appearance,
         wardrobe: character.wardrobe,
-        referenceImageUrls: character.referenceImageUrls
+        referenceImageUrls: character.referenceImageUrls,
+        updatedAt: character.updatedAt
       });
     }
   } catch (err) {
@@ -45875,22 +46366,27 @@ server.registerTool(
       prompt: external_exports.string().optional().describe("Card heading shown to the user.")
     })
   },
-  async (args) => {
+  async (args, extra) => {
     const title = args.prompt ?? "Configure the film";
-    const caps = server.server.getClientCapabilities();
-    const canElicit = Boolean(caps?.elicitation);
+    const mcp = currentMcpServer(server);
+    const caps = mcp.server.getClientCapabilities();
+    const scope = requestScope();
+    const streamMissing = scope?.kind === "http" && !scope.sseConnected;
+    const canElicit = Boolean(caps?.elicitation) && !streamMissing;
+    const fields = Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
+      key,
+      title: v2.title ?? key,
+      description: v2.description ?? ""
+    }));
     if (!canElicit) {
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
             elicitationSupported: false,
-            message: "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
-            fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
-              key,
-              title: v2.title ?? key,
-              description: v2.description ?? ""
-            }))
+            needsInput: true,
+            message: streamMissing ? "This HTTP client has no server-to-client stream, so the form cannot be shown. Ask for these fields conversationally in one message rather than one at a time." : "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
+            fields
           }, null, 2)
         }]
       };
@@ -45898,12 +46394,38 @@ server.registerTool(
     const schema = structuredClone(FILM_FORM_SCHEMA);
     if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
     let result;
+    let timeout;
     try {
-      result = await server.server.elicitInput({
+      const elicitation = mcp.server.elicitInput({
         message: title,
         requestedSchema: schema
       });
+      if (scope?.kind !== "http") {
+        result = await elicitation;
+      } else {
+        const timer = new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+          extra?.signal?.addEventListener("abort", () => {
+            reject(new Error("elicitation aborted"));
+          }, { once: true });
+        });
+        result = await Promise.race([elicitation, timer]);
+      }
     } catch (err) {
+      const timedOut = err instanceof Error && err.message === "elicitation timed out";
+      if (timedOut) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              elicitationSupported: false,
+              needsInput: true,
+              message: "The form was not answered in time. Ask for these fields conversationally in one message rather than one at a time.",
+              fields
+            }, null, 2)
+          }]
+        };
+      }
       return {
         content: [{
           type: "text",
@@ -45915,6 +46437,8 @@ server.registerTool(
           }, null, 2)
         }]
       };
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
     if (result.action !== "accept") {
       return {
@@ -45998,14 +46522,14 @@ server.registerTool(
         isError: true
       };
     }
-    const { entry: entry2, folder, warnings } = stored;
+    const { entry, folder, warnings } = stored;
     return {
       content: [{
         type: "text",
         text: JSON.stringify({
-          ...entry2,
+          ...entry,
           storage: folder,
-          referenceImages: (entry2.referenceImageUrls ?? []).length,
+          referenceImages: (entry.referenceImageUrls ?? []).length,
           ...warnings ? { warnings } : {},
           message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
         }, null, 2)
@@ -46020,7 +46544,7 @@ function eventsWithShot(events) {
   return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? 1 }));
 }
 function buildContinuityLedger(input2) {
-  const characters = input2.characterNames.map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2));
+  const characters = input2.characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
   const hasReferencePicture = input2.characterNames.some((name) => {
     const known = lookupCharacter(name);
     return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
@@ -46052,12 +46576,12 @@ function buildContinuityLedger(input2) {
 function continuityPlanFromRenderArgs(args) {
   if (!args.ledger) return void 0;
   const characterNames = args.characters ?? [];
-  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2));
+  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
   const hasReferencePicture = characterNames.some((name) => {
     const known = lookupCharacter(name);
     return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
   });
-  const shotPrompts = args.ledger.shotPrompts ?? args.shots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? "" })).filter((entry2) => entry2.prompt.trim().length > 0);
+  const shotPrompts = args.ledger.shotPrompts ?? args.shots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? "" })).filter((entry) => entry.prompt.trim().length > 0);
   return {
     characters,
     locations: args.ledger.locations,
@@ -46355,6 +46879,15 @@ function localImagePath(ref) {
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
 var sleep2 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+function cancelledBeforeSpend(extra) {
+  if (!extra?.signal?.aborted) return void 0;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ action: "cancelled", willRender: false })
+    }]
+  };
+}
 server.registerTool(
   "generate_controlled_clip",
   {
@@ -46414,7 +46947,9 @@ server.registerTool(
       timeoutSeconds: external_exports.number().min(10).max(600).default(240)
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const {
       waitForCompletion,
       timeoutSeconds,
@@ -46516,7 +47051,9 @@ server.registerTool(
       overrideValidation: external_exports.boolean().default(false)
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
     if (decideSpend(args.confirm, extensionGate) !== "spend") {
       return refusal({
@@ -46541,7 +47078,7 @@ server.registerTool(
             error: "Extension not available on the subscription session",
             detail: "The Grok CLI inference proxy answers POST /v1/videos/extensions with HTTP 405. Extension needs an XAI_API_KEY pointed at api.x.ai.",
             workaround: "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame (from extract_last_frame). That produces a new shot continuing from the same image and works on the subscription session.",
-            auth: credential.source
+            auth: toolAuth(credential.source)
           }, null, 2)
         }]
       };
@@ -46561,7 +47098,7 @@ server.registerTool(
       return {
         content: [{
           type: "text",
-          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2)
+          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: toolAuth(credential.source) }, null, 2)
         }]
       };
     }
@@ -46589,7 +47126,7 @@ server.registerTool(
               videoUrl: poll.video?.url,
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
-              auth: credential.source
+              auth: toolAuth(credential.source)
             }, null, 2)
           }]
         };
@@ -46604,8 +47141,8 @@ server.registerTool(
 var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
-    await mkdir4(DOWNLOAD_DIR, { recursive: true });
-    const digest = createHash4("sha1").update(input2).digest("hex").slice(0, 16);
+    await mkdir5(DOWNLOAD_DIR, { recursive: true });
+    const digest = createHash5("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
     const target = join7(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
@@ -46614,7 +47151,7 @@ async function resolveToLocalFile(input2) {
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} for ${input2}`);
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.byteLength === 0) throw new Error(`Download produced no data for ${input2}`);
-    await writeFile4(target, bytes);
+    await writeFile5(target, bytes);
     return target;
   }
   const path = input2.startsWith("file://") ? new URL(input2).pathname : input2;
@@ -46682,7 +47219,9 @@ server.registerTool(
       )
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const imageRefs = [args.baseImageUrl, ...args.referenceImageUrls ?? [], ...urls].filter((ref) => Boolean(ref && ref.trim()));
     const roots = [OUTPUT_DIR, charactersRoot()];
@@ -46759,7 +47298,7 @@ server.registerTool(
           costUsd: result.costUsd,
           usage: result.usage,
           billedTo: result.billedTo,
-          auth: result.auth,
+          auth: toolAuth(result.auth),
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : void 0,
           message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
@@ -46830,18 +47369,34 @@ server.registerTool(
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }
 );
-async function main() {
+function startOwnedJobHeartbeat() {
+  return startJobHeartbeat(() => {
+    const now = Date.now();
+    for (const job of sequenceJobs.values()) {
+      const ownsRun = job.state === "running" && job.owner?.token === processToken;
+      const ownsClaim = job.claim?.token === processToken;
+      if (!ownsRun && !ownsClaim) continue;
+      if (ownsRun && job.owner) job.owner.heartbeatAt = now;
+      if (ownsClaim && job.claim) job.claim.heartbeatAt = now;
+      void persistJob(job);
+    }
+  });
+}
+async function startStdioServer() {
+  if (process.env.THESHOW_TRANSPORT === "http") {
+    throw new Error(
+      "THESHOW_TRANSPORT=http is the Streamable HTTP entry, mcp/http-server.ts. This process is the desktop stdio server and does not open a port."
+    );
+  }
   await loadJobsFromDisk();
   await loadCharactersFromDisk();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
-}
-var entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(entry).href) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
+  const stopBeat = startOwnedJobHeartbeat();
+  installShutdown(async () => {
+    stopBeat();
+    await flushJobWrites();
   });
 }
 var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
@@ -46854,34 +47409,313 @@ function resolutionFromLabel(value) {
   return match?.[1] ?? void 0;
 }
 var sequenceJobs = /* @__PURE__ */ new Map();
+var jobRevision = /* @__PURE__ */ new Map();
+var jobWriteChain = /* @__PURE__ */ new Map();
+function claimPath(jobId) {
+  return join7(JOBS_DIR, `${jobId}.claim`);
+}
+function noteRevision(job) {
+  if (typeof job.revision === "number") {
+    jobRevision.set(job.id, Math.max(jobRevision.get(job.id) ?? 0, job.revision));
+  }
+}
 async function persistJob(job) {
+  const revision = (jobRevision.get(job.id) ?? 0) + 1;
+  job.revision = revision;
+  jobRevision.set(job.id, revision);
+  const snapshot = structuredClone(job);
+  const previous = jobWriteChain.get(job.id) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (jobRevision.get(job.id) !== revision) return;
+    try {
+      await atomicWriteFile(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
+      else await unlink3(claimPath(job.id)).catch(() => void 0);
+    } catch (err) {
+      console.error(`theShow: could not persist job ${job.id}:`, err);
+    }
+  });
+  jobWriteChain.set(job.id, write);
+  trackWrite(write);
+  await write;
+}
+async function reapIfOwnerGone(job) {
+  if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  const filmPath = job.filmPath;
+  const fileUrl = job.fileUrl;
+  job.state = "stopped";
+  job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
+  job.finishedAt = job.finishedAt ?? Date.now();
+  if (filmPath) job.filmPath = filmPath;
+  if (fileUrl) job.fileUrl = fileUrl;
+  await persistJob(job);
+}
+function otherProcessHolds(owner) {
+  if (!owner) return false;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  return !jobShouldStop(owner);
+}
+var ALREADY_RUNNING = "already running in another process";
+var ALREADY_RUNNING_HERE = "already running in this process";
+var TAKING_OVER = "another process is taking over this film; try again in a few seconds";
+var CLAIM_EMPTY_GRACE_MS = 1e3;
+function claimBusyMessage(owner) {
+  if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
+  return ALREADY_RUNNING;
+}
+function mergeFromDisk(memory, disk) {
+  if (!memory) return disk;
+  const memRev = memory.revision ?? 0;
+  const diskRev = disk.revision ?? 0;
+  if (memRev > diskRev) return memory;
+  if (memory.state !== "running" && disk.state === "running") return memory;
+  if (memory.filmPath && !disk.filmPath) {
+    return { ...disk, filmPath: memory.filmPath, fileUrl: disk.fileUrl ?? memory.fileUrl };
+  }
+  return disk;
+}
+async function refreshJobsFromDisk() {
+  let names;
   try {
-    await mkdir4(JOBS_DIR, { recursive: true });
-    await writeFile4(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
-  } catch (err) {
-    console.error(`theShow: could not persist job ${job.id}:`, err);
+    names = await readdir2(JOBS_DIR);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const raw = await readFile6(join7(JOBS_DIR, name), "utf8");
+      const job = JSON.parse(raw);
+      if (!job?.id) continue;
+      const memory = sequenceJobs.get(job.id);
+      if (memory?.owner?.token === processToken && memory.state === "running") continue;
+      const chosen = mergeFromDisk(memory, job);
+      if (chosen === job) await reapIfOwnerGone(chosen);
+      noteRevision(chosen);
+      sequenceJobs.set(chosen.id, chosen);
+    } catch {
+    }
   }
 }
 async function loadJobsFromDisk() {
+  await refreshJobsFromDisk();
+}
+async function readClaimFile(path) {
   try {
-    const files = await readdir2(JOBS_DIR);
-    for (const name of files) {
-      if (!name.endsWith(".json")) continue;
-      try {
-        const raw = await readFile5(join7(JOBS_DIR, name), "utf8");
-        const job = JSON.parse(raw);
-        if (!job?.id) continue;
-        if (job.state === "running") {
-          job.state = "stopped";
-          job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
-          job.finishedAt = job.finishedAt ?? Date.now();
-          void persistJob(job);
-        }
-        sequenceJobs.set(job.id, job);
-      } catch {
-      }
-    }
+    const raw = await readFile6(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return parsed;
   } catch {
+    return void 0;
+  }
+}
+async function readClaim(jobId) {
+  return readClaimFile(claimPath(jobId));
+}
+async function claimFileAge(jobId) {
+  try {
+    const info = await stat4(claimPath(jobId));
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function claimIsStale(owner, ageMs) {
+  if (!owner) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  return jobShouldStop(owner);
+}
+async function placeClaim(jobId, owner) {
+  return publishExclusive(claimPath(jobId), JSON.stringify(owner));
+}
+function claimTurnPath(jobId) {
+  return `${claimPath(jobId)}.turn`;
+}
+async function readClaimTurn(path) {
+  try {
+    const raw = await readFile6(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
+  }
+}
+var activeClaimTurns = /* @__PURE__ */ new Set();
+function claimTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CLAIM_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeClaimTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function discardIfUnchanged(path, expected) {
+  const tomb = `${path}.tomb.${randomUUID3()}`;
+  try {
+    await rename3(path, tomb);
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile6(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  if (tombRaw !== expected) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  let tombAge;
+  try {
+    tombAge = Date.now() - (await stat4(tomb)).mtimeMs;
+  } catch {
+    tombAge = void 0;
+  }
+  if (!tombRaw.trim() && !(tombAge !== void 0 && tombAge > CLAIM_EMPTY_GRACE_MS)) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  await unlink3(tomb).catch(() => void 0);
+  return true;
+}
+async function acquireClaimTurn(jobId) {
+  const token = randomUUID3();
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  const dest = claimTurnPath(jobId);
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return void 0;
+  }
+  const current = await readClaimTurn(dest);
+  if (!claimTurnIsStale(current, turnAge)) return void 0;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return void 0;
+  }
+  if (!await discardIfUnchanged(dest, raw)) return void 0;
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  return void 0;
+}
+async function releaseClaimTurn(jobId, token) {
+  activeClaimTurns.delete(token);
+  const dest = claimTurnPath(jobId);
+  const current = await readClaimTurn(dest);
+  if (current?.token !== token) return;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return;
+  }
+  if (!raw.includes(token)) return;
+  await discardIfUnchanged(dest, raw);
+}
+async function claimFilm(jobId) {
+  await refreshJobsFromDisk();
+  const job = sequenceJobs.get(jobId);
+  if (!job) return { ok: false, message: "Unknown job" };
+  if (job.state === "running" && otherProcessHolds(job.owner)) {
+    return { ok: false, message: ALREADY_RUNNING };
+  }
+  if (job.claim && !jobShouldStop(job.claim)) {
+    return { ok: false, message: claimBusyMessage(job.claim) };
+  }
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const age = await claimFileAge(jobId);
+    const existing = age === void 0 ? void 0 : await readClaim(jobId);
+    if (age !== void 0 && !claimIsStale(existing, age)) {
+      return { ok: false, message: claimBusyMessage(existing) };
+    }
+    const turn = await acquireClaimTurn(jobId);
+    if (!turn) {
+      await sleep2(10 + attempt);
+      continue;
+    }
+    try {
+      const heldAge = await claimFileAge(jobId);
+      const held = heldAge === void 0 ? void 0 : await readClaim(jobId);
+      if (heldAge !== void 0 && !claimIsStale(held, heldAge)) {
+        return { ok: false, message: claimBusyMessage(held) };
+      }
+      const owner = thisOwner();
+      if (heldAge === void 0) {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = await readFile6(claimPath(jobId), "utf8");
+      } catch {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
+      if (!await placeClaim(jobId, owner)) continue;
+      job.claim = owner;
+      sequenceJobs.set(job.id, job);
+      await persistJob(job);
+      return { ok: true };
+    } finally {
+      await releaseClaimTurn(jobId, turn);
+    }
+  }
+  if (await liveTurnWithoutClaim(jobId)) {
+    return { ok: false, message: TAKING_OVER };
+  }
+  return { ok: false, message: ALREADY_RUNNING };
+}
+async function liveTurnWithoutClaim(jobId) {
+  const dest = claimTurnPath(jobId);
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const turn = await readClaimTurn(dest);
+  if (!turn || claimTurnIsStale(turn, turnAge)) return false;
+  const age = await claimFileAge(jobId);
+  const existing = age === void 0 ? void 0 : await readClaim(jobId);
+  return age === void 0 || claimIsStale(existing, age);
+}
+async function releaseFilmClaim(jobId) {
+  const job = sequenceJobs.get(jobId);
+  if (job?.claim?.token === processToken) {
+    job.claim = void 0;
+    await persistJob(job);
+  } else {
+    await unlink3(claimPath(jobId)).catch(() => void 0);
   }
 }
 function sequenceJobId() {
@@ -46998,7 +47832,7 @@ async function runSequenceJob(job, args) {
         }
       }
       const shotNumber = carried.length + i + 1;
-      const entry2 = {
+      const entry = {
         index: shotNumber,
         title: shot.title ?? `Shot ${shotNumber}`,
         status: result.status ?? "failed",
@@ -47015,7 +47849,7 @@ async function runSequenceJob(job, args) {
         durationSeconds: shot.durationSeconds
       };
       job.spentUsd += result.costUsd ?? 0;
-      job.shots.push(entry2);
+      job.shots.push(entry);
       if (result.status !== "completed" || !result.videoUrl) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
@@ -47024,12 +47858,12 @@ async function runSequenceJob(job, args) {
         return;
       }
       const clipPath = await resolveToLocalFile(result.videoUrl);
-      entry2.localPath = clipPath;
+      entry.localPath = clipPath;
       const pinnedClose = localImagePath(shot.lastFrameUrl);
       if (pinnedClose) {
         const agreement = await closingFrameAgreement({ clip: clipPath, frame: pinnedClose });
         if (agreement !== void 0) {
-          entry2.closingFrameAgreement = agreement;
+          entry.closingFrameAgreement = agreement;
           if (agreement < CLOSING_FRAME_MATCH_THRESHOLD) {
             degradations.push(
               `Shot ${shotNumber} was given a closing frame and ended somewhere else (match ${agreement.toFixed(2)} of 1.00), so the next shot opens on the boarded frame while this one closes elsewhere: that seam is a jump, not a chained join.`
@@ -47048,18 +47882,18 @@ async function runSequenceJob(job, args) {
       const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
       if (!accepted.ok) {
         await acceptRenderedTake(clipPath, shot.admission, shot.negative);
-        entry2.localPath = void 0;
-        entry2.framePath = void 0;
-        entry2.status = "failed";
-        entry2.error = `Admission failed: ${accepted.failures.join("; ")}. The take was discarded and is not the next start frame.`;
+        entry.localPath = void 0;
+        entry.framePath = void 0;
+        entry.status = "failed";
+        entry.error = `Admission failed: ${accepted.failures.join("; ")}. The take was discarded and is not the next start frame.`;
         job.state = "stopped";
-        job.error = entry2.error;
+        job.error = entry.error;
         job.finishedAt = Date.now();
         void persistJob(job);
         return;
       }
       previousFrame = frame.path;
-      entry2.framePath = frame.path;
+      entry.framePath = frame.path;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
       void persistJob(job);
@@ -47206,11 +48040,14 @@ server.registerTool(
       timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
     let resumeJob;
     if (args.resumeFromJobId) {
+      await refreshJobsFromDisk();
       resumeJob = sequenceJobs.get(args.resumeFromJobId);
       if (!resumeJob) {
         return {
@@ -47220,6 +48057,18 @@ server.registerTool(
               error: "Unknown resumeFromJobId",
               detail: "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5)
+            }, null, 2)
+          }]
+        };
+      }
+      if (otherProcessHolds(resumeJob.owner) || otherProcessHolds(resumeJob.claim)) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: ALREADY_RUNNING,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
             }, null, 2)
           }]
         };
@@ -47382,109 +48231,138 @@ server.registerTool(
     }
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
     if (sessionRefusal) return sessionRefusal;
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      // Total film length, not just this call's new shots.
-      shotCount: carried.length + shotCount,
-      completed: 0,
-      estimateUsd: estimate,
-      spentUsd: 0,
-      shots: [],
-      settings: {
+    const preparedAudio = {
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0
+    };
+    const audioTrackFile = preparedAudio.audioTrackFile;
+    if (resumeJob) {
+      const claim2 = await claimFilm(resumeJob.id);
+      if (!claim2.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: claim2.message,
+              detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+    }
+    let handedToJob = false;
+    try {
+      if (resumeJob) await runResumeClaimProbe();
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        owner: thisOwner(),
+        // Total film length, not just this call's new shots.
+        shotCount: carried.length + shotCount,
+        completed: 0,
+        estimateUsd: estimate,
+        spentUsd: 0,
+        shots: [],
+        settings: {
+          aspectRatio: args.aspectRatio,
+          resolution: args.resolution,
+          model: args.model,
+          fadeDuration: args.fadeDuration,
+          continuity: args.continuity,
+          characters: args.characters,
+          audioTrackFile,
+          audioTrackVolume: args.audioTrackVolume,
+          audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+          clipAudio: args.clipAudio,
+          pin: args.pin,
+          voiceId: args.voiceId,
+          assemble: args.assemble
+        },
+        ...resumeJob ? {
+          resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
+          carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
+          // A continued film keeps the original start anchor, so repairing shot 1
+          // of the whole film still chains from where the film actually began.
+          startFramePath: resumeJob.startFramePath,
+          warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
+          ledger: args.ledger ? {
+            locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
+            props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
+            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
+            propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
+            shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+            shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
+            voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+            promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
+            spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
+            humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
+            hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
+            scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
+            bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
+            tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
+          } : resumeJob.ledger
+        } : {
+          startFramePath: resumeFramePath ?? args.firstFrameUrl,
+          ...args.ledger ? {
+            ledger: {
+              locations: args.ledger.locations ?? [],
+              props: args.ledger.props ?? [],
+              wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+              propEvents: eventsWithShot(args.ledger.propEvents),
+              shots: args.ledger.shots,
+              shotSteps: args.ledger.shotSteps,
+              voiceId: args.voiceId ?? args.ledger.voiceId,
+              promptStyle: args.promptStyle ?? args.ledger.promptStyle,
+              spokenLines: args.ledger.spokenLines,
+              humanVisionSignOff: args.ledger.humanVisionSignOff,
+              hasPortrait: args.ledger.hasPortrait,
+              scaleMarks: args.ledger.scaleMarks,
+              bodyClearance: args.ledger.bodyClearance,
+              tier1: args.ledger.tier1
+            }
+          } : {}
+        }
+      };
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      const sourceId = resumeJob?.id;
+      void runSequenceJob(job, {
+        shots: args.shots,
+        characters: args.characters,
+        continuity: args.continuity,
+        firstFrameUrl: args.firstFrameUrl,
         aspectRatio: args.aspectRatio,
         resolution: args.resolution,
         model: args.model,
+        assemble: args.assemble,
         fadeDuration: args.fadeDuration,
-        continuity: args.continuity,
-        characters: args.characters,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio,
         pin: args.pin,
-        voiceId: args.voiceId,
-        assemble: args.assemble
-      },
-      ...resumeJob ? {
-        resumedFrom: { jobId: resumeJob.id, fromShot: carried.length },
-        carriedOverUsd: Math.round(carried.reduce((sum, s) => sum + (s.costUsd ?? 0), 0) * 100) / 100,
-        // A continued film keeps the original start anchor, so repairing shot 1
-        // of the whole film still chains from where the film actually began.
-        startFramePath: resumeJob.startFramePath,
-        warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
-        ledger: args.ledger ? {
-          locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
-          props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
-          wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
-          propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
-          shots: args.ledger.shots ?? resumeJob.ledger?.shots,
-          shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
-          voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
-          promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
-          spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
-          humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
-          hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
-          scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
-          bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
-          tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
-        } : resumeJob.ledger
-      } : {
-        startFramePath: resumeFramePath ?? args.firstFrameUrl,
-        ...args.ledger ? {
-          ledger: {
-            locations: args.ledger.locations ?? [],
-            props: args.ledger.props ?? [],
-            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
-            propEvents: eventsWithShot(args.ledger.propEvents),
-            shots: args.ledger.shots,
-            shotSteps: args.ledger.shotSteps,
-            voiceId: args.voiceId ?? args.ledger.voiceId,
-            promptStyle: args.promptStyle ?? args.ledger.promptStyle,
-            spokenLines: args.ledger.spokenLines,
-            humanVisionSignOff: args.ledger.humanVisionSignOff,
-            hasPortrait: args.ledger.hasPortrait,
-            scaleMarks: args.ledger.scaleMarks,
-            bodyClearance: args.ledger.bodyClearance,
-            tier1: args.ledger.tier1
-          }
-        } : {}
+        voiceId: args.voiceId ?? ledgerForGate?.voiceId,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: carried.length > 0 ? carried : void 0,
+        resumeFramePath
+      }).finally(() => {
+        if (sourceId) void releaseFilmClaim(sourceId);
+      });
+      handedToJob = true;
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
+        await sleep2(500);
       }
-    };
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    void runSequenceJob(job, {
-      shots: args.shots,
-      characters: args.characters,
-      continuity: args.continuity,
-      firstFrameUrl: args.firstFrameUrl,
-      aspectRatio: args.aspectRatio,
-      resolution: args.resolution,
-      model: args.model,
-      assemble: args.assemble,
-      fadeDuration: args.fadeDuration,
-      // Resolved once, up front, so a bad path fails before any shot renders.
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-      audioTrackVolume: args.audioTrackVolume,
-      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
-      clipAudio: args.clipAudio,
-      pin: args.pin,
-      voiceId: args.voiceId ?? ledgerForGate?.voiceId,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: carried.length > 0 ? carried : void 0,
-      resumeFramePath
-    });
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
-      await sleep2(500);
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
+    } finally {
+      if (resumeJob && !handedToJob) await releaseFilmClaim(resumeJob.id);
     }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
   }
 );
 server.registerTool(
@@ -47541,7 +48419,9 @@ server.registerTool(
       )
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
     const shotLocations = args.shots.map((shot) => shot.locationId);
@@ -47570,10 +48450,10 @@ server.registerTool(
     });
     const boardedShots = args.shots.map((shot, index) => {
       const snapshot = snapshots[index];
-      const extra = shot.continuityPrompt ?? snapshot?.prompt ?? "";
+      const extra2 = shot.continuityPrompt ?? snapshot?.prompt ?? "";
       return {
         ...shot,
-        continuityPrompt: extra || void 0,
+        continuityPrompt: extra2 || void 0,
         wardrobeChanged: Boolean(shot.wardrobeChanged) || wardrobeEvents.some((event) => event.shot === index + 1)
       };
     });
@@ -47583,7 +48463,7 @@ server.registerTool(
     const contractValidation = runPreVideoGate({
       overrideValidation: args.overrideValidation,
       plan: {
-        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry2) => Boolean(entry2)).map((entry2) => characterFromRecord(entry2)),
+        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry)),
         locations: args.locations,
         props: args.props,
         wardrobeEvents,
@@ -47592,7 +48472,7 @@ server.registerTool(
         shotCount: args.shots.length,
         hasReferencePicture: Boolean(baseImageUrl) || hasPortrait,
         hasPortrait,
-        shotPrompts: boardedShots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? shot.action ?? "" })).filter((entry2) => entry2.prompt.trim().length > 0)
+        shotPrompts: boardedShots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? shot.action ?? "" })).filter((entry) => entry.prompt.trim().length > 0)
       }
     });
     const framePreview = planBoardFrames({
@@ -47725,7 +48605,10 @@ server.registerTool(
       timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
     })
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    await refreshJobsFromDisk();
     const original = sequenceJobs.get(args.jobId);
     if (!original) {
       return {
@@ -47735,6 +48618,18 @@ server.registerTool(
             error: "Unknown jobId",
             detail: "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5)
+          }, null, 2)
+        }]
+      };
+    }
+    if (otherProcessHolds(original.owner) || otherProcessHolds(original.claim)) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: ALREADY_RUNNING,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
           }, null, 2)
         }]
       };
@@ -47861,65 +48756,87 @@ server.registerTool(
     }
     const repairSession = await refuseIfSessionWillNotLast(duration3 * 1e3);
     if (repairSession) return repairSession;
-    const settings = original.settings;
-    const job = {
-      id: sequenceJobId(),
-      startedAt: Date.now(),
-      state: "running",
-      shotCount: original.shots.length,
-      completed: before.length,
-      estimateUsd,
-      spentUsd: 0,
-      shots: [],
-      settings,
-      startFramePath: original.startFramePath,
-      warnings: [...original.warnings ?? []],
-      repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
-      ledger: original.ledger,
-      // Every reused shot was paid for by the original film. Count it, so the
-      // reported film total is the film's real cost rather than this call's.
-      carriedOverUsd: Math.round(
-        [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
-      ) / 100
-    };
-    if (after.length > 0) {
-      const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
-      job.warnings.push(
-        `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
-      );
+    const claim2 = await claimFilm(original.id);
+    if (!claim2.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: claim2.message,
+            detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
     }
-    sequenceJobs.set(job.id, job);
-    void persistJob(job);
-    void runSequenceJob(job, {
-      shots: [{ prompt, durationSeconds: duration3, title: target.title }],
-      characters: settings?.characters,
-      continuity: settings?.continuity,
-      firstFrameUrl: original.startFramePath,
-      aspectRatio: settings?.aspectRatio ?? "16:9",
-      resolution: settings?.resolution ?? "720p",
-      model: settings?.model ?? "grok-imagine-video-1.5",
-      assemble: settings?.assemble ?? true,
-      fadeDuration: settings?.fadeDuration ?? 0,
-      audioTrackFile: settings?.audioTrackFile,
-      audioTrackVolume: settings?.audioTrackVolume,
-      audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
-      timeoutSecondsPerShot: args.timeoutSecondsPerShot,
-      carriedShots: before.length > 0 ? before : void 0,
-      trailingShots: after.length > 0 ? after : void 0,
-      // Chain the replacement from the shot that precedes it, exactly as the
-      // original film did, so the repaired shot fits the same join.
-      resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
-    });
-    const inlineDeadline = Date.now() + 25e3;
-    while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
-      await sleep2(500);
+    let handedToJob = false;
+    try {
+      const settings = original.settings;
+      const job = {
+        id: sequenceJobId(),
+        startedAt: Date.now(),
+        state: "running",
+        owner: thisOwner(),
+        shotCount: original.shots.length,
+        completed: before.length,
+        estimateUsd,
+        spentUsd: 0,
+        shots: [],
+        settings,
+        startFramePath: original.startFramePath,
+        warnings: [...original.warnings ?? []],
+        repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+        ledger: original.ledger,
+        // Every reused shot was paid for by the original film. Count it, so the
+        // reported film total is the film's real cost rather than this call's.
+        carriedOverUsd: Math.round(
+          [...before, ...after].reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100
+        ) / 100
+      };
+      if (after.length > 0) {
+        const later = after.length === 1 ? `shot ${index + 1} still begins` : `shots ${index + 1}-${original.shots.length} still begin`;
+        job.warnings.push(
+          `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
+        );
+      }
+      sequenceJobs.set(job.id, job);
+      void persistJob(job);
+      void withoutHttpRenderMemo(() => runSequenceJob(job, {
+        shots: [{ prompt, durationSeconds: duration3, title: target.title }],
+        characters: settings?.characters,
+        continuity: settings?.continuity,
+        firstFrameUrl: original.startFramePath,
+        aspectRatio: settings?.aspectRatio ?? "16:9",
+        resolution: settings?.resolution ?? "720p",
+        model: settings?.model ?? "grok-imagine-video-1.5",
+        assemble: settings?.assemble ?? true,
+        fadeDuration: settings?.fadeDuration ?? 0,
+        audioTrackFile: settings?.audioTrackFile,
+        audioTrackVolume: settings?.audioTrackVolume,
+        audioTrackFadeOutSeconds: settings?.audioTrackFadeOutSeconds,
+        timeoutSecondsPerShot: args.timeoutSecondsPerShot,
+        carriedShots: before.length > 0 ? before : void 0,
+        trailingShots: after.length > 0 ? after : void 0,
+        // Chain the replacement from the shot that precedes it, exactly as the
+        // original film did, so the repaired shot fits the same join.
+        resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
+      }).finally(() => {
+        void releaseFilmClaim(original.id);
+      }));
+      handedToJob = true;
+      const inlineDeadline = Date.now() + 25e3;
+      while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
+        await sleep2(500);
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          action: job.state === "running" ? "started" : job.state,
+          ...jobPayload(job)
+        }, null, 2) }]
+      };
+    } finally {
+      if (!handedToJob) await releaseFilmClaim(original.id);
     }
-    return {
-      content: [{ type: "text", text: JSON.stringify({
-        action: job.state === "running" ? "started" : job.state,
-        ...jobPayload(job)
-      }, null, 2) }]
-    };
   }
 );
 server.registerTool(
@@ -47934,6 +48851,7 @@ server.registerTool(
     })
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
     const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
       jobId: job.id,
@@ -47969,6 +48887,7 @@ server.registerTool(
     })
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const job = sequenceJobs.get(args.jobId);
     if (!job) {
       return {
@@ -47987,8 +48906,9 @@ server.registerTool(
     };
   }
 );
-export {
-  loadJobsFromDisk,
-  resolutionFromLabel,
-  server
-};
+
+// mcp/stdio-main.ts
+startStdioServer().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

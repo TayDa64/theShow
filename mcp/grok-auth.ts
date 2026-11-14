@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { httpAllowsGrokSession, transportKind } from "./runtime";
 
 export const API_BASE_URL = "https://api.x.ai";
 export const PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
@@ -213,6 +214,19 @@ export function resolveVideoCredential(): CredentialResult {
         token: rawKey.trim(),
         source: "XAI_API_KEY",
       },
+    };
+  }
+
+  // A remote HTTP client must not silently spend the operator's Grok subscription.
+  // Desktop stdio still reads ~/.grok/auth.json. HTTP uses it only when opted in.
+  if (transportKind() === "http" && !httpAllowsGrokSession()) {
+    return {
+      ok: false,
+      code: "missing",
+      reason:
+        "HTTP mode bills XAI_API_KEY (xAI API credits), not the Grok subscription. " +
+        "Set XAI_API_KEY, or set THESHOW_HTTP_ALLOW_GROK_SESSION=1 to use ~/.grok/auth.json. " +
+        "That opt-in spends the subscription of whoever owns the auth file on this machine.",
     };
   }
 

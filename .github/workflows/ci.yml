@@ -74,7 +74,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:mcp
-      - run: git diff --exit-code -- mcp/server.bundle.mjs
+      - run: git diff --exit-code -- mcp/server.bundle.mjs mcp/server-http.bundle.mjs
 
   all-green:
     runs-on: ubuntu-latest

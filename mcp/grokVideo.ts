@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { acceptRenderedTake, reviewTake, type TakeReport } from "./admission";
 import { resolveVideoCredential } from "./grok-auth";
+import { memoHttpRender, toolAuth, transportKind } from "./runtime";
 import { resolveTools } from "./media";
 import { lintFailure } from "./promptLint";
 
@@ -86,6 +87,8 @@ export type GrokClipResult = {
   progress?: number;
   /** Exact amount billed for this request, converted from usage.cost_in_usd_ticks. */
   costUsd?: number;
+  /** Set when HTTP served a remembered result. The new cost is zero. */
+  reused?: boolean;
   /**
    * The render failed in a way that succeeded on the next identical attempt, so
    * the caller may re-chain rather than give up on the film. Retrying is left to
@@ -358,6 +361,21 @@ export async function generateGrokClip(
   job: GrokClipJob,
   opts: { waitForCompletion: boolean; timeoutSeconds: number },
 ): Promise<GrokClipResult> {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "clip",
+      { job, opts },
+      () => generateGrokClipNow(job, opts),
+      (result) => result.status === "completed" || Boolean(result.videoUrl),
+    );
+  }
+  return generateGrokClipNow(job, opts);
+}
+
+async function generateGrokClipNow(
+  job: GrokClipJob,
+  opts: { waitForCompletion: boolean; timeoutSeconds: number },
+): Promise<GrokClipResult> {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
 
@@ -437,7 +455,7 @@ export async function generateGrokClip(
       error: "Submit failed",
       code: "submit-failed",
       detail: transportError instanceof Error ? transportError.message : String(transportError ?? "unknown transport error"),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
     };
   }
 
@@ -448,7 +466,7 @@ export async function generateGrokClip(
       error: `Grok Imagine Video answered ${submitRes.status}`,
       code: rejected ? "rejected" : "submit-failed",
       detail: describeHttpFailure(submitRes.status, text),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
       hint: rejected
         ? "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json."
         : submitRes.status >= 500
@@ -460,14 +478,14 @@ export async function generateGrokClip(
   const submitted = (await submitRes.json()) as { request_id?: string };
   const requestId = submitted.request_id;
   if (!requestId) {
-    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: credential.source };
+    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: toolAuth(credential.source) };
   }
 
   const base = {
     requestId,
     baseUrl: credential.baseUrl,
     statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
     billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits",
   };
 
@@ -601,6 +619,8 @@ export type GrokStillResult = {
   model?: string;
   usage?: Record<string, unknown>;
   costUsd?: number;
+  /** Set when HTTP served a remembered still. The new cost is zero. */
+  reused?: boolean;
   /** Which body key the API accepted for the shape, so a caller knows what happened. */
   aspectRatioParam?: "aspect_ratio" | "aspectRatio" | "none";
   /** Which route produced the picture: a fresh generation or an edit of a base. */
@@ -645,6 +665,24 @@ export async function generateGrokStill(
      * still prompt, so re-running a board finds the file it already paid for
      * instead of buying the same frame twice.
      */
+    filename?: string;
+  },
+): Promise<GrokStillResult> {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "still",
+      { job, opts },
+      () => generateGrokStillNow(job, opts),
+      (result) => Boolean(result.localPath),
+    );
+  }
+  return generateGrokStillNow(job, opts);
+}
+
+async function generateGrokStillNow(
+  job: GrokStillJob,
+  opts: {
+    outputDir: string;
     filename?: string;
   },
 ): Promise<GrokStillResult> {
@@ -731,7 +769,7 @@ export async function generateGrokStill(
         error: "Image request failed",
         code: "submit-failed",
         detail: err instanceof Error ? err.message : String(err),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
       };
     }
 
@@ -747,7 +785,7 @@ export async function generateGrokStill(
           error: "The image route returned no image URL",
           code: "failed",
           raw: payload,
-          auth: credential.source,
+          auth: toolAuth(credential.source),
         };
       }
 
@@ -767,7 +805,7 @@ export async function generateGrokStill(
             `The prompt that was sent: ${job.prompt}. ` +
             "The file was discarded and will not be used as a pin. No vision model ran.",
           code: "rejected",
-          auth: credential.source,
+          auth: toolAuth(credential.source),
           costUsd: costUsdFromUsage(payload.usage),
         };
       }
@@ -780,7 +818,7 @@ export async function generateGrokStill(
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
         route,
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits",
       };
     }
@@ -792,7 +830,7 @@ export async function generateGrokStill(
         error: `Image generation was rejected (HTTP ${response.status})`,
         code: "rejected",
         detail: describeHttpFailure(response.status, text),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         hint: "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json.",
       };
     }
@@ -806,7 +844,7 @@ export async function generateGrokStill(
       : "Image generation failed",
     code: "submit-failed",
     detail: lastFailure ? describeHttpFailure(lastFailure.status, lastFailure.text) : undefined,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
   };
 }
 

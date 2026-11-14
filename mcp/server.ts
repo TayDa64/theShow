@@ -3,7 +3,11 @@
  * theShow MCP Server (enhanced for testing)
  * - Stubs for most tools
  * - generate_controlled_clip calls the real Grok Imagine Video backend, through
- *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation
+ *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation.
+ *
+ * Importing this module does not open a port. mcp/stdio-main.ts is the desktop
+ * entry. mcp/http-server.ts is the Streamable HTTP entry and is bundled apart
+ * from the stdio server so the desktop bundle does not include that stack.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,15 +61,55 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { runResumeClaimProbe } from "./resume-claim-probe.ts";
+import {
+  atomicWriteFile,
+  currentMcpServer,
+  elicitTimeoutMs,
+  flushJobWrites,
+  installShutdown,
+  jobShouldStop,
+  pidAlive,
+  processHost,
+  processToken,
+  publishExclusive,
+  restoreIfAbsent,
+  requestScope,
+  startJobHeartbeat,
+  thisOwner,
+  toolAuth,
+  trackWrite,
+  withoutHttpRenderMemo,
+  type JobOwner,
+} from "./runtime.ts";
 
 export const server = new McpServer({
   name: "theshow",
   version: "0.1.0",
 });
+
+type RecordedTool = {
+  name: string;
+  config: Parameters<McpServer["registerTool"]>[1];
+  handler: Parameters<McpServer["registerTool"]>[2];
+};
+
+const recordedTools: RecordedTool[] = [];
+const registerRecordedTool = server.registerTool.bind(server);
+server.registerTool = ((name: string, config: RecordedTool["config"], handler: RecordedTool["handler"]) => {
+  recordedTools.push({ name, config, handler });
+  return registerRecordedTool(name, config, handler);
+}) as McpServer["registerTool"];
+
+/** A second MCP server with the same tools, for one HTTP session. */
+export function createTheShowServer(): McpServer {
+  const next = new McpServer({ name: "theshow", version: "0.1.0" });
+  for (const tool of recordedTools) next.registerTool(tool.name, tool.config, tool.handler);
+  return next;
+}
 
 const CharacterSchema = z.object({
   name: z.string(),
@@ -179,24 +223,24 @@ type StoredCharacter = {
   appearance?: string;
   wardrobe?: CharacterWardrobe;
   referenceImageUrls?: string[];
+  updatedAt?: string;
 };
 
 const characterStore = new Map<string, StoredCharacter>();
 
 async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
 
-  // Save first: the record that comes back carries the copied reference paths,
-  // which is what later renders need. Cache what was written, not what was asked
-  // for, so the cache never claims a photo the disk does not have.
+  // Pass only the fields this call set. saveCharacter re-reads disk and keeps
+  // the other fields, so a concurrent edit of a different field is not lost
+  // to a stale cache entry.
   const saved = await saveCharacter({
     name: args.name,
-    role: args.role ?? existing?.role,
-    description: args.description ?? existing?.description,
-    appearance: args.appearance ?? existing?.appearance,
-    wardrobe: args.wardrobe ?? existing?.wardrobe,
-    referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls,
+    role: args.role,
+    description: args.description,
+    appearance: args.appearance,
+    wardrobe: args.wardrobe,
+    referenceImageUrls: args.referenceImageUrls,
   });
 
   const entry: StoredCharacter = {
@@ -207,31 +251,48 @@ async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
     appearance: saved.appearance,
     wardrobe: saved.wardrobe,
     referenceImageUrls: saved.referenceImageUrls,
+    updatedAt: saved.updatedAt,
   };
   characterStore.set(key, entry);
   return { entry, folder: saved.folder, warnings: saved.warnings };
 }
 
+function storedFrom(record: {
+  id: string;
+  name: string;
+  role?: string;
+  description?: string;
+  appearance?: string;
+  wardrobe?: CharacterWardrobe;
+  referenceImageUrls?: string[];
+  updatedAt?: string;
+}): StoredCharacter {
+  return {
+    id: record.id,
+    name: record.name,
+    role: record.role,
+    description: record.description,
+    appearance: record.appearance,
+    wardrobe: record.wardrobe,
+    referenceImageUrls: record.referenceImageUrls,
+    updatedAt: record.updatedAt,
+  };
+}
+
 function lookupCharacter(name: string) {
   const key = name.trim().toLowerCase();
-  const cached = characterStore.get(key);
-  if (cached) return cached;
-
-  // Lazy fallback so a character made in an earlier session is usable now,
-  // whether or not the startup load ran. Synchronous because plan_storyboard and
-  // mergeCharacterReferences are: one small JSON file on a cache miss is cheaper
-  // than making every caller async.
+  // Disk wins when it is newer than the cache, including a write from the
+  // other process. Synchronous because plan_storyboard and
+  // mergeCharacterReferences are.
   const fromDisk = loadCharacterSync(name);
-  if (!fromDisk) return undefined;
-  characterStore.set(key, {
-    id: fromDisk.id,
-    name: fromDisk.name,
-    role: fromDisk.role,
-    description: fromDisk.description,
-    appearance: fromDisk.appearance,
-    wardrobe: fromDisk.wardrobe,
-    referenceImageUrls: fromDisk.referenceImageUrls,
-  });
+  if (!fromDisk) {
+    characterStore.delete(key);
+    return undefined;
+  }
+  const cached = characterStore.get(key);
+  if (!cached || cached.updatedAt !== fromDisk.updatedAt) {
+    characterStore.set(key, storedFrom(fromDisk));
+  }
   return characterStore.get(key);
 }
 
@@ -270,7 +331,7 @@ async function withPersonCutouts(
 }
 
 /** Pull every saved character into the cache so lookups start warm. */
-async function loadCharactersFromDisk() {
+export async function loadCharactersFromDisk() {
   try {
     for (const character of await loadAllCharacters()) {
       characterStore.set(character.name.trim().toLowerCase(), {
@@ -281,6 +342,7 @@ async function loadCharactersFromDisk() {
         appearance: character.appearance,
         wardrobe: character.wardrobe,
         referenceImageUrls: character.referenceImageUrls,
+        updatedAt: character.updatedAt,
       });
     }
   } catch (err) {
@@ -661,11 +723,19 @@ server.registerTool(
       prompt: z.string().optional().describe("Card heading shown to the user."),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
     const title = args.prompt ?? "Configure the film";
+    const mcp = currentMcpServer(server);
+    const caps = mcp.server.getClientCapabilities();
+    const scope = requestScope();
+    const streamMissing = scope?.kind === "http" && !scope.sseConnected;
+    const canElicit = Boolean(caps?.elicitation) && !streamMissing;
 
-    const caps = server.server.getClientCapabilities();
-    const canElicit = Boolean(caps?.elicitation);
+    const fields = Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v]) => ({
+      key,
+      title: (v as { title?: string }).title ?? key,
+      description: (v as { description?: string }).description ?? "",
+    }));
 
     if (!canElicit) {
       return {
@@ -673,14 +743,13 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             elicitationSupported: false,
-            message:
-              "This client cannot show an interactive form, so ask for these fields conversationally " +
-              "in one message rather than one at a time.",
-            fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v]) => ({
-              key,
-              title: (v as { title?: string }).title ?? key,
-              description: (v as { description?: string }).description ?? "",
-            })),
+            needsInput: true,
+            message: streamMissing
+              ? "This HTTP client has no server-to-client stream, so the form cannot be shown. " +
+                "Ask for these fields conversationally in one message rather than one at a time."
+              : "This client cannot show an interactive form, so ask for these fields conversationally " +
+                "in one message rather than one at a time.",
+            fields,
           }, null, 2),
         }],
       };
@@ -690,12 +759,42 @@ server.registerTool(
     if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
 
     let result;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await server.server.elicitInput({
+      const elicitation = mcp.server.elicitInput({
         message: title,
         requestedSchema: schema,
-      } as Parameters<typeof server.server.elicitInput>[0]);
+      } as Parameters<typeof mcp.server.elicitInput>[0]);
+      // Desktop stdio waits for the form. The timeout is only for HTTP, where a
+      // client can advertise elicitation and then never answer.
+      if (scope?.kind !== "http") {
+        result = await elicitation;
+      } else {
+        const timer = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+          extra?.signal?.addEventListener("abort", () => {
+            reject(new Error("elicitation aborted"));
+          }, { once: true });
+        });
+        result = await Promise.race([elicitation, timer]);
+      }
     } catch (err) {
+      const timedOut = err instanceof Error && err.message === "elicitation timed out";
+      if (timedOut) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              elicitationSupported: false,
+              needsInput: true,
+              message:
+                "The form was not answered in time. Ask for these fields conversationally " +
+                "in one message rather than one at a time.",
+              fields,
+            }, null, 2),
+          }],
+        };
+      }
       return {
         content: [{
           type: "text",
@@ -707,6 +806,8 @@ server.registerTool(
           }, null, 2),
         }],
       };
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     if (result.action !== "accept") {
@@ -1311,6 +1412,16 @@ type ClipResult = Omit<GrokClipResult, "status"> & { status?: string };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function cancelledBeforeSpend(extra?: { signal?: AbortSignal }) {
+  if (!extra?.signal?.aborted) return undefined;
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ action: "cancelled", willRender: false }),
+    }],
+  };
+}
+
 
 server.registerTool(
   "generate_controlled_clip",
@@ -1389,7 +1500,9 @@ server.registerTool(
       timeoutSeconds: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const {
       waitForCompletion,
       timeoutSeconds,
@@ -1508,7 +1621,9 @@ server.registerTool(
       overrideValidation: z.boolean().default(false),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
     if (decideSpend(args.confirm, extensionGate) !== "spend") {
       return refusal({
@@ -1542,7 +1657,7 @@ server.registerTool(
               "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame " +
               "(from extract_last_frame). That produces a new shot continuing from the same image and " +
               "works on the subscription session.",
-            auth: credential.source,
+            auth: toolAuth(credential.source),
           }, null, 2),
         }],
       };
@@ -1563,7 +1678,7 @@ server.registerTool(
       return {
         content: [{
           type: "text",
-          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2),
+          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: toolAuth(credential.source) }, null, 2),
         }],
       };
     }
@@ -1593,7 +1708,7 @@ server.registerTool(
               videoUrl: poll.video?.url,
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
-              auth: credential.source,
+              auth: toolAuth(credential.source),
             }, null, 2),
           }],
         };
@@ -1733,7 +1848,9 @@ server.registerTool(
       ),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const imageRefs = [args.baseImageUrl, ...(args.referenceImageUrls ?? []), ...urls]
       .filter((ref): ref is string => Boolean(ref && ref.trim()));
@@ -1817,7 +1934,7 @@ server.registerTool(
           costUsd: result.costUsd,
           usage: result.usage,
           billedTo: result.billedTo,
-          auth: result.auth,
+          auth: toolAuth(result.auth),
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : undefined,
           message:
@@ -1906,7 +2023,27 @@ server.registerTool(
   }
 );
 
-async function main() {
+export function startOwnedJobHeartbeat(): () => void {
+  return startJobHeartbeat(() => {
+    const now = Date.now();
+    for (const job of sequenceJobs.values()) {
+      const ownsRun = job.state === "running" && job.owner?.token === processToken;
+      const ownsClaim = job.claim?.token === processToken;
+      if (!ownsRun && !ownsClaim) continue;
+      if (ownsRun && job.owner) job.owner.heartbeatAt = now;
+      if (ownsClaim && job.claim) job.claim.heartbeatAt = now;
+      void persistJob(job);
+    }
+  });
+}
+
+export async function startStdioServer(): Promise<void> {
+  if (process.env.THESHOW_TRANSPORT === "http") {
+    throw new Error(
+      "THESHOW_TRANSPORT=http is the Streamable HTTP entry, mcp/http-server.ts. " +
+        "This process is the desktop stdio server and does not open a port.",
+    );
+  }
   // Load films saved by earlier sessions before taking requests, so a user who
   // comes back tomorrow can still continue or repair what they paid for.
   await loadJobsFromDisk();
@@ -1916,13 +2053,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
-}
-
-const entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(entry).href) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
+  const stopBeat = startOwnedJobHeartbeat();
+  installShutdown(async () => {
+    stopBeat();
+    await flushJobWrites();
   });
 }
 
@@ -1970,11 +2104,17 @@ export function resolutionFromLabel(value: unknown): "480p" | "720p" | "1080p" |
  * timeout instead of a film. So a long sequence now registers a job, returns its
  * id immediately, and is polled with check_sequence.
  */
-type SequenceJob = {
+export type SequenceJob = {
   id: string;
   startedAt: number;
   finishedAt?: number;
   state: "running" | "completed" | "stopped" | "failed";
+  /** Who is driving a running render, so another process does not reap it. */
+  owner?: JobOwner;
+  /** Set while this film is being resumed or repaired, so a second process does not start another render. */
+  claim?: JobOwner;
+  /** Increases on every queued write. An older snapshot is not written over a newer one. */
+  revision?: number;
   shotCount: number;
   completed: number;
   estimateUsd: number;
@@ -2074,45 +2214,367 @@ type SequenceJob = {
  * finds on startup.
  */
 const sequenceJobs = new Map<string, SequenceJob>();
+const jobRevision = new Map<string, number>();
+const jobWriteChain = new Map<string, Promise<void>>();
 
-async function persistJob(job: SequenceJob) {
+function claimPath(jobId: string): string {
+  return join(JOBS_DIR, `${jobId}.claim`);
+}
+
+function noteRevision(job: SequenceJob): void {
+  if (typeof job.revision === "number") {
+    jobRevision.set(job.id, Math.max(jobRevision.get(job.id) ?? 0, job.revision));
+  }
+}
+
+/**
+ * One writer chain per job. Each call snapshots the job and takes the next
+ * revision. A heartbeat that was queued before completion is dropped once a
+ * later snapshot exists, so disk cannot go back to "running" and lose the film path.
+ */
+export async function persistJob(job: SequenceJob): Promise<void> {
+  const revision = (jobRevision.get(job.id) ?? 0) + 1;
+  job.revision = revision;
+  jobRevision.set(job.id, revision);
+  const snapshot = structuredClone(job);
+  const previous = jobWriteChain.get(job.id) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (jobRevision.get(job.id) !== revision) return;
+    try {
+      await atomicWriteFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
+      else await unlink(claimPath(job.id)).catch(() => undefined);
+    } catch (err) {
+      // A failed write must never lose the render. The job is already in memory,
+      // and the next state change tries again.
+      console.error(`theShow: could not persist job ${job.id}:`, err);
+    }
+  });
+  jobWriteChain.set(job.id, write);
+  trackWrite(write);
+  await write;
+}
+
+async function reapIfOwnerGone(job: SequenceJob): Promise<void> {
+  if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  const filmPath = job.filmPath;
+  const fileUrl = job.fileUrl;
+  job.state = "stopped";
+  job.error =
+    "The server stopped while this film was rendering. Shots already finished are kept; " +
+    "the rest were never rendered.";
+  job.finishedAt = job.finishedAt ?? Date.now();
+  if (filmPath) job.filmPath = filmPath;
+  if (fileUrl) job.fileUrl = fileUrl;
+  await persistJob(job);
+}
+
+function otherProcessHolds(owner: JobOwner | undefined): boolean {
+  if (!owner) return false;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  return !jobShouldStop(owner);
+}
+
+const ALREADY_RUNNING = "already running in another process";
+const ALREADY_RUNNING_HERE = "already running in this process";
+const TAKING_OVER = "another process is taking over this film; try again in a few seconds";
+const CLAIM_EMPTY_GRACE_MS = 1_000;
+
+function claimBusyMessage(owner: JobOwner | undefined): string {
+  if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
+  return ALREADY_RUNNING;
+}
+
+/** Keep a terminal in-memory film, including its path, ahead of a stale running copy on disk. */
+function mergeFromDisk(memory: SequenceJob | undefined, disk: SequenceJob): SequenceJob {
+  if (!memory) return disk;
+  const memRev = memory.revision ?? 0;
+  const diskRev = disk.revision ?? 0;
+  if (memRev > diskRev) return memory;
+  if (memory.state !== "running" && disk.state === "running") return memory;
+  if (memory.filmPath && !disk.filmPath) {
+    return { ...disk, filmPath: memory.filmPath, fileUrl: disk.fileUrl ?? memory.fileUrl };
+  }
+  return disk;
+}
+
+/** Re-read job files so a film started by the other transport is visible here. */
+export async function refreshJobsFromDisk(): Promise<void> {
+  let names: string[];
   try {
-    await mkdir(JOBS_DIR, { recursive: true });
-    await writeFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
-  } catch (err) {
-    // A failed write must never lose the render. The job is already in memory,
-    // and the next state change tries again.
-    console.error(`theShow: could not persist job ${job.id}:`, err);
+    names = await readdir(JOBS_DIR);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const raw = await readFile(join(JOBS_DIR, name), "utf8");
+      const job = JSON.parse(raw) as SequenceJob;
+      if (!job?.id) continue;
+      const memory = sequenceJobs.get(job.id);
+      if (memory?.owner?.token === processToken && memory.state === "running") continue;
+      const chosen = mergeFromDisk(memory, job);
+      if (chosen === job) await reapIfOwnerGone(chosen);
+      noteRevision(chosen);
+      sequenceJobs.set(chosen.id, chosen);
+    } catch {
+      // One unreadable file must not stop the others from loading.
+    }
   }
 }
 
 export async function loadJobsFromDisk() {
+  await refreshJobsFromDisk();
+}
+
+async function readClaimFile(path: string): Promise<JobOwner | undefined> {
   try {
-    const files = await readdir(JOBS_DIR);
-    for (const name of files) {
-      if (!name.endsWith(".json")) continue;
-      try {
-        const raw = await readFile(join(JOBS_DIR, name), "utf8");
-        const job = JSON.parse(raw) as SequenceJob;
-        if (!job?.id) continue;
-        // A job that was mid-render when the server died cannot be resumed by
-        // polling: nothing is driving it. Mark it honestly rather than leaving
-        // it "running" forever.
-        if (job.state === "running") {
-          job.state = "stopped";
-          job.error =
-            "The server stopped while this film was rendering. Shots already finished are kept; " +
-            "the rest were never rendered.";
-          job.finishedAt = job.finishedAt ?? Date.now();
-          void persistJob(job);
-        }
-        sequenceJobs.set(job.id, job);
-      } catch {
-        // One unreadable file must not stop the others from loading.
-      }
-    }
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as JobOwner;
+    if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return parsed;
   } catch {
-    // No jobs directory yet: a first run.
+    return undefined;
+  }
+}
+
+async function readClaim(jobId: string): Promise<JobOwner | undefined> {
+  return readClaimFile(claimPath(jobId));
+}
+
+async function claimFileAge(jobId: string): Promise<number | undefined> {
+  try {
+    const info = await stat(claimPath(jobId));
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A missing owner is an empty or broken claim. Those are stale only after a short grace, so a writer can finish. */
+function claimIsStale(owner: JobOwner | undefined, ageMs: number | undefined): boolean {
+  if (!owner) return ageMs === undefined || ageMs > CLAIM_EMPTY_GRACE_MS;
+  return jobShouldStop(owner);
+}
+
+/** Publish a complete claim file. Only one caller can create the path. */
+async function placeClaim(jobId: string, owner: JobOwner): Promise<boolean> {
+  return publishExclusive(claimPath(jobId), JSON.stringify(owner));
+}
+
+type ClaimTurn = { pid: number; token: string; host: string; at: number };
+
+function claimTurnPath(jobId: string): string {
+  return `${claimPath(jobId)}.turn`;
+}
+
+async function readClaimTurn(path: string): Promise<ClaimTurn | undefined> {
+  try {
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as Partial<ClaimTurn>;
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** A live process's turn is kept. An empty turn, or one whose pid is gone, is stale after a short grace. */
+const activeClaimTurns = new Set<string>();
+
+function claimTurnIsStale(info: ClaimTurn | undefined, ageMs: number | undefined): boolean {
+  if (!info) return ageMs === undefined || ageMs > CLAIM_EMPTY_GRACE_MS;
+  if (ageMs !== undefined && ageMs <= CLAIM_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeClaimTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== undefined && ageMs > 15_000;
+}
+
+/**
+ * Move `path` aside and delete it only when the bytes are still `expected`.
+ * Anything else is put back if the slot is empty, and never overwritten.
+ */
+async function discardIfUnchanged(path: string, expected: string): Promise<boolean> {
+  const tomb = `${path}.tomb.${randomUUID()}`;
+  try {
+    await rename(path, tomb);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  if (tombRaw !== expected) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  let tombAge: number | undefined;
+  try {
+    tombAge = Date.now() - (await stat(tomb)).mtimeMs;
+  } catch {
+    tombAge = undefined;
+  }
+  if (!tombRaw.trim() && !(tombAge !== undefined && tombAge > CLAIM_EMPTY_GRACE_MS)) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  await unlink(tomb).catch(() => undefined);
+  return true;
+}
+
+async function acquireClaimTurn(jobId: string): Promise<string | undefined> {
+  const token = randomUUID();
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() } satisfies ClaimTurn);
+  const dest = claimTurnPath(jobId);
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  let turnAge: number | undefined;
+  try {
+    turnAge = Date.now() - (await stat(dest)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+  const current = await readClaimTurn(dest);
+  if (!claimTurnIsStale(current, turnAge)) return undefined;
+  let raw = "";
+  try {
+    raw = await readFile(dest, "utf8");
+  } catch {
+    return undefined;
+  }
+  if (!await discardIfUnchanged(dest, raw)) return undefined;
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  return undefined;
+}
+
+async function releaseClaimTurn(jobId: string, token: string): Promise<void> {
+  activeClaimTurns.delete(token);
+  const dest = claimTurnPath(jobId);
+  const current = await readClaimTurn(dest);
+  if (current?.token !== token) return;
+  let raw = "";
+  try {
+    raw = await readFile(dest, "utf8");
+  } catch {
+    return;
+  }
+  if (!raw.includes(token)) return;
+  await discardIfUnchanged(dest, raw);
+}
+
+/**
+ * Exclusive on-disk claim for a film about to be resumed or repaired.
+ * A live owner blocks the second caller. Replacing a stale claim happens
+ * only while this process holds the turn file, and only if the bytes moved
+ * aside are still the stale bytes we decided to replace.
+ */
+export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  await refreshJobsFromDisk();
+  const job = sequenceJobs.get(jobId);
+  if (!job) return { ok: false, message: "Unknown job" };
+  if (job.state === "running" && otherProcessHolds(job.owner)) {
+    return { ok: false, message: ALREADY_RUNNING };
+  }
+  if (job.claim && !jobShouldStop(job.claim)) {
+    return { ok: false, message: claimBusyMessage(job.claim) };
+  }
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const age = await claimFileAge(jobId);
+    const existing = age === undefined ? undefined : await readClaim(jobId);
+    if (age !== undefined && !claimIsStale(existing, age)) {
+      return { ok: false, message: claimBusyMessage(existing) };
+    }
+    const turn = await acquireClaimTurn(jobId);
+    if (!turn) {
+      await sleep(10 + attempt);
+      continue;
+    }
+    try {
+      const heldAge = await claimFileAge(jobId);
+      const held = heldAge === undefined ? undefined : await readClaim(jobId);
+      if (heldAge !== undefined && !claimIsStale(held, heldAge)) {
+        return { ok: false, message: claimBusyMessage(held) };
+      }
+      const owner = thisOwner();
+      if (heldAge === undefined) {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = await readFile(claimPath(jobId), "utf8");
+      } catch {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
+      if (!await placeClaim(jobId, owner)) continue;
+      job.claim = owner;
+      sequenceJobs.set(job.id, job);
+      await persistJob(job);
+      return { ok: true };
+    } finally {
+      await releaseClaimTurn(jobId, turn);
+    }
+  }
+  if (await liveTurnWithoutClaim(jobId)) {
+    return { ok: false, message: TAKING_OVER };
+  }
+  return { ok: false, message: ALREADY_RUNNING };
+}
+
+/** A turn file younger than its expiry, with no live claim beside it. */
+async function liveTurnWithoutClaim(jobId: string): Promise<boolean> {
+  const dest = claimTurnPath(jobId);
+  let turnAge: number | undefined;
+  try {
+    turnAge = Date.now() - (await stat(dest)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const turn = await readClaimTurn(dest);
+  if (!turn || claimTurnIsStale(turn, turnAge)) return false;
+  const age = await claimFileAge(jobId);
+  const existing = age === undefined ? undefined : await readClaim(jobId);
+  return age === undefined || claimIsStale(existing, age);
+}
+
+export async function releaseFilmClaim(jobId: string): Promise<void> {
+  const job = sequenceJobs.get(jobId);
+  if (job?.claim?.token === processToken) {
+    job.claim = undefined;
+    await persistJob(job);
+  } else {
+    await unlink(claimPath(jobId)).catch(() => undefined);
   }
 }
 
@@ -2582,13 +3044,16 @@ server.registerTool(
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
 
     // Resolve a resume target up front so a bad id fails before anything spends.
     let resumeJob: SequenceJob | undefined;
     if (args.resumeFromJobId) {
+      await refreshJobsFromDisk();
       resumeJob = sequenceJobs.get(args.resumeFromJobId);
       if (!resumeJob) {
         return {
@@ -2599,6 +3064,18 @@ server.registerTool(
               detail:
               "No film has that id. Call list_films to see every film on disk with its job id.",
               known: Array.from(sequenceJobs.keys()).slice(-5),
+            }, null, 2),
+          }],
+        };
+      }
+      if (otherProcessHolds(resumeJob.owner) || otherProcessHolds(resumeJob.claim)) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: ALREADY_RUNNING,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id,
             }, null, 2),
           }],
         };
@@ -2815,10 +3292,40 @@ server.registerTool(
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
     if (sessionRefusal) return sessionRefusal;
 
+    // Downloads and other fallible prep happen before the film is claimed, so a
+    // bad audio URL cannot leave a claim that the heartbeat keeps fresh.
+    const preparedAudio = {
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+    };
+    const audioTrackFile = preparedAudio.audioTrackFile;
+
+    if (resumeJob) {
+      const claim = await claimFilm(resumeJob.id);
+      if (!claim.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: claim.message,
+              detail: claim.message === ALREADY_RUNNING_HERE
+                ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films."
+                : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id,
+            }, null, 2),
+          }],
+        };
+      }
+    }
+
+    let handedToJob = false;
+    try {
+      if (resumeJob) await runResumeClaimProbe();
+
     const job: SequenceJob = {
       id: sequenceJobId(),
       startedAt: Date.now(),
       state: "running",
+      owner: thisOwner(),
       // Total film length, not just this call's new shots.
       shotCount: carried.length + shotCount,
       completed: 0,
@@ -2832,7 +3339,7 @@ server.registerTool(
         fadeDuration: args.fadeDuration,
         continuity: args.continuity,
         characters: args.characters,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+        audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio,
@@ -2892,6 +3399,7 @@ server.registerTool(
 
     // Deliberately not awaited: a multi-shot chain outlives the client's request
     // timeout, and awaiting it turns a finished film into a timeout error.
+    const sourceId = resumeJob?.id;
     void runSequenceJob(job, {
       shots: args.shots,
       characters: args.characters,
@@ -2902,8 +3410,7 @@ server.registerTool(
       model: args.model,
       assemble: args.assemble,
       fadeDuration: args.fadeDuration,
-      // Resolved once, up front, so a bad path fails before any shot renders.
-      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : undefined,
+      audioTrackFile,
       audioTrackVolume: args.audioTrackVolume,
       audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
       clipAudio: args.clipAudio,
@@ -2912,7 +3419,10 @@ server.registerTool(
       timeoutSecondsPerShot: args.timeoutSecondsPerShot,
       carriedShots: carried.length > 0 ? carried : undefined,
       resumeFramePath,
+    }).finally(() => {
+      if (sourceId) void releaseFilmClaim(sourceId);
     });
+    handedToJob = true;
 
     // Give the first shot a short window so a single quick shot can come back
     // inline; anything longer is picked up by polling.
@@ -2927,6 +3437,9 @@ server.registerTool(
         ...jobPayload(job),
       }, null, 2) }],
     };
+    } finally {
+      if (resumeJob && !handedToJob) await releaseFilmClaim(resumeJob.id);
+    }
   }
 );
 
@@ -3029,7 +3542,9 @@ server.registerTool(
       ),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     // Default the base to a Location character unless the caller named one.
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
@@ -3261,7 +3776,10 @@ server.registerTool(
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    await refreshJobsFromDisk();
     const original = sequenceJobs.get(args.jobId);
     if (!original) {
       return {
@@ -3272,6 +3790,18 @@ server.registerTool(
             detail:
               "No film has that id. Call list_films to see every film on disk with its job id.",
             known: Array.from(sequenceJobs.keys()).slice(-5),
+          }, null, 2),
+        }],
+      };
+    }
+    if (otherProcessHolds(original.owner) || otherProcessHolds(original.claim)) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: ALREADY_RUNNING,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id,
           }, null, 2),
         }],
       };
@@ -3422,11 +3952,30 @@ server.registerTool(
     const repairSession = await refuseIfSessionWillNotLast(duration * 1000);
     if (repairSession) return repairSession;
 
+    const claim = await claimFilm(original.id);
+    if (!claim.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: claim.message,
+            detail: claim.message === ALREADY_RUNNING_HERE
+              ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films."
+              : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id,
+          }, null, 2),
+        }],
+      };
+    }
+
+    let handedToJob = false;
+    try {
     const settings = original.settings;
     const job: SequenceJob = {
       id: sequenceJobId(),
       startedAt: Date.now(),
       state: "running",
+      owner: thisOwner(),
       shotCount: original.shots.length,
       completed: before.length,
       estimateUsd,
@@ -3457,7 +4006,7 @@ server.registerTool(
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
-    void runSequenceJob(job, {
+    void withoutHttpRenderMemo(() => runSequenceJob(job, {
       shots: [{ prompt, durationSeconds: duration, title: target.title }],
       characters: settings?.characters,
       continuity: settings?.continuity,
@@ -3476,7 +4025,10 @@ server.registerTool(
       // Chain the replacement from the shot that precedes it, exactly as the
       // original film did, so the repaired shot fits the same join.
       resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath,
-    });
+    }).finally(() => {
+      void releaseFilmClaim(original.id);
+    }));
+    handedToJob = true;
 
     const inlineDeadline = Date.now() + 25_000;
     while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
@@ -3489,6 +4041,9 @@ server.registerTool(
         ...jobPayload(job),
       }, null, 2) }],
     };
+    } finally {
+      if (!handedToJob) await releaseFilmClaim(original.id);
+    }
   }
 );
 
@@ -3514,6 +4069,7 @@ server.registerTool(
     }),
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
     const shown = all
       .filter((job) => args.includeUnfinished || job.state === "completed")
@@ -3565,6 +4121,7 @@ server.registerTool(
     }),
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const job = sequenceJobs.get(args.jobId);
     if (!job) {
       return {

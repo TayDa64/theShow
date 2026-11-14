@@ -399,8 +399,8 @@ describe('render_sequence takes explicit per-shot frames', () => {
     expect(code).toContain('lastFramePath?: string;');
     expect(code).toContain('lastFrameUrl: shot.lastFrameUrl,');
     expect(code).toContain('lastFramePath: localImagePath(shot.lastFrameUrl),');
-    // persistJob writes the whole job, so the record has to be on the job.
-    expect(code).toContain('JSON.stringify(job, null, 2)');
+    // persistJob writes a snapshot of the whole job, so the record has to be on the job.
+    expect(code).toContain('JSON.stringify(snapshot, null, 2)');
   });
 
   it('counts shared boundaries in the plan, so a boarded film is reported as one', () => {

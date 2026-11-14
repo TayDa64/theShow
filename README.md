@@ -189,6 +189,70 @@ An unset MCP environment variable can arrive as a literal `${XAI_API_KEY}` strin
 
 ---
 
+## Remote HTTP
+
+The desktop plugin speaks MCP over stdio and does not open a port. A second process can expose the same thirteen tools over Streamable HTTP, which is the shape a Grok Chat connector on iOS needs. Tool names, input schemas, and handlers are the ones the desktop server uses.
+
+```bash
+THESHOW_TRANSPORT=http \
+THESHOW_HTTP_TOKEN="$(openssl rand -hex 32)" \
+THESHOW_HTTP_HOST=127.0.0.1 \
+THESHOW_HTTP_PORT=8787 \
+node mcp/launch.mjs
+```
+
+| Variable | Required | Default | What it does |
+|---|---|---|---|
+| `THESHOW_TRANSPORT` | no | `stdio` | `stdio` or `http`. Unset is stdio. `.mcp.json` does not set it, so the desktop launch never listens. |
+| `THESHOW_HTTP_TOKEN` | yes, in http mode | none | Bearer token. The process exits if this is missing or blank when transport is `http`. |
+| `THESHOW_HTTP_HOST` | no | `127.0.0.1` | Bind address. Anything other than loopback is refused unless `THESHOW_HTTP_EXPOSE=1`. |
+| `THESHOW_HTTP_PORT` | no | `8787` | Bind port. `0` asks the OS for a free port. |
+| `THESHOW_HTTP_EXPOSE` | no | off | Set to `1` before binding a non-loopback host. Put TLS in front of that listener. |
+| `THESHOW_HTTP_ALLOW_GROK_SESSION` | no | off | HTTP bills `XAI_API_KEY` (API credits). Set to `1` to use `~/.grok/auth.json` instead, which spends the Grok subscription of the account in that file. |
+| `THESHOW_HTTP_ALLOWED_HOSTS` | no | the bound host, `127.0.0.1`, and `localhost`, with the port | Extra `Host` values accepted when DNS-rebinding protection is on. |
+| `THESHOW_HTTP_ALLOWED_ORIGINS` | no | `http://127.0.0.1:<port>` and `http://localhost:<port>` | `Origin` values a browser may send. Any other `Origin` is rejected. |
+| `THESHOW_HTTP_SESSION_TTL_MS` | no | `1800000` | Idle session lifetime. |
+| `THESHOW_HTTP_MAX_SESSIONS` | no | `32` | Cap. The oldest idle session is closed to make room. |
+| `THESHOW_JOB_LEASE_MS` | no | `30000` | How long a running film may go without a heartbeat before another process may mark it stopped. |
+| `THESHOW_JOB_HEARTBEAT_MS` | no | `10000` | How often the process that owns a render rewrites that heartbeat. |
+
+The endpoint is `http://127.0.0.1:8787/mcp`. Every request needs `Authorization: Bearer <token>`. A missing or wrong token is rejected before any tool runs. `initialize` returns an `Mcp-Session-Id` header; send that header, and `MCP-Protocol-Version`, on later requests. `DELETE` the same URL with those headers closes the session and its transport. A dropped connection does not cancel a film. The process that started the render keeps a heartbeat on the job file under `~/.theshow/jobs`. Another process, stdio or HTTP, can see that film and will not mark it stopped while the heartbeat is fresh and the owner process is alive. A heartbeat dated more than five seconds in the future is ignored when the owner is on this machine, because a stamp that far ahead would never expire. An owner on a different machine is allowed a minute of clock skew before a future stamp is treated the same way.
+
+HTTP tool results leave out the `auth` field, so a remote client does not receive the operator email from `~/.grok/auth.json`. Without `THESHOW_HTTP_ALLOW_GROK_SESSION=1`, HTTP renders require `XAI_API_KEY` and bill API credits. Desktop stdio still tries the API key first, then the subscription session.
+
+`configure_film` returns the form fields as `needsInput` when the HTTP client has no GET stream to receive elicitation. A client that does open the stream gets the form, and on HTTP a missing answer comes back after `THESHOW_ELICIT_TIMEOUT_MS` (default 10 seconds) instead of hanging. Desktop stdio waits for the form with no timeout.
+
+The desktop bundle is `mcp/server.bundle.mjs` (`mcp/stdio-main.ts`). HTTP is `mcp/server-http.bundle.mjs` (`mcp/http-server.ts`). `node mcp/launch.mjs` picks from `THESHOW_TRANSPORT`. Importing `mcp/server.ts` does not listen and does not start stdio.
+
+The server answers POSTs with JSON. The client still has to send both accepted types:
+
+```bash
+curl -sS -D - http://127.0.0.1:8787/mcp \
+  -H "Authorization: Bearer $THESHOW_HTTP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+To reach it from Grok Chat, keep this process on `127.0.0.1` and put TLS in front of it (a reverse proxy or a tunnel). This process does not terminate TLS and does not serve rendered media over HTTPS. Point the connector at the public `https` URL of `/mcp`. If the connector has a headers field, send the bearer token there:
+
+```json
+{
+  "mcpServers": {
+    "theshow": {
+      "url": "https://your-host.example/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Set `THESHOW_HTTP_HOST=0.0.0.0` only when something else on the machine is the thing exposed to the network, and that something else is what clients connect to. Do not put the token in the URL.
+
+---
+
 ## Network, files and credentials
 
 Everything theShow touches, so you can check it rather than trust it:
@@ -200,6 +264,7 @@ Everything theShow touches, so you can check it rather than trust it:
 | Your films | Writes `~/.theshow/jobs` and `~/.theshow/media` |
 | Your cast | Writes `~/.theshow/characters`, with your reference photos copied in |
 | FFmpeg | Runs the local `ffmpeg` and `ffprobe` on your `PATH` |
+| Remote MCP | Only when `THESHOW_TRANSPORT=http`. Listens on `127.0.0.1:8787` unless host and port are set. The desktop plugin does not set that variable, so it opens no port. |
 
 That is the whole list. No telemetry, no analytics, no third-party services, and nothing is sent anywhere you did not ask a film about. Reference photos you attach are uploaded to the generation endpoint as part of the request that uses them, and are not sent anywhere else.
 
