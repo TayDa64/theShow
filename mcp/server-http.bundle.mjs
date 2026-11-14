@@ -47024,38 +47024,121 @@ async function releaseCharacterLock(lockPath, token) {
   }
   await restoreIfAbsent(tomb, lockPath);
 }
-async function stealStaleLock(lockPath) {
-  const age = await lockFileAge(lockPath);
-  const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
-  if (age === void 0 || !characterLockIsStale(info, age)) return;
+var activeLockTurns = /* @__PURE__ */ new Set();
+function lockTurnPath(lockPath) {
+  return `${lockPath}.turn`;
+}
+async function readLockTurn(path) {
+  try {
+    const raw = await readFile5(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
+  }
+}
+function lockTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CHARACTER_LOCK_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeLockTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function acquireLockTurn(lockPath) {
+  const token = randomUUID2();
+  const dest = lockTurnPath(lockPath);
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  const age = await lockFileAge(dest);
+  const current = await readLockTurn(dest);
+  if (age === void 0 || !lockTurnIsStale(current, age)) return void 0;
   let raw = "";
   try {
-    raw = await readFile5(lockPath, "utf8");
+    raw = await readFile5(dest, "utf8");
   } catch {
-    return;
+    return void 0;
   }
-  const tomb = `${lockPath}.steal.${randomUUID2()}`;
+  const tomb = `${dest}.steal.${randomUUID2()}`;
   try {
-    await rename2(lockPath, tomb);
+    await rename2(dest, tomb);
+    const moved = await readFile5(tomb, "utf8").catch(() => "");
+    if (moved !== raw) {
+      await restoreIfAbsent(tomb, dest);
+      return void 0;
+    }
+    await unlink2(tomb).catch(() => void 0);
   } catch (err) {
-    if (err.code === "ENOENT") return;
+    await unlink2(tomb).catch(() => void 0);
+    if (err.code === "ENOENT") return void 0;
     throw err;
   }
-  let tombRaw = "";
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  return void 0;
+}
+async function releaseLockTurn(lockPath, token) {
+  activeLockTurns.delete(token);
+  const dest = lockTurnPath(lockPath);
+  const current = await readLockTurn(dest);
+  if (current?.token !== token) return;
+  await unlink2(dest).catch(() => void 0);
+}
+async function stealStaleLock(lockPath) {
+  const turn = await acquireLockTurn(lockPath);
+  if (!turn) return;
+  let tomb;
+  let drop = false;
   try {
-    tombRaw = await readFile5(tomb, "utf8");
-  } catch {
-    tombRaw = "";
+    const age = await lockFileAge(lockPath);
+    const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
+    if (age === void 0 || !characterLockIsStale(info, age)) return;
+    let raw = "";
+    try {
+      raw = await readFile5(lockPath, "utf8");
+    } catch {
+      return;
+    }
+    tomb = `${lockPath}.steal.${randomUUID2()}`;
+    try {
+      await rename2(lockPath, tomb);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        tomb = void 0;
+        return;
+      }
+      throw err;
+    }
+    let tombRaw = "";
+    try {
+      tombRaw = await readFile5(tomb, "utf8");
+    } catch {
+      tombRaw = "";
+    }
+    const tombAge = await lockFileAge(tomb);
+    const tombInfo = await readCharacterLock(tomb);
+    if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    drop = true;
+  } finally {
+    if (tomb && !drop) await restoreIfAbsent(tomb, lockPath).catch(() => void 0);
+    if (tomb) await unlink2(tomb).catch(() => void 0);
+    await releaseLockTurn(lockPath, turn);
   }
-  const tombAge = await lockFileAge(tomb);
-  const tombInfo = await readCharacterLock(tomb);
-  const sameBytes = tombRaw === raw;
-  const stillStale = characterLockIsStale(tombInfo, tombAge);
-  if (!sameBytes || !stillStale) {
-    await restoreIfAbsent(tomb, lockPath);
-    return;
-  }
-  await unlink2(tomb).catch(() => void 0);
 }
 async function withFolderLock(folder, body) {
   await mkdir4(folder, { recursive: true });
@@ -49511,6 +49594,7 @@ function otherProcessHolds(owner) {
 }
 var ALREADY_RUNNING = "already running in another process";
 var ALREADY_RUNNING_HERE = "already running in this process";
+var TAKING_OVER = "another process is taking over this film; try again in a few seconds";
 var CLAIM_EMPTY_GRACE_MS = 1e3;
 function claimBusyMessage(owner) {
   if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
@@ -49743,7 +49827,24 @@ async function claimFilm(jobId) {
       await releaseClaimTurn(jobId, turn);
     }
   }
+  if (await liveTurnWithoutClaim(jobId)) {
+    return { ok: false, message: TAKING_OVER };
+  }
   return { ok: false, message: ALREADY_RUNNING };
+}
+async function liveTurnWithoutClaim(jobId) {
+  const dest = claimTurnPath(jobId);
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const turn = await readClaimTurn(dest);
+  if (!turn || claimTurnIsStale(turn, turnAge)) return false;
+  const age = await claimFileAge(jobId);
+  const existing = age === void 0 ? void 0 : await readClaim(jobId);
+  return age === void 0 || claimIsStale(existing, age);
 }
 async function releaseFilmClaim(jobId) {
   const job = sequenceJobs.get(jobId);

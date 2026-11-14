@@ -346,6 +346,23 @@ describe("film claim", () => {
     }
   });
 
+  it("says a takeover is in progress when a live turn has no claim", async () => {
+    const id = "seq_turn_only";
+    await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
+    await writeFile(path.join(JOBS_DIR, `${id}.claim.turn`), JSON.stringify({
+      pid: 2_000_000_000,
+      token: "holder",
+      host: "other-host",
+      at: Date.now(),
+    }));
+    const result = await claimFilm(id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toBe("another process is taking over this film; try again in a few seconds");
+    }
+    await unlink(path.join(JOBS_DIR, `${id}.claim.turn`)).catch(() => undefined);
+  });
+
   it("still claims a film when link() is not supported", async () => {
     const id = "seq_nolink";
     await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));

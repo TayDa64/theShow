@@ -2277,6 +2277,7 @@ function otherProcessHolds(owner: JobOwner | undefined): boolean {
 
 const ALREADY_RUNNING = "already running in another process";
 const ALREADY_RUNNING_HERE = "already running in this process";
+const TAKING_OVER = "another process is taking over this film; try again in a few seconds";
 const CLAIM_EMPTY_GRACE_MS = 1_000;
 
 function claimBusyMessage(owner: JobOwner | undefined): string {
@@ -2545,7 +2546,26 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
       await releaseClaimTurn(jobId, turn);
     }
   }
+  if (await liveTurnWithoutClaim(jobId)) {
+    return { ok: false, message: TAKING_OVER };
+  }
   return { ok: false, message: ALREADY_RUNNING };
+}
+
+/** A turn file younger than its expiry, with no live claim beside it. */
+async function liveTurnWithoutClaim(jobId: string): Promise<boolean> {
+  const dest = claimTurnPath(jobId);
+  let turnAge: number | undefined;
+  try {
+    turnAge = Date.now() - (await stat(dest)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const turn = await readClaimTurn(dest);
+  if (!turn || claimTurnIsStale(turn, turnAge)) return false;
+  const age = await claimFileAge(jobId);
+  const existing = age === undefined ? undefined : await readClaim(jobId);
+  return age === undefined || claimIsStale(existing, age);
 }
 
 export async function releaseFilmClaim(jobId: string): Promise<void> {

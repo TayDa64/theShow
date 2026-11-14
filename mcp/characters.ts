@@ -270,42 +270,135 @@ async function releaseCharacterLock(lockPath: string, token: string): Promise<vo
   await restoreIfAbsent(tomb, lockPath);
 }
 
-/**
- * Drop a stale lock only when the file we moved aside is still that same stale file.
- * A live lock that landed in the tomb is put back if the slot is empty, and left untouched otherwise.
- */
-async function stealStaleLock(lockPath: string): Promise<void> {
-  const age = await lockFileAge(lockPath);
-  const info = age === undefined ? undefined : await readCharacterLock(lockPath);
-  if (age === undefined || !characterLockIsStale(info, age)) return;
+type LockTurn = { pid: number; token: string; host: string; at: number };
+
+const activeLockTurns = new Set<string>();
+
+function lockTurnPath(lockPath: string): string {
+  return `${lockPath}.turn`;
+}
+
+async function readLockTurn(path: string): Promise<LockTurn | undefined> {
+  try {
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as Partial<LockTurn>;
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** One stealer at a time. A live turn is kept; a dead or abandoned one expires. */
+function lockTurnIsStale(info: LockTurn | undefined, ageMs: number | undefined): boolean {
+  if (!info) return ageMs === undefined || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (ageMs !== undefined && ageMs <= CHARACTER_LOCK_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeLockTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== undefined && ageMs > 15_000;
+}
+
+async function acquireLockTurn(lockPath: string): Promise<string | undefined> {
+  const token = randomUUID();
+  const dest = lockTurnPath(lockPath);
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() } satisfies LockTurn);
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  const age = await lockFileAge(dest);
+  const current = await readLockTurn(dest);
+  if (age === undefined || !lockTurnIsStale(current, age)) return undefined;
   let raw = "";
   try {
-    raw = await readFile(lockPath, "utf8");
+    raw = await readFile(dest, "utf8");
   } catch {
-    return;
+    return undefined;
   }
-  const tomb = `${lockPath}.steal.${randomUUID()}`;
+  const tomb = `${dest}.steal.${randomUUID()}`;
   try {
-    await rename(lockPath, tomb);
+    await rename(dest, tomb);
+    const moved = await readFile(tomb, "utf8").catch(() => "");
+    if (moved !== raw) {
+      await restoreIfAbsent(tomb, dest);
+      return undefined;
+    }
+    await unlink(tomb).catch(() => undefined);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    await unlink(tomb).catch(() => undefined);
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
   }
-  let tombRaw = "";
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  return undefined;
+}
+
+async function releaseLockTurn(lockPath: string, token: string): Promise<void> {
+  activeLockTurns.delete(token);
+  const dest = lockTurnPath(lockPath);
+  const current = await readLockTurn(dest);
+  if (current?.token !== token) return;
+  await unlink(dest).catch(() => undefined);
+}
+
+/**
+ * Drop a stale lock only while this process holds the turn, and only when the
+ * file moved aside is still that same stale file. The .steal file is removed
+ * on every exit, including when the move is put back or the body throws.
+ */
+async function stealStaleLock(lockPath: string): Promise<void> {
+  const turn = await acquireLockTurn(lockPath);
+  if (!turn) return;
+  let tomb: string | undefined;
+  let drop = false;
   try {
-    tombRaw = await readFile(tomb, "utf8");
-  } catch {
-    tombRaw = "";
+    const age = await lockFileAge(lockPath);
+    const info = age === undefined ? undefined : await readCharacterLock(lockPath);
+    if (age === undefined || !characterLockIsStale(info, age)) return;
+    let raw = "";
+    try {
+      raw = await readFile(lockPath, "utf8");
+    } catch {
+      return;
+    }
+    tomb = `${lockPath}.steal.${randomUUID()}`;
+    try {
+      await rename(lockPath, tomb);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        tomb = undefined;
+        return;
+      }
+      throw err;
+    }
+    let tombRaw = "";
+    try {
+      tombRaw = await readFile(tomb, "utf8");
+    } catch {
+      tombRaw = "";
+    }
+    const tombAge = await lockFileAge(tomb);
+    const tombInfo = await readCharacterLock(tomb);
+    if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    drop = true;
+  } finally {
+    if (tomb && !drop) await restoreIfAbsent(tomb, lockPath).catch(() => undefined);
+    if (tomb) await unlink(tomb).catch(() => undefined);
+    await releaseLockTurn(lockPath, turn);
   }
-  const tombAge = await lockFileAge(tomb);
-  const tombInfo = await readCharacterLock(tomb);
-  const sameBytes = tombRaw === raw;
-  const stillStale = characterLockIsStale(tombInfo, tombAge);
-  if (!sameBytes || !stillStale) {
-    await restoreIfAbsent(tomb, lockPath);
-    return;
-  }
-  await unlink(tomb).catch(() => undefined);
 }
 
 async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
