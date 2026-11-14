@@ -10,9 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { holdCharacterLock, saveCharacter } from "../mcp/characters.ts";
+import { characterLockWaitMs, holdCharacterLock, saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
-import { flushJobWrites, jobShouldStop } from "../mcp/runtime.ts";
+import { exclusiveFs, flushJobWrites, jobShouldStop } from "../mcp/runtime.ts";
+import { setResumeClaimProbe } from "../mcp/resume-claim-probe.ts";
 import {
   claimFilm,
   createTheShowServer,
@@ -175,6 +176,55 @@ describe("character lock", () => {
       else process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS = previousRefresh;
     }
   });
+
+  it("gives each acquisition its own token and stops waiting at the configured limit", async () => {
+    const previous = process.env.THESHOW_CHARACTERS_DIR;
+    const previousWait = process.env.THESHOW_CHARACTER_LOCK_WAIT_MS;
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-lock-"));
+    process.env.THESHOW_CHARACTERS_DIR = dir;
+    process.env.THESHOW_CHARACTER_LOCK_WAIT_MS = "200";
+    expect(characterLockWaitMs()).toBe(200);
+    try {
+      await saveCharacter({ name: "Ada" });
+      let firstToken = "";
+      let releaseHold: () => void = () => undefined;
+      const hold = new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      });
+      const holder = holdCharacterLock("Ada", async () => {
+        firstToken = JSON.parse(readFileSync(path.join(dir, "ada", ".write.lock"), "utf8")).token as string;
+        await hold;
+      });
+      await vi.waitFor(() => expect(firstToken).not.toBe(""));
+      let secondToken = "";
+      const next = holdCharacterLock("Ada", async () => {
+        secondToken = JSON.parse(readFileSync(path.join(dir, "ada", ".write.lock"), "utf8")).token as string;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(secondToken).toBe("");
+      releaseHold();
+      await holder;
+      await next;
+      expect(secondToken).not.toBe("");
+      expect(secondToken).not.toBe(firstToken);
+
+      const started = Date.now();
+      await expect(saveCharacter({ name: "Bea", role: "extra" })).resolves.toMatchObject({ role: "extra" });
+      await writeFile(path.join(dir, "bea", ".write.lock"), JSON.stringify({
+        pid: process.pid,
+        token: "held-by-someone",
+        host: hostname(),
+        at: Date.now(),
+      }));
+      await expect(saveCharacter({ name: "Bea", description: "short" })).rejects.toThrow(/Could not lock/);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      if (previous === undefined) delete process.env.THESHOW_CHARACTERS_DIR;
+      else process.env.THESHOW_CHARACTERS_DIR = previous;
+      if (previousWait === undefined) delete process.env.THESHOW_CHARACTER_LOCK_WAIT_MS;
+      else process.env.THESHOW_CHARACTER_LOCK_WAIT_MS = previousWait;
+    }
+  });
 });
 
 function film(id: string, extra: Partial<SequenceJob> = {}): SequenceJob {
@@ -252,7 +302,9 @@ describe("film claim", () => {
     const id = `seq_throw_${Date.now().toString(36)}`;
     await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
     process.env.XAI_API_KEY = "test-key-not-a-real-credential";
-    process.env.THESHOW_THROW_AFTER_CLAIM = "1";
+    setResumeClaimProbe(() => {
+      throw new Error("throw after claim");
+    });
     const show = createTheShowServer();
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await show.connect(serverTransport);
@@ -287,10 +339,28 @@ describe("film claim", () => {
       expect(secondText).not.toContain("already running");
       expect(existsSync(path.join(JOBS_DIR, `${id}.claim`))).toBe(false);
     } finally {
-      delete process.env.THESHOW_THROW_AFTER_CLAIM;
+      setResumeClaimProbe(undefined);
       delete process.env.XAI_API_KEY;
       await client.close();
       await show.close();
+    }
+  });
+
+  it("still claims a film when link() is not supported", async () => {
+    const id = "seq_nolink";
+    await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(film(id)));
+    const linkSpy = vi.spyOn(exclusiveFs, "link").mockRejectedValue(
+      Object.assign(new Error("hard links unsupported"), { code: "ENOTSUP" }),
+    );
+    try {
+      const won = await claimFilm(id);
+      expect(won.ok, JSON.stringify(won)).toBe(true);
+      expect(linkSpy).toHaveBeenCalled();
+      const second = await claimFilm(id);
+      expect(second.ok).toBe(false);
+    } finally {
+      linkSpy.mockRestore();
+      await releaseFilmClaim(id);
     }
   });
 });

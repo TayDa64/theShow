@@ -6,7 +6,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -156,6 +156,90 @@ export async function atomicWriteFile(path: string, data: string): Promise<void>
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
   await rename(tmp, path);
+}
+
+/** link() is missing on some volumes. Those errors mean "try another exclusive create", not "the slot is taken". */
+const LINK_UNSUPPORTED = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS", "EINVAL"]);
+
+function linkUnsupported(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return typeof code === "string" && LINK_UNSUPPORTED.has(code);
+}
+
+/** Indirection so tests can stub hard links. Production calls node:fs link. */
+export const exclusiveFs = {
+  link: (existing: string, hardLink: string) => link(existing, hardLink),
+};
+
+/**
+ * Create `dest` only if it does not exist, and only once the bytes are complete.
+ * link() of a finished temp file is the normal path. When the volume cannot
+ * hard-link, fall back to an exclusive create of `dest` itself, then write and
+ * fsync. Callers treat an empty or partial dest as unfinished for a short grace.
+ */
+export async function publishExclusive(dest: string, body: string): Promise<boolean> {
+  await mkdir(dirname(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tmp, body, "utf8");
+  try {
+    try {
+      await exclusiveFs.link(tmp, dest);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      if (!linkUnsupported(err)) throw err;
+    }
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(dest, "wx");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw err;
+    }
+    try {
+      await handle.writeFile(body, "utf8");
+      await handle.sync();
+      return true;
+    } catch (err) {
+      await unlink(dest).catch(() => undefined);
+      throw err;
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await unlink(tmp).catch(() => undefined);
+  }
+}
+
+/**
+ * Put `source` back at `dest` only when `dest` is absent.
+ * A failed link leaves `source` in place. It never replaces a newer file.
+ */
+export async function restoreIfAbsent(source: string, dest: string): Promise<"restored" | "occupied"> {
+  try {
+    await exclusiveFs.link(source, dest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return "occupied";
+    if (!linkUnsupported(err)) throw err;
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(dest, "wx");
+    } catch (openErr) {
+      if ((openErr as NodeJS.ErrnoException).code === "EEXIST") return "occupied";
+      throw openErr;
+    }
+    try {
+      await handle.writeFile(await readFile(source));
+      await handle.sync();
+    } catch (writeErr) {
+      await unlink(dest).catch(() => undefined);
+      throw writeErr;
+    } finally {
+      await handle.close();
+    }
+  }
+  await unlink(source).catch(() => undefined);
+  return "restored";
 }
 
 export function trackWrite(work: Promise<void>): void {

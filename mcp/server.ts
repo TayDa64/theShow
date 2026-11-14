@@ -61,9 +61,10 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { runResumeClaimProbe } from "./resume-claim-probe.ts";
 import {
   atomicWriteFile,
   currentMcpServer,
@@ -71,7 +72,11 @@ import {
   flushJobWrites,
   installShutdown,
   jobShouldStop,
+  pidAlive,
+  processHost,
   processToken,
+  publishExclusive,
+  restoreIfAbsent,
   requestScope,
   startJobHeartbeat,
   thisOwner,
@@ -2353,26 +2358,132 @@ function claimIsStale(owner: JobOwner | undefined, ageMs: number | undefined): b
   return jobShouldStop(owner);
 }
 
-/** Publish a complete claim file. link fails if the destination already exists, so only one caller wins. */
+/** Publish a complete claim file. Only one caller can create the path. */
 async function placeClaim(jobId: string, owner: JobOwner): Promise<boolean> {
-  const dest = claimPath(jobId);
-  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(tmp, JSON.stringify(owner));
+  return publishExclusive(claimPath(jobId), JSON.stringify(owner));
+}
+
+type ClaimTurn = { pid: number; token: string; host: string; at: number };
+
+function claimTurnPath(jobId: string): string {
+  return `${claimPath(jobId)}.turn`;
+}
+
+async function readClaimTurn(path: string): Promise<ClaimTurn | undefined> {
   try {
-    await link(tmp, dest);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    return false;
-  } finally {
-    await unlink(tmp).catch(() => undefined);
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as Partial<ClaimTurn>;
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0,
+    };
+  } catch {
+    return undefined;
   }
+}
+
+/** A live process's turn is kept. An empty turn, or one whose pid is gone, is stale after a short grace. */
+const activeClaimTurns = new Set<string>();
+
+function claimTurnIsStale(info: ClaimTurn | undefined, ageMs: number | undefined): boolean {
+  if (!info) return ageMs === undefined || ageMs > CLAIM_EMPTY_GRACE_MS;
+  if (ageMs !== undefined && ageMs <= CLAIM_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeClaimTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== undefined && ageMs > 15_000;
+}
+
+/**
+ * Move `path` aside and delete it only when the bytes are still `expected`.
+ * Anything else is put back if the slot is empty, and never overwritten.
+ */
+async function discardIfUnchanged(path: string, expected: string): Promise<boolean> {
+  const tomb = `${path}.tomb.${randomUUID()}`;
+  try {
+    await rename(path, tomb);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  if (tombRaw !== expected) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  let tombAge: number | undefined;
+  try {
+    tombAge = Date.now() - (await stat(tomb)).mtimeMs;
+  } catch {
+    tombAge = undefined;
+  }
+  if (!tombRaw.trim() && !(tombAge !== undefined && tombAge > CLAIM_EMPTY_GRACE_MS)) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  await unlink(tomb).catch(() => undefined);
+  return true;
+}
+
+async function acquireClaimTurn(jobId: string): Promise<string | undefined> {
+  const token = randomUUID();
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() } satisfies ClaimTurn);
+  const dest = claimTurnPath(jobId);
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  let turnAge: number | undefined;
+  try {
+    turnAge = Date.now() - (await stat(dest)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+  const current = await readClaimTurn(dest);
+  if (!claimTurnIsStale(current, turnAge)) return undefined;
+  let raw = "";
+  try {
+    raw = await readFile(dest, "utf8");
+  } catch {
+    return undefined;
+  }
+  if (!await discardIfUnchanged(dest, raw)) return undefined;
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  return undefined;
+}
+
+async function releaseClaimTurn(jobId: string, token: string): Promise<void> {
+  activeClaimTurns.delete(token);
+  const dest = claimTurnPath(jobId);
+  const current = await readClaimTurn(dest);
+  if (current?.token !== token) return;
+  let raw = "";
+  try {
+    raw = await readFile(dest, "utf8");
+  } catch {
+    return;
+  }
+  if (!raw.includes(token)) return;
+  await discardIfUnchanged(dest, raw);
 }
 
 /**
  * Exclusive on-disk claim for a film about to be resumed or repaired.
- * A live owner blocks the second caller. Taking over a dead claim renames that
- * file aside first, so two processes cannot both delete it and both create a new one.
+ * A live owner blocks the second caller. Replacing a stale claim happens
+ * only while this process holds the turn file, and only if the bytes moved
+ * aside are still the stale bytes we decided to replace.
  */
 export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
   await refreshJobsFromDisk();
@@ -2385,42 +2496,54 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
     return { ok: false, message: claimBusyMessage(job.claim) };
   }
 
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 40; attempt++) {
     const age = await claimFileAge(jobId);
     const existing = age === undefined ? undefined : await readClaim(jobId);
     if (age !== undefined && !claimIsStale(existing, age)) {
       return { ok: false, message: claimBusyMessage(existing) };
     }
-    const owner = thisOwner();
-    if (age === undefined) {
-      if (await placeClaim(jobId, owner)) {
-        job.claim = owner;
-        sequenceJobs.set(job.id, job);
-        await persistJob(job);
-        return { ok: true };
-      }
+    const turn = await acquireClaimTurn(jobId);
+    if (!turn) {
+      await sleep(10 + attempt);
       continue;
     }
-    const tomb = `${claimPath(jobId)}.tomb.${randomUUID()}`;
     try {
-      await rename(claimPath(jobId), tomb);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
+      const heldAge = await claimFileAge(jobId);
+      const held = heldAge === undefined ? undefined : await readClaim(jobId);
+      if (heldAge !== undefined && !claimIsStale(held, heldAge)) {
+        return { ok: false, message: claimBusyMessage(held) };
+      }
+      const owner = thisOwner();
+      if (heldAge === undefined) {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = await readFile(claimPath(jobId), "utf8");
+      } catch {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
+      if (!await placeClaim(jobId, owner)) continue;
+      job.claim = owner;
+      sequenceJobs.set(job.id, job);
+      await persistJob(job);
+      return { ok: true };
+    } finally {
+      await releaseClaimTurn(jobId, turn);
     }
-    const displaced = await readClaimFile(tomb);
-    if (existing?.token && displaced?.token && displaced.token !== existing.token) {
-      await link(tomb, claimPath(jobId)).catch(() => undefined);
-      await unlink(tomb).catch(() => undefined);
-      continue;
-    }
-    const won = await placeClaim(jobId, owner);
-    await unlink(tomb).catch(() => undefined);
-    if (!won) continue;
-    job.claim = owner;
-    sequenceJobs.set(job.id, job);
-    await persistJob(job);
-    return { ok: true };
   }
   return { ok: false, message: ALREADY_RUNNING };
 }
@@ -3176,9 +3299,7 @@ server.registerTool(
 
     let handedToJob = false;
     try {
-      if (process.env.THESHOW_THROW_AFTER_CLAIM === "1" && resumeJob) {
-        throw new Error("throw after claim");
-      }
+      if (resumeJob) await runResumeClaimProbe();
 
     const job: SequenceJob = {
       id: sequenceJobId(),

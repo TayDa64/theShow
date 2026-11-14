@@ -12,13 +12,13 @@
  * for films; THESHOW_CHARACTERS_DIR overrides, for tests.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
-import { atomicWriteFile, pidAlive, processHost, processToken } from "./runtime.ts";
+import { atomicWriteFile, pidAlive, processHost, publishExclusive, restoreIfAbsent } from "./runtime.ts";
 
 export const CHARACTERS_DIR =
   process.env.THESHOW_CHARACTERS_DIR || join(homedir(), ".theshow", "characters");
@@ -174,14 +174,22 @@ async function folderForWrite(root: string, name: string) {
   return record && sameName(record.name, name) ? plain : hashed;
 }
 
-const CHARACTER_LOCK_WAIT_MS = 60_000;
+const CHARACTER_LOCK_WAIT_MS = 10_000;
 const CHARACTER_LOCK_STALE_MS = 30_000;
 const CHARACTER_LOCK_REFRESH_MS = 10_000;
+const CHARACTER_LOCK_EMPTY_GRACE_MS = 1_000;
 
 function characterLockRefreshMs(): number {
   const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
   if (Number.isFinite(raw) && raw >= 10) return raw;
   return CHARACTER_LOCK_REFRESH_MS;
+}
+
+/** How long a saver waits for someone else's lock. `THESHOW_CHARACTER_LOCK_WAIT_MS` overrides the 10s default. */
+export function characterLockWaitMs(): number {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_WAIT_MS);
+  if (Number.isFinite(raw) && raw >= 50) return raw;
+  return CHARACTER_LOCK_WAIT_MS;
 }
 
 type CharacterLock = { pid: number; token: string; host: string; at: number };
@@ -201,8 +209,22 @@ async function readCharacterLock(lockPath: string): Promise<CharacterLock | unde
   }
 }
 
-function characterLockIsStale(info: CharacterLock | undefined, now = Date.now()): boolean {
-  if (!info) return true;
+async function lockFileAge(lockPath: string): Promise<number | undefined> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An empty or unreadable lock is only stale after a short grace, so a writer can finish publishing it. */
+function characterLockIsStale(
+  info: CharacterLock | undefined,
+  ageMs: number | undefined,
+  now = Date.now(),
+): boolean {
+  if (!info) return ageMs === undefined || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
   if (info.at > now + 5_000) return true;
   if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
   if (info.host === processHost && !pidAlive(info.pid)) return true;
@@ -213,23 +235,28 @@ function characterLockBody(token: string, at = Date.now()): string {
   return JSON.stringify({ pid: process.pid, token, host: processHost, at });
 }
 
+/** Rewrite the timestamp in place. Replacing the file would clobber a newer holder. */
 async function refreshCharacterLock(lockPath: string, token: string): Promise<void> {
-  const current = await readCharacterLock(lockPath);
-  if (current?.token !== token) return;
-  const tmp = `${lockPath}.${token}.refresh`;
-  await writeFile(tmp, characterLockBody(token));
-  const again = await readCharacterLock(lockPath);
-  if (again?.token !== token) {
-    await unlink(tmp).catch(() => undefined);
-    return;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(lockPath, "r+");
+    const raw = await handle.readFile("utf8");
+    const parsed = JSON.parse(raw) as Partial<CharacterLock>;
+    if (parsed.token !== token) return;
+    const body = Buffer.from(characterLockBody(token));
+    await handle.write(body, 0, body.length, 0);
+    await handle.truncate(body.length);
+    await handle.sync();
+  } catch {
+    // A missing or partial lock is left alone. Readers apply the empty-file grace.
+  } finally {
+    await handle?.close();
   }
-  await rename(tmp, lockPath).catch(() => undefined);
-  await unlink(tmp).catch(() => undefined);
 }
 
-/** Remove the lock only when the file still names this holder. */
+/** Remove the lock only when the moved file still names this holder. Never replace a newer lock. */
 async function releaseCharacterLock(lockPath: string, token: string): Promise<void> {
-  const tomb = `${lockPath}.unlock.${token}`;
+  const tomb = `${lockPath}.unlock.${randomUUID()}`;
   try {
     await rename(lockPath, tomb);
   } catch {
@@ -240,40 +267,74 @@ async function releaseCharacterLock(lockPath: string, token: string): Promise<vo
     await unlink(tomb).catch(() => undefined);
     return;
   }
-  await rename(tomb, lockPath).catch(() => undefined);
+  await restoreIfAbsent(tomb, lockPath);
+}
+
+/**
+ * Drop a stale lock only when the file we moved aside is still that same stale file.
+ * A live lock that landed in the tomb is put back if the slot is empty, and left untouched otherwise.
+ */
+async function stealStaleLock(lockPath: string): Promise<void> {
+  const age = await lockFileAge(lockPath);
+  const info = age === undefined ? undefined : await readCharacterLock(lockPath);
+  if (age === undefined || !characterLockIsStale(info, age)) return;
+  let raw = "";
+  try {
+    raw = await readFile(lockPath, "utf8");
+  } catch {
+    return;
+  }
+  const tomb = `${lockPath}.steal.${randomUUID()}`;
+  try {
+    await rename(lockPath, tomb);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  const tombAge = await lockFileAge(tomb);
+  const tombInfo = await readCharacterLock(tomb);
+  const sameBytes = tombRaw === raw;
+  const stillStale = characterLockIsStale(tombInfo, tombAge);
+  if (!sameBytes || !stillStale) {
+    await restoreIfAbsent(tomb, lockPath);
+    return;
+  }
+  await unlink(tomb).catch(() => undefined);
 }
 
 async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
   await mkdir(folder, { recursive: true });
   const lockPath = join(folder, ".write.lock");
-  const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
+  const deadline = Date.now() + characterLockWaitMs();
   let delay = 20;
-  const token = processToken;
+  const token = randomUUID();
   while (true) {
-    try {
-      const handle = await open(lockPath, "wx");
+    const published = await publishExclusive(lockPath, characterLockBody(token));
+    if (published) {
       const refresh = setInterval(() => {
         void refreshCharacterLock(lockPath, token);
       }, characterLockRefreshMs());
       refresh.unref?.();
       try {
-        await handle.writeFile(characterLockBody(token));
         return await body();
       } finally {
         clearInterval(refresh);
         await releaseCharacterLock(lockPath, token);
-        await handle.close();
       }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      if (characterLockIsStale(await readCharacterLock(lockPath))) {
-        await unlink(lockPath).catch(() => undefined);
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      delay = Math.min(delay * 2, 250);
     }
+    if (characterLockIsStale(await readCharacterLock(lockPath), await lockFileAge(lockPath))) {
+      await stealStaleLock(lockPath);
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(delay * 2, 250);
   }
 }
 

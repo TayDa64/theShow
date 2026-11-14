@@ -42950,7 +42950,7 @@ import { dirname as dirname3, join as join3 } from "node:path";
 // mcp/runtime.ts
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash as createHash2, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir as mkdir2, rename, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir2, open as open2, readFile as readFile3, rename, unlink, writeFile as writeFile2 } from "node:fs/promises";
 import { hostname as hostname3 } from "node:os";
 import { dirname as dirname2 } from "node:path";
 var processToken = randomUUID();
@@ -43022,6 +43022,73 @@ async function atomicWriteFile(path, data) {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile2(tmp, data, "utf8");
   await rename(tmp, path);
+}
+var LINK_UNSUPPORTED = /* @__PURE__ */ new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS", "EINVAL"]);
+function linkUnsupported(err) {
+  const code = err.code;
+  return typeof code === "string" && LINK_UNSUPPORTED.has(code);
+}
+var exclusiveFs = {
+  link: (existing, hardLink) => link(existing, hardLink)
+};
+async function publishExclusive(dest, body) {
+  await mkdir2(dirname2(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile2(tmp, body, "utf8");
+  try {
+    try {
+      await exclusiveFs.link(tmp, dest);
+      return true;
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      if (!linkUnsupported(err)) throw err;
+    }
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      throw err;
+    }
+    try {
+      await handle.writeFile(body, "utf8");
+      await handle.sync();
+      return true;
+    } catch (err) {
+      await unlink(dest).catch(() => void 0);
+      throw err;
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await unlink(tmp).catch(() => void 0);
+  }
+}
+async function restoreIfAbsent(source, dest) {
+  try {
+    await exclusiveFs.link(source, dest);
+  } catch (err) {
+    if (err.code === "EEXIST") return "occupied";
+    if (!linkUnsupported(err)) throw err;
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (openErr) {
+      if (openErr.code === "EEXIST") return "occupied";
+      throw openErr;
+    }
+    try {
+      await handle.writeFile(await readFile3(source));
+      await handle.sync();
+    } catch (writeErr) {
+      await unlink(dest).catch(() => void 0);
+      throw writeErr;
+    } finally {
+      await handle.close();
+    }
+  }
+  await unlink(source).catch(() => void 0);
+  return "restored";
 }
 function trackWrite(work) {
   pendingWrites.add(work);
@@ -43501,7 +43568,7 @@ function renderSectionsV2(beat, ctx) {
 // mcp/grokVideo.ts
 import { execFile as execFile3 } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile3, rm as rm2, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir3, readFile as readFile4, rm as rm2, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname as dirname4, join as join4, resolve, sep } from "node:path";
 import { promisify as promisify3 } from "node:util";
@@ -43560,7 +43627,7 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
       String(attempt.quality),
       target
     ], { maxBuffer: 16 * 1024 * 1024 });
-    const shrunk = await readFile3(target);
+    const shrunk = await readFile4(target);
     await rm2(target, { force: true });
     lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
     if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
@@ -43608,7 +43675,7 @@ async function toApiImageRef(ref, opts = {}) {
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
   const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-  const buffer = await readFile3(path);
+  const buffer = await readFile4(path);
   if (buffer.byteLength > budget) {
     return shrinkLocalImage(path, budget);
   }
@@ -44265,9 +44332,9 @@ function toRenderShots(board) {
 }
 
 // mcp/characters.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir4, open as open2, readFile as readFile4, readdir, rename as rename2, unlink, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir, rename as rename2, stat as stat3, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { basename as basename2, join as join6, sep as sep2 } from "node:path";
 
@@ -44718,7 +44785,7 @@ function parseRecord(folder, raw) {
 async function readRecord(folder, options = {}) {
   const file2 = join6(folder, "character.json");
   try {
-    return parseRecord(folder, await readFile4(file2, "utf8"));
+    return parseRecord(folder, await readFile5(file2, "utf8"));
   } catch (err) {
     if (!options.quiet) {
       console.error(`theShow: skipping character folder ${folder}:`, err);
@@ -44732,17 +44799,23 @@ async function folderForWrite(root, name) {
   const record2 = await readRecord(plain, { quiet: true });
   return record2 && sameName(record2.name, name) ? plain : hashed;
 }
-var CHARACTER_LOCK_WAIT_MS = 6e4;
+var CHARACTER_LOCK_WAIT_MS = 1e4;
 var CHARACTER_LOCK_STALE_MS = 3e4;
 var CHARACTER_LOCK_REFRESH_MS = 1e4;
+var CHARACTER_LOCK_EMPTY_GRACE_MS = 1e3;
 function characterLockRefreshMs() {
   const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
   if (Number.isFinite(raw) && raw >= 10) return raw;
   return CHARACTER_LOCK_REFRESH_MS;
 }
+function characterLockWaitMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_WAIT_MS);
+  if (Number.isFinite(raw) && raw >= 50) return raw;
+  return CHARACTER_LOCK_WAIT_MS;
+}
 async function readCharacterLock(lockPath) {
   try {
-    const parsed = JSON.parse(await readFile4(lockPath, "utf8"));
+    const parsed = JSON.parse(await readFile5(lockPath, "utf8"));
     if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return void 0;
     return {
       pid: parsed.pid,
@@ -44754,8 +44827,16 @@ async function readCharacterLock(lockPath) {
     return void 0;
   }
 }
-function characterLockIsStale(info, now = Date.now()) {
-  if (!info) return true;
+async function lockFileAge(lockPath) {
+  try {
+    const info = await stat3(lockPath);
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function characterLockIsStale(info, ageMs, now = Date.now()) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
   if (info.at > now + 5e3) return true;
   if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
   if (info.host === processHost && !pidAlive(info.pid)) return true;
@@ -44765,20 +44846,23 @@ function characterLockBody(token, at = Date.now()) {
   return JSON.stringify({ pid: process.pid, token, host: processHost, at });
 }
 async function refreshCharacterLock(lockPath, token) {
-  const current = await readCharacterLock(lockPath);
-  if (current?.token !== token) return;
-  const tmp = `${lockPath}.${token}.refresh`;
-  await writeFile4(tmp, characterLockBody(token));
-  const again = await readCharacterLock(lockPath);
-  if (again?.token !== token) {
-    await unlink(tmp).catch(() => void 0);
-    return;
+  let handle;
+  try {
+    handle = await open3(lockPath, "r+");
+    const raw = await handle.readFile("utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed.token !== token) return;
+    const body = Buffer.from(characterLockBody(token));
+    await handle.write(body, 0, body.length, 0);
+    await handle.truncate(body.length);
+    await handle.sync();
+  } catch {
+  } finally {
+    await handle?.close();
   }
-  await rename2(tmp, lockPath).catch(() => void 0);
-  await unlink(tmp).catch(() => void 0);
 }
 async function releaseCharacterLock(lockPath, token) {
-  const tomb = `${lockPath}.unlock.${token}`;
+  const tomb = `${lockPath}.unlock.${randomUUID2()}`;
   try {
     await rename2(lockPath, tomb);
   } catch {
@@ -44786,42 +44870,71 @@ async function releaseCharacterLock(lockPath, token) {
   }
   const moved = await readCharacterLock(tomb);
   if (moved?.token === token) {
-    await unlink(tomb).catch(() => void 0);
+    await unlink2(tomb).catch(() => void 0);
     return;
   }
-  await rename2(tomb, lockPath).catch(() => void 0);
+  await restoreIfAbsent(tomb, lockPath);
+}
+async function stealStaleLock(lockPath) {
+  const age = await lockFileAge(lockPath);
+  const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
+  if (age === void 0 || !characterLockIsStale(info, age)) return;
+  let raw = "";
+  try {
+    raw = await readFile5(lockPath, "utf8");
+  } catch {
+    return;
+  }
+  const tomb = `${lockPath}.steal.${randomUUID2()}`;
+  try {
+    await rename2(lockPath, tomb);
+  } catch (err) {
+    if (err.code === "ENOENT") return;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile5(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  const tombAge = await lockFileAge(tomb);
+  const tombInfo = await readCharacterLock(tomb);
+  const sameBytes = tombRaw === raw;
+  const stillStale = characterLockIsStale(tombInfo, tombAge);
+  if (!sameBytes || !stillStale) {
+    await restoreIfAbsent(tomb, lockPath);
+    return;
+  }
+  await unlink2(tomb).catch(() => void 0);
 }
 async function withFolderLock(folder, body) {
   await mkdir4(folder, { recursive: true });
   const lockPath = join6(folder, ".write.lock");
-  const deadline = Date.now() + CHARACTER_LOCK_WAIT_MS;
+  const deadline = Date.now() + characterLockWaitMs();
   let delay = 20;
-  const token = processToken;
+  const token = randomUUID2();
   while (true) {
-    try {
-      const handle = await open2(lockPath, "wx");
+    const published = await publishExclusive(lockPath, characterLockBody(token));
+    if (published) {
       const refresh = setInterval(() => {
         void refreshCharacterLock(lockPath, token);
       }, characterLockRefreshMs());
       refresh.unref?.();
       try {
-        await handle.writeFile(characterLockBody(token));
         return await body();
       } finally {
         clearInterval(refresh);
         await releaseCharacterLock(lockPath, token);
-        await handle.close();
       }
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      if (characterLockIsStale(await readCharacterLock(lockPath))) {
-        await unlink(lockPath).catch(() => void 0);
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
-      await new Promise((resolve2) => setTimeout(resolve2, delay));
-      delay = Math.min(delay * 2, 250);
     }
+    if (characterLockIsStale(await readCharacterLock(lockPath), await lockFileAge(lockPath))) {
+      await stealStaleLock(lockPath);
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+    await new Promise((resolve2) => setTimeout(resolve2, delay));
+    delay = Math.min(delay * 2, 250);
   }
 }
 function copyNameFor(source) {
@@ -44849,7 +44962,7 @@ async function keepReferences(input2) {
     }
     const target = join6(refsDir, copyNameFor(source));
     try {
-      const bytes = await readFile4(source);
+      const bytes = await readFile5(source);
       await mkdir4(refsDir, { recursive: true });
       await writeFile4(target, bytes);
       kept.push(target);
@@ -45706,9 +45819,17 @@ function runPreVideoGate(input2) {
 }
 
 // mcp/server.ts
-import { link, mkdir as mkdir5, readFile as readFile5, readdir as readdir2, rename as rename3, stat as stat3, unlink as unlink2, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir5, readFile as readFile6, readdir as readdir2, rename as rename3, stat as stat4, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
-import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+
+// mcp/resume-claim-probe.ts
+var probe;
+async function runResumeClaimProbe() {
+  if (probe) await probe();
+}
+
+// mcp/server.ts
 var server = new McpServer({
   name: "theshow",
   version: "0.1.0"
@@ -47226,7 +47347,7 @@ async function persistJob(job) {
     try {
       await atomicWriteFile(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
       if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
-      else await unlink2(claimPath(job.id)).catch(() => void 0);
+      else await unlink3(claimPath(job.id)).catch(() => void 0);
     } catch (err) {
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
@@ -47279,7 +47400,7 @@ async function refreshJobsFromDisk() {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     try {
-      const raw = await readFile5(join7(JOBS_DIR, name), "utf8");
+      const raw = await readFile6(join7(JOBS_DIR, name), "utf8");
       const job = JSON.parse(raw);
       if (!job?.id) continue;
       const memory = sequenceJobs.get(job.id);
@@ -47297,7 +47418,7 @@ async function loadJobsFromDisk() {
 }
 async function readClaimFile(path) {
   try {
-    const raw = await readFile5(path, "utf8");
+    const raw = await readFile6(path, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -47311,7 +47432,7 @@ async function readClaim(jobId) {
 }
 async function claimFileAge(jobId) {
   try {
-    const info = await stat3(claimPath(jobId));
+    const info = await stat4(claimPath(jobId));
     return Date.now() - info.mtimeMs;
   } catch {
     return void 0;
@@ -47322,18 +47443,109 @@ function claimIsStale(owner, ageMs) {
   return jobShouldStop(owner);
 }
 async function placeClaim(jobId, owner) {
-  const dest = claimPath(jobId);
-  const tmp = `${dest}.${process.pid}.${randomUUID2()}.tmp`;
-  await writeFile5(tmp, JSON.stringify(owner));
+  return publishExclusive(claimPath(jobId), JSON.stringify(owner));
+}
+function claimTurnPath(jobId) {
+  return `${claimPath(jobId)}.turn`;
+}
+async function readClaimTurn(path) {
   try {
-    await link(tmp, dest);
-    return true;
-  } catch (err) {
-    if (err.code !== "EEXIST") throw err;
-    return false;
-  } finally {
-    await unlink2(tmp).catch(() => void 0);
+    const raw = await readFile6(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
   }
+}
+var activeClaimTurns = /* @__PURE__ */ new Set();
+function claimTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CLAIM_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeClaimTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function discardIfUnchanged(path, expected) {
+  const tomb = `${path}.tomb.${randomUUID3()}`;
+  try {
+    await rename3(path, tomb);
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile6(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  if (tombRaw !== expected) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  let tombAge;
+  try {
+    tombAge = Date.now() - (await stat4(tomb)).mtimeMs;
+  } catch {
+    tombAge = void 0;
+  }
+  if (!tombRaw.trim() && !(tombAge !== void 0 && tombAge > CLAIM_EMPTY_GRACE_MS)) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  await unlink3(tomb).catch(() => void 0);
+  return true;
+}
+async function acquireClaimTurn(jobId) {
+  const token = randomUUID3();
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  const dest = claimTurnPath(jobId);
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return void 0;
+  }
+  const current = await readClaimTurn(dest);
+  if (!claimTurnIsStale(current, turnAge)) return void 0;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return void 0;
+  }
+  if (!await discardIfUnchanged(dest, raw)) return void 0;
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  return void 0;
+}
+async function releaseClaimTurn(jobId, token) {
+  activeClaimTurns.delete(token);
+  const dest = claimTurnPath(jobId);
+  const current = await readClaimTurn(dest);
+  if (current?.token !== token) return;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return;
+  }
+  if (!raw.includes(token)) return;
+  await discardIfUnchanged(dest, raw);
 }
 async function claimFilm(jobId) {
   await refreshJobsFromDisk();
@@ -47345,42 +47557,54 @@ async function claimFilm(jobId) {
   if (job.claim && !jobShouldStop(job.claim)) {
     return { ok: false, message: claimBusyMessage(job.claim) };
   }
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 40; attempt++) {
     const age = await claimFileAge(jobId);
     const existing = age === void 0 ? void 0 : await readClaim(jobId);
     if (age !== void 0 && !claimIsStale(existing, age)) {
       return { ok: false, message: claimBusyMessage(existing) };
     }
-    const owner = thisOwner();
-    if (age === void 0) {
-      if (await placeClaim(jobId, owner)) {
-        job.claim = owner;
-        sequenceJobs.set(job.id, job);
-        await persistJob(job);
-        return { ok: true };
-      }
+    const turn = await acquireClaimTurn(jobId);
+    if (!turn) {
+      await sleep2(10 + attempt);
       continue;
     }
-    const tomb = `${claimPath(jobId)}.tomb.${randomUUID2()}`;
     try {
-      await rename3(claimPath(jobId), tomb);
-    } catch (err) {
-      if (err.code === "ENOENT") continue;
-      throw err;
+      const heldAge = await claimFileAge(jobId);
+      const held = heldAge === void 0 ? void 0 : await readClaim(jobId);
+      if (heldAge !== void 0 && !claimIsStale(held, heldAge)) {
+        return { ok: false, message: claimBusyMessage(held) };
+      }
+      const owner = thisOwner();
+      if (heldAge === void 0) {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = await readFile6(claimPath(jobId), "utf8");
+      } catch {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
+      if (!await placeClaim(jobId, owner)) continue;
+      job.claim = owner;
+      sequenceJobs.set(job.id, job);
+      await persistJob(job);
+      return { ok: true };
+    } finally {
+      await releaseClaimTurn(jobId, turn);
     }
-    const displaced = await readClaimFile(tomb);
-    if (existing?.token && displaced?.token && displaced.token !== existing.token) {
-      await link(tomb, claimPath(jobId)).catch(() => void 0);
-      await unlink2(tomb).catch(() => void 0);
-      continue;
-    }
-    const won = await placeClaim(jobId, owner);
-    await unlink2(tomb).catch(() => void 0);
-    if (!won) continue;
-    job.claim = owner;
-    sequenceJobs.set(job.id, job);
-    await persistJob(job);
-    return { ok: true };
   }
   return { ok: false, message: ALREADY_RUNNING };
 }
@@ -47390,7 +47614,7 @@ async function releaseFilmClaim(jobId) {
     job.claim = void 0;
     await persistJob(job);
   } else {
-    await unlink2(claimPath(jobId)).catch(() => void 0);
+    await unlink3(claimPath(jobId)).catch(() => void 0);
   }
 }
 function sequenceJobId() {
@@ -47927,9 +48151,7 @@ server.registerTool(
     }
     let handedToJob = false;
     try {
-      if (process.env.THESHOW_THROW_AFTER_CLAIM === "1" && resumeJob) {
-        throw new Error("throw after claim");
-      }
+      if (resumeJob) await runResumeClaimProbe();
       const job = {
         id: sequenceJobId(),
         startedAt: Date.now(),
