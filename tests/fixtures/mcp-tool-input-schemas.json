@@ -1,0 +1,2532 @@
+{
+  "tools": [
+    {
+      "name": "configure_film",
+      "description": "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "scene": {
+            "description": "Pre-fill the scene if the user already said it.",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "Card heading shown to the user.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_character",
+      "description": "Create or update a character with optional reference images for continuity.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "appearance": {
+            "description": "Identity only: face, hair, skin, build. Clothing belongs in wardrobe.layers.",
+            "type": "string"
+          },
+          "wardrobe": {
+            "type": "object",
+            "properties": {
+              "layers": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "item": {
+                      "type": "string"
+                    },
+                    "order": {
+                      "type": "number",
+                      "description": "Inner to outer within this layer type."
+                    },
+                    "inReference": {
+                      "type": "string",
+                      "enum": [
+                        "visible",
+                        "partial",
+                        "hidden"
+                      ]
+                    },
+                    "type": {
+                      "description": "Clothing and footwear stack separately. Defaults to clothing.",
+                      "type": "string",
+                      "enum": [
+                        "clothing",
+                        "footwear"
+                      ]
+                    },
+                    "closure": {
+                      "type": "string",
+                      "enum": [
+                        "zip",
+                        "buttons",
+                        "open",
+                        "laced",
+                        "slip-on",
+                        "none"
+                      ]
+                    },
+                    "mustNotHave": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "short": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "item",
+                    "order",
+                    "inReference"
+                  ]
+                }
+              },
+              "startState": {
+                "type": "object",
+                "properties": {
+                  "worn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Layer ids worn at the start of the film."
+                  }
+                },
+                "required": [
+                  "worn"
+                ]
+              },
+              "stateImages": {
+                "description": "Optional photos of a later wardrobe state, such as the coat off.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "referenceImageUrls": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "worn",
+                    "referenceImageUrls"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "layers"
+            ]
+          },
+          "referenceImageUrls": {
+            "description": "Portrait reference images: public https URLs, data URIs, or local file paths. Each is inlined for the API, so a path from a chat attachment or extract_last_frame works.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "plan_storyboard",
+      "description": "Plan multi-shot storyboard for a scene. Accepts optional wardrobe events and a per-location prop ledger so each shot's prompt describes only what is worn and the props that belong in that room.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "sceneDescription": {
+            "type": "string"
+          },
+          "promptStyle": {
+            "description": "Omit it, or pass legacy, for today's paragraph. sections-v2 writes a sectioned prompt on each shot and does not append the ledger paragraph.",
+            "type": "string",
+            "enum": [
+              "legacy",
+              "sections-v2"
+            ]
+          },
+          "voiceId": {
+            "description": "Built-in voice, such as rex. In sections-v2 the spoken line is tagged <AUDIO_0>.",
+            "type": "string"
+          },
+          "fixedSet": {
+            "description": "One sentence naming the fixed pieces and their sizes, used by sections-v2.",
+            "type": "string"
+          },
+          "marks": {
+            "description": "Named standing positions. A beat's start.mark or end.mark looks up the sentence here.",
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "beats": {
+            "description": "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "description": "What happens in this shot. {scene} and {character} are substituted."
+                },
+                "note": {
+                  "description": "Continuity requirement carried into the prompt.",
+                  "type": "string"
+                },
+                "locationId": {
+                  "description": "Room this shot takes place in. Props are scoped to it.",
+                  "type": "string"
+                },
+                "wardrobeEvents": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "shot": {
+                        "description": "1-based shot number. Implied when the event sits on a beat.",
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "character": {
+                        "type": "string"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "remove",
+                          "putOn",
+                          "adjust"
+                        ]
+                      },
+                      "layer": {
+                        "type": "string",
+                        "description": "Layer id from the character's wardrobe."
+                      },
+                      "to": {
+                        "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "layer"
+                    ]
+                  }
+                },
+                "propEvents": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "shot": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "add",
+                          "move",
+                          "remove"
+                        ]
+                      },
+                      "propId": {
+                        "type": "string"
+                      },
+                      "locationId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "placement": {
+                        "type": "string"
+                      },
+                      "holder": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "propId"
+                    ]
+                  }
+                },
+                "framing": {
+                  "type": "string",
+                  "enum": [
+                    "wide",
+                    "medium",
+                    "close",
+                    "feet-close"
+                  ]
+                },
+                "shotType": {
+                  "type": "string"
+                },
+                "camera": {
+                  "type": "string",
+                  "enum": [
+                    "locked"
+                  ]
+                },
+                "durationSeconds": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                },
+                "faceAnchor": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "off"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "line": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "delivery": {
+                      "type": "string",
+                      "enum": [
+                        "spoken",
+                        "sung"
+                      ]
+                    },
+                    "voiceTag": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ]
+                },
+                "contact": {
+                  "type": "string"
+                },
+                "avoid": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "audio": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "mark": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "door": {
+                      "type": "string"
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "floorAt": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "item": {
+                            "type": "string"
+                          },
+                          "n": {
+                            "type": "number"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "end": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "mark": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "held": {
+                      "type": "string"
+                    },
+                    "door": {
+                      "type": "string"
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "title",
+                "action"
+              ]
+            }
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetDurationSeconds": {
+            "type": "number"
+          },
+          "shotCount": {
+            "type": "number"
+          },
+          "locations": {
+            "description": "Named rooms. Two props with the same name in different rooms stay two props.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "props": {
+            "description": "Starting prop ledger. Each prop belongs to one locationId.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string"
+                },
+                "holder": {
+                  "type": "string"
+                },
+                "fixed": {
+                  "type": "boolean"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "bbox": {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "additionalItems": false,
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "solid": {
+                  "type": "boolean"
+                },
+                "contact": {
+                  "type": "string",
+                  "enum": [
+                    "hanging",
+                    "resting",
+                    "held"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "locationId",
+                "name",
+                "placement"
+              ]
+            }
+          },
+          "wardrobeEvents": {
+            "description": "Named clothing changes, keyed by 1-based shot number: remove, putOn, adjust.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "description": "1-based shot number. Implied when the event sits on a beat.",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "character": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "remove",
+                    "putOn",
+                    "adjust"
+                  ]
+                },
+                "layer": {
+                  "type": "string",
+                  "description": "Layer id from the character's wardrobe."
+                },
+                "to": {
+                  "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "layer"
+              ]
+            }
+          },
+          "propEvents": {
+            "description": "Named prop changes, keyed by 1-based shot number: add, move, remove. A prop without an id is left where it is.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "move",
+                    "remove"
+                  ]
+                },
+                "propId": {
+                  "type": "string"
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string"
+                },
+                "holder": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "propId"
+              ]
+            }
+          }
+        },
+        "required": [
+          "sceneDescription",
+          "characters"
+        ]
+      }
+    },
+    {
+      "name": "generate_controlled_clip",
+      "description": "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription. Spends only after confirm, and only when the continuity gate passes. Pin defaults to the start frame: an end-frame pin holds the pose and has to be asked for.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "characters": {
+            "description": "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "referenceImageUrls": {
+            "description": "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "firstFrameUrl": {
+            "description": "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut.",
+            "type": "string"
+          },
+          "lastFrameUrl": {
+            "description": "Image to pin as the last rendered frame. Ignored unless pin is \"both\". An end pin makes the model reach the pose early and then hold.",
+            "type": "string"
+          },
+          "pin": {
+            "default": "start",
+            "description": "start pins the first frame only. both also pins lastFrameUrl.",
+            "type": "string",
+            "enum": [
+              "start",
+              "both"
+            ]
+          },
+          "voiceId": {
+            "description": "Built-in voice id, such as rex. Sent as reference_audios voice_id. A spoken line uses the literal token <AUDIO_0>. Time the clip to a rex track written first.",
+            "type": "string"
+          },
+          "negative": {
+            "description": "Known limits and hallucinations. Used by lint and the checklist. Never sent.",
+            "type": "string"
+          },
+          "admission": {
+            "type": "object",
+            "properties": {
+              "priorObjects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "room": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "room"
+                  ]
+                }
+              },
+              "objects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "room": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "room"
+                  ]
+                }
+              },
+              "torsoPx": {
+                "type": "number"
+              },
+              "legPx": {
+                "type": "number"
+              },
+              "shoulderPx": {
+                "type": "number"
+              },
+              "staturePx": {
+                "type": "number"
+              },
+              "vocalEndSeconds": {
+                "type": "number"
+              },
+              "timedEndSeconds": {
+                "type": "number"
+              }
+            }
+          },
+          "ledger": {
+            "description": "Continuity ledger for this clip. Without a ledger or contracts the gate is unchecked and confirm cannot spend.",
+            "type": "object",
+            "properties": {
+              "locations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ]
+                }
+              },
+              "props": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "locationId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "placement": {
+                      "type": "string"
+                    },
+                    "holder": {
+                      "type": "string"
+                    },
+                    "fixed": {
+                      "type": "boolean"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "bbox": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "additionalItems": false,
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    "solid": {
+                      "type": "boolean"
+                    },
+                    "contact": {
+                      "type": "string",
+                      "enum": [
+                        "hanging",
+                        "resting",
+                        "held"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "locationId",
+                    "name",
+                    "placement"
+                  ]
+                }
+              },
+              "wardrobeEvents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "description": "1-based shot number. Implied when the event sits on a beat.",
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "character": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "remove",
+                        "putOn",
+                        "adjust"
+                      ]
+                    },
+                    "layer": {
+                      "type": "string",
+                      "description": "Layer id from the character's wardrobe."
+                    },
+                    "to": {
+                      "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "layer"
+                  ]
+                }
+              },
+              "propEvents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "move",
+                        "remove"
+                      ]
+                    },
+                    "propId": {
+                      "type": "string"
+                    },
+                    "locationId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "placement": {
+                      "type": "string"
+                    },
+                    "holder": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "propId"
+                  ]
+                }
+              },
+              "shotSteps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "steps"
+                  ]
+                }
+              },
+              "voiceId": {
+                "type": "string"
+              },
+              "spokenLines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "line"
+                  ]
+                }
+              },
+              "humanVisionSignOff": {
+                "type": "boolean"
+              },
+              "hasPortrait": {
+                "type": "boolean"
+              }
+            }
+          },
+          "contracts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "requires": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "holders": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "required": [
+                    "worn",
+                    "holders",
+                    "counts"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "ensures": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "holders": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "required": [
+                    "worn",
+                    "holders",
+                    "counts"
+                  ]
+                },
+                "invariants": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "forbidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "footwear": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shot",
+                "requires",
+                "steps",
+                "ensures",
+                "invariants",
+                "forbidden"
+              ]
+            }
+          },
+          "overrideValidation": {
+            "default": false,
+            "type": "boolean"
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to spend. Call once without it for the estimate.",
+            "type": "boolean"
+          },
+          "durationSeconds": {
+            "default": 8,
+            "type": "number",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "resolution": {
+            "default": "720p",
+            "description": "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default.",
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "model": {
+            "default": "grok-imagine-video-1.5",
+            "type": "string"
+          },
+          "waitForCompletion": {
+            "default": true,
+            "type": "boolean"
+          },
+          "timeoutSeconds": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "extend_clip",
+      "description": "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing. There is no continuity ledger on an extension, so confirm spends only when overrideValidation is set. Otherwise the gate is unchecked and nothing is bought.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "videoUrl": {
+            "type": "string",
+            "description": "Public https URL of the source clip (2-15 seconds)."
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "default": 6,
+            "type": "number",
+            "minimum": 2,
+            "maximum": 10
+          },
+          "model": {
+            "default": "grok-imagine-video",
+            "type": "string"
+          },
+          "waitForCompletion": {
+            "default": true,
+            "type": "boolean"
+          },
+          "timeoutSeconds": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          },
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "overrideValidation": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "videoUrl",
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "extract_last_frame",
+      "description": "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "videoUrl": {
+            "type": "string",
+            "description": "Public https URL, file:// path, or a local path from a previous run."
+          },
+          "includeDataUri": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "videoUrl"
+        ]
+      }
+    },
+    {
+      "name": "generate_still",
+      "description": "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "description": "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked.",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "referenceImageUrls": {
+            "description": "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseImageUrl": {
+            "description": "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before. A local path must be inside the output folder or a character folder.",
+            "type": "string"
+          },
+          "imageOrder": {
+            "description": "Default portrait-first sends the character reference first and the room last. plate-first sends the room first, for placing a person into a set. Opening a door in that same two-image call was unreliable: edit the plate alone first, then place the character.",
+            "type": "string",
+            "enum": [
+              "portrait-first",
+              "plate-first"
+            ]
+          },
+          "negative": {
+            "description": "Known limits and hallucinations. Used by lint and the checklist. Never sent.",
+            "type": "string"
+          },
+          "admission": {
+            "type": "object",
+            "properties": {
+              "priorObjects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "room": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "room"
+                  ]
+                }
+              },
+              "objects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "room": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "room"
+                  ]
+                }
+              },
+              "torsoPx": {
+                "type": "number"
+              },
+              "legPx": {
+                "type": "number"
+              },
+              "shoulderPx": {
+                "type": "number"
+              },
+              "staturePx": {
+                "type": "number"
+              },
+              "vocalEndSeconds": {
+                "type": "number"
+              },
+              "timedEndSeconds": {
+                "type": "number"
+              }
+            }
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent word for word either way.",
+            "type": "boolean"
+          },
+          "characters": {
+            "description": "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "assemble_film",
+      "description": "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "clips": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "trimStart": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "trimEnd": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          },
+          "fadeDuration": {
+            "default": 0,
+            "description": "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "audioTrackUrl": {
+            "description": "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. It must cover the whole film. A shorter bed is refused. Volume 0 omits it.",
+            "type": "string"
+          },
+          "audioTrackVolume": {
+            "default": 0.25,
+            "description": "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video; 0 omits the bed.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "audioTrackFadeOutSeconds": {
+            "default": 1.5,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 30
+          },
+          "clipAudio": {
+            "default": "keep",
+            "description": "keep mixes each clip's own audio. mute drops it and keeps the bed or silence. replace drops it so the bed is the soundtrack.",
+            "type": "string",
+            "enum": [
+              "keep",
+              "mute",
+              "replace"
+            ]
+          }
+        },
+        "required": [
+          "clips"
+        ]
+      }
+    },
+    {
+      "name": "render_sequence",
+      "description": "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "shots": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
+                },
+                "durationSeconds": {
+                  "default": 8,
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                },
+                "title": {
+                  "type": "string"
+                },
+                "firstFrameUrl": {
+                  "description": "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved.",
+                  "type": "string"
+                },
+                "lastFrameUrl": {
+                  "description": "Pinned closing frame for this shot. Used only when pin is \"both\". The default pin is the start frame, because an end pin makes the model hold.",
+                  "type": "string"
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "shotType": {
+                  "type": "string"
+                },
+                "faceAnchor": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "off"
+                  ]
+                },
+                "negative": {
+                  "type": "string"
+                },
+                "admission": {
+                  "type": "object",
+                  "properties": {
+                    "priorObjects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "room": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "room"
+                        ]
+                      }
+                    },
+                    "objects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "room": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "room"
+                        ]
+                      }
+                    },
+                    "torsoPx": {
+                      "type": "number"
+                    },
+                    "legPx": {
+                      "type": "number"
+                    },
+                    "shoulderPx": {
+                      "type": "number"
+                    },
+                    "staturePx": {
+                      "type": "number"
+                    },
+                    "vocalEndSeconds": {
+                      "type": "number"
+                    },
+                    "timedEndSeconds": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            },
+            "description": "Shots in order, 1 to 12. More than that is usually two films."
+          },
+          "characters": {
+            "description": "Character names from create_character. Their reference images go on every shot.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "continuity": {
+            "description": "Set, wardrobe, light, and palette, written once and prepended to every shot.",
+            "type": "string"
+          },
+          "ledger": {
+            "description": "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed film keeps the same rooms and props. Does not by itself spend money or call vision.",
+            "type": "object",
+            "properties": {
+              "locations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ]
+                }
+              },
+              "props": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "locationId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "placement": {
+                      "type": "string"
+                    },
+                    "holder": {
+                      "type": "string"
+                    },
+                    "fixed": {
+                      "type": "boolean"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "bbox": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "additionalItems": false,
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    "solid": {
+                      "type": "boolean"
+                    },
+                    "contact": {
+                      "type": "string",
+                      "enum": [
+                        "hanging",
+                        "resting",
+                        "held"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "locationId",
+                    "name",
+                    "placement"
+                  ]
+                }
+              },
+              "wardrobeEvents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "description": "1-based shot number. Implied when the event sits on a beat.",
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "character": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "remove",
+                        "putOn",
+                        "adjust"
+                      ]
+                    },
+                    "layer": {
+                      "type": "string",
+                      "description": "Layer id from the character's wardrobe."
+                    },
+                    "to": {
+                      "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "layer"
+                  ]
+                }
+              },
+              "propEvents": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "add",
+                        "move",
+                        "remove"
+                      ]
+                    },
+                    "propId": {
+                      "type": "string"
+                    },
+                    "locationId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "placement": {
+                      "type": "string"
+                    },
+                    "holder": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "propId"
+                  ]
+                }
+              },
+              "shots": {
+                "type": "array",
+                "items": {}
+              },
+              "shotSteps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "steps"
+                  ]
+                }
+              },
+              "voiceId": {
+                "type": "string"
+              },
+              "promptStyle": {
+                "type": "string",
+                "enum": [
+                  "legacy",
+                  "sections-v2"
+                ]
+              },
+              "spokenLines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "line"
+                  ]
+                }
+              },
+              "humanVisionSignOff": {
+                "type": "boolean"
+              },
+              "hasPortrait": {
+                "type": "boolean"
+              },
+              "scaleMarks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "bodyH": {
+                      "type": "number"
+                    },
+                    "tolPct": {
+                      "type": "number"
+                    },
+                    "measuredBodyH": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "bodyH",
+                    "tolPct"
+                  ]
+                }
+              },
+              "bodyClearance": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "shot": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "solidId": {
+                      "type": "string"
+                    },
+                    "clear": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "shot",
+                    "solidId",
+                    "clear"
+                  ]
+                }
+              },
+              "tier1": {
+                "type": "object",
+                "properties": {
+                  "freezeRun": {
+                    "type": "number"
+                  },
+                  "speechCoverage": {
+                    "type": "number"
+                  },
+                  "joinSsim": {
+                    "type": "number"
+                  },
+                  "motionNatural": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "freezeRun",
+                  "speechCoverage",
+                  "joinSsim",
+                  "motionNatural"
+                ]
+              }
+            }
+          },
+          "contracts": {
+            "description": "Optional per-shot state-file contracts. When omitted they are derived from ledger.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "requires": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "holders": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "required": [
+                    "worn",
+                    "holders",
+                    "counts"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "ensures": {
+                  "type": "object",
+                  "properties": {
+                    "worn": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "holders": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "required": [
+                    "worn",
+                    "holders",
+                    "counts"
+                  ]
+                },
+                "invariants": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "forbidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "footwear": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shot",
+                "requires",
+                "steps",
+                "ensures",
+                "invariants",
+                "forbidden"
+              ]
+            }
+          },
+          "overrideValidation": {
+            "default": false,
+            "description": "When true, start the render even if the shot contracts fail validation. The default is to refuse rather than spend on a plan the ledger already knows is inconsistent.",
+            "type": "boolean"
+          },
+          "firstFrameUrl": {
+            "description": "Optional anchor for shot one: a portrait or location still, or a previous film's last frame.",
+            "type": "string"
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "resolution": {
+            "default": "720p",
+            "description": "Output resolution. 1080p costs roughly twice 720p per second of video.",
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "model": {
+            "default": "grok-imagine-video-1.5",
+            "type": "string"
+          },
+          "assemble": {
+            "default": true,
+            "description": "Also assemble the clips into one film.",
+            "type": "boolean"
+          },
+          "audioTrackUrl": {
+            "description": "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment.",
+            "type": "string"
+          },
+          "audioTrackVolume": {
+            "default": 0.25,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "clipAudio": {
+            "default": "keep",
+            "description": "keep mixes clip audio. mute drops it. replace uses only the bed.",
+            "type": "string",
+            "enum": [
+              "keep",
+              "mute",
+              "replace"
+            ]
+          },
+          "pin": {
+            "default": "start",
+            "description": "start pins each shot's first frame only. both also sends lastFrameUrl.",
+            "type": "string",
+            "enum": [
+              "start",
+              "both"
+            ]
+          },
+          "voiceId": {
+            "description": "Built-in voice id, such as rex.",
+            "type": "string"
+          },
+          "promptStyle": {
+            "description": "sections-v2 refuses a voiced shot whose prompt has no <AUDIO_0>. The default only warns.",
+            "type": "string",
+            "enum": [
+              "legacy",
+              "sections-v2"
+            ]
+          },
+          "audioTrackFadeOutSeconds": {
+            "default": 1.5,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 30
+          },
+          "fadeDuration": {
+            "default": 0,
+            "description": "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "resumeFromJobId": {
+            "description": "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots.",
+            "type": "string"
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve.",
+            "type": "boolean"
+          },
+          "timeoutSecondsPerShot": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "shots"
+        ]
+      }
+    },
+    {
+      "name": "board_film",
+      "description": "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a picture. render_sequence sends that closing frame only when pin is \"both\"; the default pin is start, so the cut is not pixel-pinned unless you ask. A portrait with no location photo is part of every frame's name, so changing it buys every still again. A hero built from a portrait and a room is bought again with every confirmed board, and a new hero buys every shot frame too. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "shots": {
+            "minItems": 1,
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "description": "What happens in the shot.",
+                  "type": "string"
+                },
+                "action": {
+                  "description": "Alias for prompt, so plan_storyboard output pastes in unchanged.",
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "durationSeconds": {
+                  "default": 8,
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "continuityPrompt": {
+                  "type": "string"
+                },
+                "wardrobeChanged": {
+                  "type": "boolean"
+                },
+                "wardrobeEvents": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "shot": {
+                        "description": "1-based shot number. Implied when the event sits on a beat.",
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "character": {
+                        "type": "string"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "remove",
+                          "putOn",
+                          "adjust"
+                        ]
+                      },
+                      "layer": {
+                        "type": "string",
+                        "description": "Layer id from the character's wardrobe."
+                      },
+                      "to": {
+                        "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "layer"
+                    ]
+                  }
+                },
+                "propEvents": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "shot": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "add",
+                          "move",
+                          "remove"
+                        ]
+                      },
+                      "propId": {
+                        "type": "string"
+                      },
+                      "locationId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "placement": {
+                        "type": "string"
+                      },
+                      "holder": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "propId"
+                    ]
+                  }
+                },
+                "middleKeyframe": {
+                  "description": "Plan an extra still at the midpoint of this shot, so the beat is not pinned only at its ends.",
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "props": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string"
+                },
+                "holder": {
+                  "type": "string"
+                },
+                "fixed": {
+                  "type": "boolean"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "bbox": {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "additionalItems": false,
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "solid": {
+                  "type": "boolean"
+                },
+                "contact": {
+                  "type": "string",
+                  "enum": [
+                    "hanging",
+                    "resting",
+                    "held"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "locationId",
+                "name",
+                "placement"
+              ]
+            }
+          },
+          "wardrobeEvents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "description": "1-based shot number. Implied when the event sits on a beat.",
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "character": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "remove",
+                    "putOn",
+                    "adjust"
+                  ]
+                },
+                "layer": {
+                  "type": "string",
+                  "description": "Layer id from the character's wardrobe."
+                },
+                "to": {
+                  "description": "For a removal, the destination prop id, or its name inside this shot's location.",
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "layer"
+              ]
+            }
+          },
+          "propEvents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "move",
+                    "remove"
+                  ]
+                },
+                "propId": {
+                  "type": "string"
+                },
+                "locationId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "placement": {
+                  "type": "string"
+                },
+                "holder": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "propId"
+              ]
+            }
+          },
+          "look": {
+            "description": "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies.",
+            "type": "string"
+          },
+          "cast": {
+            "description": "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters.",
+            "type": "string"
+          },
+          "aspectRatio": {
+            "default": "16:9",
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ]
+          },
+          "characters": {
+            "description": "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "referenceImageUrls": {
+            "description": "Extra reference stills for the board: https URLs, data URIs, or local paths.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseImageUrl": {
+            "description": "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here.",
+            "type": "string"
+          },
+          "maxCostUsd": {
+            "description": "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board.",
+            "type": "number",
+            "minimum": 0
+          },
+          "confirm": {
+            "default": false,
+            "description": "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve. confirm does not override a failed wardrobe check.",
+            "type": "boolean"
+          },
+          "overrideValidation": {
+            "default": false,
+            "description": "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. confirm alone does not unblock a refusal.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "shots"
+        ]
+      }
+    },
+    {
+      "name": "retry_shot",
+      "description": "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The finished job whose shot needs replacing."
+          },
+          "shotIndex": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "1-based shot number, as reported in the job."
+          },
+          "prompt": {
+            "description": "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong.",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 15
+          },
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "overrideValidation": {
+            "default": false,
+            "type": "boolean"
+          },
+          "timeoutSecondsPerShot": {
+            "default": 240,
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600
+          }
+        },
+        "required": [
+          "jobId",
+          "shotIndex"
+        ]
+      }
+    },
+    {
+      "name": "list_films",
+      "description": "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "includeUnfinished": {
+            "default": false,
+            "description": "Also list films that stopped or failed, which still hold every shot they paid for.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "check_sequence",
+      "description": "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "description": "The jobId render_sequence returned."
+          }
+        },
+        "required": [
+          "jobId"
+        ]
+      }
+    }
+  ]
+}

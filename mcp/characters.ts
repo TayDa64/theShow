@@ -14,10 +14,11 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
+import { atomicWriteFile } from "./runtime.ts";
 
 export const CHARACTERS_DIR =
   process.env.THESHOW_CHARACTERS_DIR || join(homedir(), ".theshow", "characters");
@@ -173,6 +174,26 @@ async function folderForWrite(root: string, name: string) {
   return record && sameName(record.name, name) ? plain : hashed;
 }
 
+async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
+  await mkdir(folder, { recursive: true });
+  const lockPath = join(folder, ".write.lock");
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const handle = await open(lockPath, "wx");
+      try {
+        return await body();
+      } finally {
+        await handle.close();
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error(`Could not lock ${folder}.`);
+}
+
 /** A stable filename for a copied photo, recognisable and unique per source. */
 function copyNameFor(source: string) {
   const file = basename(source);
@@ -276,63 +297,57 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
 
   const root = charactersRoot();
   const folder = await folderForWrite(root, name);
-  const existing = await readRecord(folder, { quiet: true });
+  return withFolderLock(folder, async () => {
   const warnings: string[] = [];
+  const existing = await readRecord(folder, { quiet: true });
+    const referenceImageUrls = await keepReferences({
+      folder,
+      refs: input.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
+      warnings,
+    });
+    const now = new Date().toISOString();
+    const wardrobeInput = input.wardrobe ?? existing?.wardrobe;
+    const wardrobe = wardrobeInput
+      ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings })
+      : undefined;
+    const record: CharacterRecord = {
+      id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      name,
+      role: input.role ?? existing?.role,
+      description: input.description ?? existing?.description,
+      appearance: input.appearance ?? existing?.appearance,
+      wardrobe,
+      referenceImageUrls,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      folder,
+    };
+    const onDisk: Record<string, unknown> = {
+      id: record.id,
+      name: record.name,
+      role: record.role,
+      description: record.description,
+      appearance: record.appearance,
+      wardrobe,
+      referenceImageUrls: record.referenceImageUrls,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+    for (const key of Object.keys(onDisk)) {
+      if (onDisk[key] === undefined) delete onDisk[key];
+    }
+    try {
+      await mkdir(folder, { recursive: true });
+      await atomicWriteFile(join(folder, "character.json"), JSON.stringify(onDisk, null, 2));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not write ${join(folder, "character.json")}: ${message}`);
+      console.error(`theShow: could not save character ${name}:`, err);
+    }
 
-  const referenceImageUrls = await keepReferences({
-    folder,
-    refs: input.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
-    warnings,
+    if (warnings.length > 0) record.warnings = warnings;
+    return record;
   });
-
-  const now = new Date().toISOString();
-  const record: CharacterRecord = {
-    id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
-    name,
-    role: input.role ?? existing?.role,
-    description: input.description ?? existing?.description,
-    appearance: input.appearance ?? existing?.appearance,
-    wardrobe: input.wardrobe ?? existing?.wardrobe,
-    referenceImageUrls,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    folder,
-  };
-
-  // Exactly the documented shape on disk: the runtime extras stay in memory.
-  const wardrobe = record.wardrobe
-    ? await keepWardrobeReferences({ folder, wardrobe: record.wardrobe, warnings })
-    : undefined;
-
-  const onDisk: Record<string, unknown> = {
-    id: record.id,
-    name: record.name,
-    role: record.role,
-    description: record.description,
-    appearance: record.appearance,
-    wardrobe,
-    referenceImageUrls: record.referenceImageUrls,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-  };
-  for (const key of Object.keys(onDisk)) {
-    if (onDisk[key] === undefined) delete onDisk[key];
-  }
-  if (wardrobe) record.wardrobe = wardrobe;
-
-  try {
-    await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
-  } catch (err) {
-    // A failed write must never lose the character. The caller keeps the record
-    // it was handed, and the next save tries again.
-    const message = err instanceof Error ? err.message : String(err);
-    warnings.push(`Could not write ${join(folder, "character.json")}: ${message}`);
-    console.error(`theShow: could not save character ${name}:`, err);
-  }
-
-  if (warnings.length > 0) record.warnings = warnings;
-  return record;
 }
 
 /** A character by name, or undefined when there is no such character on disk. */

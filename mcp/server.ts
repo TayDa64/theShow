@@ -3,7 +3,11 @@
  * theShow MCP Server (enhanced for testing)
  * - Stubs for most tools
  * - generate_controlled_clip calls the real Grok Imagine Video backend, through
- *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation
+ *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation.
+ *
+ * Importing this module does not open a port. mcp/stdio-main.ts is the desktop
+ * entry. mcp/http-server.ts is the Streamable HTTP entry and is bundled apart
+ * from the stdio server so the desktop bundle does not include that stack.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -59,13 +63,47 @@ import {
 } from "./contracts.ts";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
+import {
+  atomicWriteFile,
+  currentMcpServer,
+  elicitTimeoutMs,
+  flushJobWrites,
+  installShutdown,
+  jobShouldStop,
+  processToken,
+  requestScope,
+  startJobHeartbeat,
+  thisOwner,
+  toolAuth,
+  trackWrite,
+  type JobOwner,
+} from "./runtime.ts";
 
 export const server = new McpServer({
   name: "theshow",
   version: "0.1.0",
 });
+
+type RecordedTool = {
+  name: string;
+  config: Parameters<McpServer["registerTool"]>[1];
+  handler: Parameters<McpServer["registerTool"]>[2];
+};
+
+const recordedTools: RecordedTool[] = [];
+const registerRecordedTool = server.registerTool.bind(server);
+server.registerTool = ((name: string, config: RecordedTool["config"], handler: RecordedTool["handler"]) => {
+  recordedTools.push({ name, config, handler });
+  return registerRecordedTool(name, config, handler);
+}) as McpServer["registerTool"];
+
+/** A second MCP server with the same tools, for one HTTP session. */
+export function createTheShowServer(): McpServer {
+  const next = new McpServer({ name: "theshow", version: "0.1.0" });
+  for (const tool of recordedTools) next.registerTool(tool.name, tool.config, tool.handler);
+  return next;
+}
 
 const CharacterSchema = z.object({
   name: z.string(),
@@ -179,24 +217,24 @@ type StoredCharacter = {
   appearance?: string;
   wardrobe?: CharacterWardrobe;
   referenceImageUrls?: string[];
+  updatedAt?: string;
 };
 
 const characterStore = new Map<string, StoredCharacter>();
 
 async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
 
-  // Save first: the record that comes back carries the copied reference paths,
-  // which is what later renders need. Cache what was written, not what was asked
-  // for, so the cache never claims a photo the disk does not have.
+  // Pass only the fields this call set. saveCharacter re-reads disk and keeps
+  // the other fields, so a concurrent edit of a different field is not lost
+  // to a stale cache entry.
   const saved = await saveCharacter({
     name: args.name,
-    role: args.role ?? existing?.role,
-    description: args.description ?? existing?.description,
-    appearance: args.appearance ?? existing?.appearance,
-    wardrobe: args.wardrobe ?? existing?.wardrobe,
-    referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls,
+    role: args.role,
+    description: args.description,
+    appearance: args.appearance,
+    wardrobe: args.wardrobe,
+    referenceImageUrls: args.referenceImageUrls,
   });
 
   const entry: StoredCharacter = {
@@ -207,31 +245,48 @@ async function rememberCharacter(args: z.infer<typeof CharacterSchema>) {
     appearance: saved.appearance,
     wardrobe: saved.wardrobe,
     referenceImageUrls: saved.referenceImageUrls,
+    updatedAt: saved.updatedAt,
   };
   characterStore.set(key, entry);
   return { entry, folder: saved.folder, warnings: saved.warnings };
 }
 
+function storedFrom(record: {
+  id: string;
+  name: string;
+  role?: string;
+  description?: string;
+  appearance?: string;
+  wardrobe?: CharacterWardrobe;
+  referenceImageUrls?: string[];
+  updatedAt?: string;
+}): StoredCharacter {
+  return {
+    id: record.id,
+    name: record.name,
+    role: record.role,
+    description: record.description,
+    appearance: record.appearance,
+    wardrobe: record.wardrobe,
+    referenceImageUrls: record.referenceImageUrls,
+    updatedAt: record.updatedAt,
+  };
+}
+
 function lookupCharacter(name: string) {
   const key = name.trim().toLowerCase();
-  const cached = characterStore.get(key);
-  if (cached) return cached;
-
-  // Lazy fallback so a character made in an earlier session is usable now,
-  // whether or not the startup load ran. Synchronous because plan_storyboard and
-  // mergeCharacterReferences are: one small JSON file on a cache miss is cheaper
-  // than making every caller async.
+  // Disk wins when it is newer than the cache, including a write from the
+  // other process. Synchronous because plan_storyboard and
+  // mergeCharacterReferences are.
   const fromDisk = loadCharacterSync(name);
-  if (!fromDisk) return undefined;
-  characterStore.set(key, {
-    id: fromDisk.id,
-    name: fromDisk.name,
-    role: fromDisk.role,
-    description: fromDisk.description,
-    appearance: fromDisk.appearance,
-    wardrobe: fromDisk.wardrobe,
-    referenceImageUrls: fromDisk.referenceImageUrls,
-  });
+  if (!fromDisk) {
+    characterStore.delete(key);
+    return undefined;
+  }
+  const cached = characterStore.get(key);
+  if (!cached || cached.updatedAt !== fromDisk.updatedAt) {
+    characterStore.set(key, storedFrom(fromDisk));
+  }
   return characterStore.get(key);
 }
 
@@ -270,7 +325,7 @@ async function withPersonCutouts(
 }
 
 /** Pull every saved character into the cache so lookups start warm. */
-async function loadCharactersFromDisk() {
+export async function loadCharactersFromDisk() {
   try {
     for (const character of await loadAllCharacters()) {
       characterStore.set(character.name.trim().toLowerCase(), {
@@ -281,6 +336,7 @@ async function loadCharactersFromDisk() {
         appearance: character.appearance,
         wardrobe: character.wardrobe,
         referenceImageUrls: character.referenceImageUrls,
+        updatedAt: character.updatedAt,
       });
     }
   } catch (err) {
@@ -661,11 +717,19 @@ server.registerTool(
       prompt: z.string().optional().describe("Card heading shown to the user."),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
     const title = args.prompt ?? "Configure the film";
+    const mcp = currentMcpServer(server);
+    const caps = mcp.server.getClientCapabilities();
+    const scope = requestScope();
+    const streamMissing = scope?.kind === "http" && !scope.sseConnected;
+    const canElicit = Boolean(caps?.elicitation) && !streamMissing;
 
-    const caps = server.server.getClientCapabilities();
-    const canElicit = Boolean(caps?.elicitation);
+    const fields = Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v]) => ({
+      key,
+      title: (v as { title?: string }).title ?? key,
+      description: (v as { description?: string }).description ?? "",
+    }));
 
     if (!canElicit) {
       return {
@@ -673,14 +737,13 @@ server.registerTool(
           type: "text",
           text: JSON.stringify({
             elicitationSupported: false,
-            message:
-              "This client cannot show an interactive form, so ask for these fields conversationally " +
-              "in one message rather than one at a time.",
-            fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v]) => ({
-              key,
-              title: (v as { title?: string }).title ?? key,
-              description: (v as { description?: string }).description ?? "",
-            })),
+            needsInput: true,
+            message: streamMissing
+              ? "This HTTP client has no server-to-client stream, so the form cannot be shown. " +
+                "Ask for these fields conversationally in one message rather than one at a time."
+              : "This client cannot show an interactive form, so ask for these fields conversationally " +
+                "in one message rather than one at a time.",
+            fields,
           }, null, 2),
         }],
       };
@@ -690,12 +753,38 @@ server.registerTool(
     if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
 
     let result;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await server.server.elicitInput({
-        message: title,
-        requestedSchema: schema,
-      } as Parameters<typeof server.server.elicitInput>[0]);
+      const timer = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+        extra?.signal?.addEventListener("abort", () => {
+          reject(new Error("elicitation aborted"));
+        }, { once: true });
+      });
+      result = await Promise.race([
+        mcp.server.elicitInput({
+          message: title,
+          requestedSchema: schema,
+        } as Parameters<typeof mcp.server.elicitInput>[0]),
+        timer,
+      ]);
     } catch (err) {
+      const timedOut = err instanceof Error && err.message === "elicitation timed out";
+      if (timedOut) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              elicitationSupported: false,
+              needsInput: true,
+              message:
+                "The form was not answered in time. Ask for these fields conversationally " +
+                "in one message rather than one at a time.",
+              fields,
+            }, null, 2),
+          }],
+        };
+      }
       return {
         content: [{
           type: "text",
@@ -707,6 +796,8 @@ server.registerTool(
           }, null, 2),
         }],
       };
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     if (result.action !== "accept") {
@@ -1311,6 +1402,16 @@ type ClipResult = Omit<GrokClipResult, "status"> & { status?: string };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function cancelledBeforeSpend(extra?: { signal?: AbortSignal }) {
+  if (!extra?.signal?.aborted) return undefined;
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ action: "cancelled", willRender: false }),
+    }],
+  };
+}
+
 
 server.registerTool(
   "generate_controlled_clip",
@@ -1389,7 +1490,9 @@ server.registerTool(
       timeoutSeconds: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const {
       waitForCompletion,
       timeoutSeconds,
@@ -1508,7 +1611,9 @@ server.registerTool(
       overrideValidation: z.boolean().default(false),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
     if (decideSpend(args.confirm, extensionGate) !== "spend") {
       return refusal({
@@ -1542,7 +1647,7 @@ server.registerTool(
               "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame " +
               "(from extract_last_frame). That produces a new shot continuing from the same image and " +
               "works on the subscription session.",
-            auth: credential.source,
+            auth: toolAuth(credential.source),
           }, null, 2),
         }],
       };
@@ -1563,7 +1668,7 @@ server.registerTool(
       return {
         content: [{
           type: "text",
-          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2),
+          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: toolAuth(credential.source) }, null, 2),
         }],
       };
     }
@@ -1593,7 +1698,7 @@ server.registerTool(
               videoUrl: poll.video?.url,
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
-              auth: credential.source,
+              auth: toolAuth(credential.source),
             }, null, 2),
           }],
         };
@@ -1733,7 +1838,9 @@ server.registerTool(
       ),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const imageRefs = [args.baseImageUrl, ...(args.referenceImageUrls ?? []), ...urls]
       .filter((ref): ref is string => Boolean(ref && ref.trim()));
@@ -1817,7 +1924,7 @@ server.registerTool(
           costUsd: result.costUsd,
           usage: result.usage,
           billedTo: result.billedTo,
-          auth: result.auth,
+          auth: toolAuth(result.auth),
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : undefined,
           message:
@@ -1906,7 +2013,24 @@ server.registerTool(
   }
 );
 
-async function main() {
+export function startOwnedJobHeartbeat(): () => void {
+  return startJobHeartbeat(() => {
+    const now = Date.now();
+    for (const job of sequenceJobs.values()) {
+      if (job.state !== "running" || job.owner?.token !== processToken) continue;
+      job.owner.heartbeatAt = now;
+      void persistJob(job);
+    }
+  });
+}
+
+export async function startStdioServer(): Promise<void> {
+  if (process.env.THESHOW_TRANSPORT === "http") {
+    throw new Error(
+      "THESHOW_TRANSPORT=http is the Streamable HTTP entry, mcp/http-server.ts. " +
+        "This process is the desktop stdio server and does not open a port.",
+    );
+  }
   // Load films saved by earlier sessions before taking requests, so a user who
   // comes back tomorrow can still continue or repair what they paid for.
   await loadJobsFromDisk();
@@ -1916,13 +2040,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("theShow MCP server running on stdio (enhanced test build)");
-}
-
-const entry = process.argv[1];
-if (entry && import.meta.url === pathToFileURL(entry).href) {
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
+  const stopBeat = startOwnedJobHeartbeat();
+  installShutdown(async () => {
+    stopBeat();
+    await flushJobWrites();
   });
 }
 
@@ -1975,6 +2096,8 @@ type SequenceJob = {
   startedAt: number;
   finishedAt?: number;
   state: "running" | "completed" | "stopped" | "failed";
+  /** Who is driving a running render, so another process does not reap it. */
+  owner?: JobOwner;
   shotCount: number;
   completed: number;
   estimateUsd: number;
@@ -2076,44 +2199,58 @@ type SequenceJob = {
 const sequenceJobs = new Map<string, SequenceJob>();
 
 async function persistJob(job: SequenceJob) {
+  const write = (async () => {
+    try {
+      await atomicWriteFile(
+        join(JOBS_DIR, `${job.id}.json`),
+        JSON.stringify(job, null, 2),
+      );
+    } catch (err) {
+      // A failed write must never lose the render. The job is already in memory,
+      // and the next state change tries again.
+      console.error(`theShow: could not persist job ${job.id}:`, err);
+    }
+  })();
+  trackWrite(write);
+  await write;
+}
+
+function reapIfOwnerGone(job: SequenceJob): void {
+  if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  job.state = "stopped";
+  job.error =
+    "The server stopped while this film was rendering. Shots already finished are kept; " +
+    "the rest were never rendered.";
+  job.finishedAt = job.finishedAt ?? Date.now();
+  void persistJob(job);
+}
+
+/** Re-read job files so a film started by the other transport is visible here. */
+export async function refreshJobsFromDisk(): Promise<void> {
+  let names: string[];
   try {
-    await mkdir(JOBS_DIR, { recursive: true });
-    await writeFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
-  } catch (err) {
-    // A failed write must never lose the render. The job is already in memory,
-    // and the next state change tries again.
-    console.error(`theShow: could not persist job ${job.id}:`, err);
+    names = await readdir(JOBS_DIR);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const raw = await readFile(join(JOBS_DIR, name), "utf8");
+      const job = JSON.parse(raw) as SequenceJob;
+      if (!job?.id) continue;
+      const memory = sequenceJobs.get(job.id);
+      if (memory?.owner?.token === processToken && memory.state === "running") continue;
+      reapIfOwnerGone(job);
+      sequenceJobs.set(job.id, job);
+    } catch {
+      // One unreadable file must not stop the others from loading.
+    }
   }
 }
 
 export async function loadJobsFromDisk() {
-  try {
-    const files = await readdir(JOBS_DIR);
-    for (const name of files) {
-      if (!name.endsWith(".json")) continue;
-      try {
-        const raw = await readFile(join(JOBS_DIR, name), "utf8");
-        const job = JSON.parse(raw) as SequenceJob;
-        if (!job?.id) continue;
-        // A job that was mid-render when the server died cannot be resumed by
-        // polling: nothing is driving it. Mark it honestly rather than leaving
-        // it "running" forever.
-        if (job.state === "running") {
-          job.state = "stopped";
-          job.error =
-            "The server stopped while this film was rendering. Shots already finished are kept; " +
-            "the rest were never rendered.";
-          job.finishedAt = job.finishedAt ?? Date.now();
-          void persistJob(job);
-        }
-        sequenceJobs.set(job.id, job);
-      } catch {
-        // One unreadable file must not stop the others from loading.
-      }
-    }
-  } catch {
-    // No jobs directory yet: a first run.
-  }
+  await refreshJobsFromDisk();
 }
 
 function sequenceJobId(): string {
@@ -2582,7 +2719,9 @@ server.registerTool(
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
 
@@ -2819,6 +2958,7 @@ server.registerTool(
       id: sequenceJobId(),
       startedAt: Date.now(),
       state: "running",
+      owner: thisOwner(),
       // Total film length, not just this call's new shots.
       shotCount: carried.length + shotCount,
       completed: 0,
@@ -3029,7 +3169,9 @@ server.registerTool(
       ),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     // Default the base to a Location character unless the caller named one.
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
@@ -3261,7 +3403,9 @@ server.registerTool(
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
     }),
   },
-  async (args) => {
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
     const original = sequenceJobs.get(args.jobId);
     if (!original) {
       return {
@@ -3427,6 +3571,7 @@ server.registerTool(
       id: sequenceJobId(),
       startedAt: Date.now(),
       state: "running",
+      owner: thisOwner(),
       shotCount: original.shots.length,
       completed: before.length,
       estimateUsd,
@@ -3514,6 +3659,7 @@ server.registerTool(
     }),
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
     const shown = all
       .filter((job) => args.includeUnfinished || job.state === "completed")
@@ -3565,6 +3711,7 @@ server.registerTool(
     }),
   },
   async (args) => {
+    await refreshJobsFromDisk();
     const job = sequenceJobs.get(args.jobId);
     if (!job) {
       return {
