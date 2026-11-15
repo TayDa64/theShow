@@ -139,6 +139,34 @@ async function hasAudioStream(file: string) {
  * Pull the final frame of a clip as a PNG. This is the image a next shot uses
  * as `firstFrameUrl`, which is what actually carries continuity across a cut.
  */
+/**
+ * The first frame of a clip, named from the file path so a second call reuses it.
+ * This is a local ffmpeg read. It does not call a paid API.
+ */
+export async function extractFirstFrame(file: string): Promise<string | undefined> {
+  const { ffmpeg } = await resolveTools();
+  const dir = await ensureOutputDir();
+  const digest = createHash("sha1").update(`first:${file}`).digest("hex").slice(0, 16);
+  const outPath = join(dir, `frame-first-${digest}.png`);
+  try {
+    const existing = await stat(outPath);
+    if (existing.size > 0) return outPath;
+  } catch {
+    // Not extracted yet.
+  }
+  try {
+    await exec(ffmpeg, [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-i", file, "-vframes", "1", "-q:v", "2", outPath,
+    ], { maxBuffer: 16 * 1024 * 1024 });
+    const info = await stat(outPath);
+    if (info.size > 0) return outPath;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export async function extractLastFrame(input: {
   file: string;
   /** How far back from the end to seek. Kept small so we get the true last frame. */

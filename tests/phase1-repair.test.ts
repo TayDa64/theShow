@@ -40,9 +40,9 @@ describe("dependency-aware repair", () => {
     });
     expect(graph.nodes.find((node) => node.shot === 3)?.seededByShot).toBe(2);
     expect(graph.edges).toEqual(expect.arrayContaining([
-      { fromShot: 1, toShot: 2, kind: "last-frame-seed", artifact: "/f/1-last.png" },
-      { fromShot: 2, toShot: 3, kind: "board-still", artifact: "/f/board-2.png" },
-      { fromShot: 2, toShot: 2, kind: "extension", artifact: "/f/2-base.mp4" },
+      { fromShot: 1, toShot: 2, kind: "last-frame-seed", artifact: "/f/1-last.png", verified: true },
+      { fromShot: 2, toShot: 3, kind: "board-still", artifact: "/f/board-2.png", verified: true },
+      { fromShot: 2, toShot: 2, kind: "extension", artifact: "/f/2-base.mp4", verified: true },
     ]));
   });
 
@@ -61,14 +61,15 @@ describe("dependency-aware repair", () => {
       requiresApproval: true,
     });
     expect(byId["retry-alone"].fixes.join(" ")).toMatch(/shot 2/);
-    expect(byId["retry-alone"].leavesBroken.join(" ")).toMatch(/shot 3/);
-    expect(byId["retry-alone"].leavesBroken.join(" ")).toMatch(/hard cut/);
+    expect(byId["retry-alone"].leavesBroken.join(" ")).toMatch(/pinned boundary/);
+    expect(byId["retry-alone"].leavesBroken.join(" ")).not.toMatch(/hard cut/);
 
     expect(byId["retry-dependents"]).toMatchObject({
-      costUsd: 1.96,
-      shotsToRender: [2, 3],
+      costUsd: 1.12,
+      shotsToRender: [2],
     });
-    expect(byId["retry-dependents"].fixes.join(" ")).toMatch(/shot 3/);
+    expect(byId["retry-dependents"].fixes.join(" ")).toMatch(/shot 2/);
+    expect(byId["retry-dependents"].shotsToRender).not.toContain(3);
     expect(byId["retry-dependents"].leavesBroken.join(" ")).toMatch(/2-base\.mp4/);
 
     expect(byId["reboard-boundary"]).toMatchObject({
@@ -84,6 +85,20 @@ describe("dependency-aware repair", () => {
     expect(byId["accept-note"].leavesBroken.join(" ")).toMatch(/stays as rendered/);
 
     expect(proposal.options.map((option) => option.costUsd)).toEqual([...proposal.options.map((option) => option.costUsd)].sort((a, b) => a - b));
+  });
+
+  it("does not price an unrecorded link as a real seed", () => {
+    const graph = buildDependencyGraph([
+      { index: 1, durationSeconds: 8, pin: "both", framesRecorded: false },
+      { index: 2, durationSeconds: 8, pin: "both", framesRecorded: false, lastFramePath: "/f/board.png" },
+    ]);
+    expect(graph.edges).toEqual([
+      { fromShot: 1, toShot: 2, kind: "inferred", verified: false },
+    ]);
+    const proposal = proposeRepair({ graph, badShot: 1, resolution: "720p" });
+    const dependents = proposal.options.find((option) => option.id === "retry-dependents");
+    expect(dependents?.costUsd).toBe(1.12);
+    expect(dependents?.shotsToRender).toEqual([1]);
   });
 
   it("does not execute a strategy without an approval, and a mismatched quote does not run it either", () => {

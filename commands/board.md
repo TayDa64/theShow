@@ -10,6 +10,8 @@ from its prompts. Otherwise treat the arguments as a scene and call `board_film`
 for the estimate first.
 
 Show the contract that applies: each still prompt, its lint hits, and the $0.02 quote. A still
-prompt names the room, because the still has to generate it. Wait for a yes. On approval call
-`board_film` with `confirm: true`. Reuse frames already on disk. Report the frame paths and the
-board's actual cost. This renders no video. Do not skip the estimate.
+prompt names the room, because the still has to generate it. Wait for a yes. On approval call `board_film` with `confirm: true` and the estimate's
+`costQuote` echoed as `approvedKind`, `approvedUsd`, and `approvedFingerprint`. A bare
+confirm spends and returns `unboundApproval`; echo all three fields instead. Reuse frames
+already on disk. Report the frame paths and the board's actual cost. This renders no video.
+Do not skip the estimate. A board yes does not authorize video.

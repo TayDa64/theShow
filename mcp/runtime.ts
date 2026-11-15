@@ -6,9 +6,9 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { JOBS_DIR } from "./media";
 
@@ -151,10 +151,40 @@ export function bearerMatches(authorization: string | undefined, token: string):
   return authorization?.startsWith(prefix) === true && presented.length > 0 && same;
 }
 
+/**
+ * Test seam. Production leaves this unset. A probe can wait until the process
+ * is killed, which is how a crash mid-write is exercised.
+ */
+let beforeRename: (() => Promise<void>) | undefined;
+
+export function setBeforeRenameProbe(next: (() => Promise<void>) | undefined): void {
+  beforeRename = next;
+}
+
+/** Drop temp files whose writer is gone. A live writer's temp file is kept. */
+export async function sweepOrphanTemps(dir: string): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".tmp")) continue;
+    const match = name.match(/\.(\d+)\.[0-9a-f-]+\.tmp$/i);
+    const pid = match ? Number(match[1]) : 0;
+    if (pid === process.pid) continue;
+    if (pid > 0 && pidAlive(pid)) continue;
+    await unlink(join(dir, name)).catch(() => undefined);
+  }
+}
+
 export async function atomicWriteFile(path: string, data: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
+  await sweepOrphanTemps(dirname(path));
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
+  if (beforeRename) await beforeRename();
   await rename(tmp, path);
 }
 

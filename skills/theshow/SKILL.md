@@ -245,7 +245,8 @@ calls, so a shot without the reference will drift even if the previous shot had 
 
    `cast` is a physical description, not a name — a name means nothing to the image model.
 
-   Show the stills and the cost. On approval, call again with `confirm: true`. The returned `shots`
+   Show the stills and the cost. On approval, call again with `confirm: true` and the `costQuote`
+   fields `approvedKind`, `approvedUsd`, and `approvedFingerprint`. The returned `shots`
    have both frames filled in and consecutive shots share a boundary frame.
 
    **Pass `characters`, including a Location.** When the cast includes a character whose role is
@@ -398,7 +399,8 @@ It does not render. `confirm` on that tool does not spend.
 `retry_shot({ jobId, shotIndex })` re-renders exactly that shot and splices it back in. Every other
 shot is reused at no cost, and the film is re-assembled with its original resolution, joins and
 audio. It is two-step like everything else: call without `confirm` for the price of the one render,
-show it, then call again with `confirm: true`. A board approval does not authorize this render, and
+show it, then call again with `confirm: true` plus `approvedKind`, `approvedUsd`, and
+`approvedFingerprint` from that estimate's `costQuote`. A board approval does not authorize this render, and
 a changed resolution, duration, or pin makes an earlier yes invalid when you pass the quote back
 as `approvedKind`, `approvedUsd`, and `approvedFingerprint`. Omitting those fields keeps the
 previous confirm behavior. `overrideValidation` does not replace `confirm`.
@@ -520,8 +522,12 @@ Every render returns `costUsd`. **Price depends on resolution**, measured on rea
 
 **A still is $0.02**, measured, and it is the cheapest thing here by an order of magnitude. Board
 first when the look matters: four stills for a three-shot film is eight cents against roughly $3.36
-of 720p footage. Approving the board does not approve the video. Each paid call needs its own yes
-for its own quote.
+of 720p footage. Approving the board does not approve the video. Every estimate returns `costQuote`
+with `kind`, `usd`, and `fingerprint`. On the confirm call, pass those back as
+`approvedKind`, `approvedUsd`, and `approvedFingerprint`. A confirm that names only
+some of them is refused. A bare `confirm: true` still spends, and the response
+includes `unboundApproval` naming the quote that was used. Do not do that. Echo all
+three fields.
 
 `review_continuity` is free. It classifies wardrobe, props, pose at the seam, lighting, and identity
 on each cut as measured, visually flagged, or unverified. It does not render, delete, or reorder.

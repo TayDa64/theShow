@@ -6,7 +6,6 @@ import {
   assessBudget,
   authorizeSpend,
   gatePaidAction,
-  inFlightSpendAborted,
   videoQuote,
 } from "../mcp/costGate.ts";
 
@@ -99,6 +98,58 @@ describe("explicit cost gates", () => {
     expect(gated.budgetWarning).toMatch(/over the/);
   });
 
+  it("refuses a partial quote and spends a bare confirm with the quote named", () => {
+    const quoted = videoQuote({ resolution: "720p", pin: "start", durations: [8] });
+    const usdOnly = authorizeSpend({
+      kind: "video",
+      usd: quoted.usd,
+      fingerprint: quoted.fingerprint,
+      confirm: true,
+      approvedUsd: quoted.usd,
+    });
+    expect(usdOnly.decision).toBe("refused");
+    expect(usdOnly.reason).toMatch(/approvedKind, approvedUsd, and approvedFingerprint/);
+
+    const kindOnly = authorizeSpend({
+      kind: "video",
+      usd: quoted.usd,
+      fingerprint: quoted.fingerprint,
+      confirm: true,
+      approvedKind: "video",
+    });
+    expect(kindOnly.decision).toBe("refused");
+
+    const swapped = videoQuote({ resolution: "720p", pin: "start", durations: [5, 3] });
+    const original = videoQuote({ resolution: "720p", pin: "start", durations: [3, 5] });
+    expect(swapped.usd).toBe(original.usd);
+    expect(swapped.fingerprint).not.toBe(original.fingerprint);
+    const reordered = authorizeSpend({
+      kind: "video",
+      usd: swapped.usd,
+      fingerprint: swapped.fingerprint,
+      confirm: true,
+      approvedKind: "video",
+      approvedUsd: original.usd,
+      approvedFingerprint: original.fingerprint,
+    });
+    expect(reordered.decision).toBe("refused");
+
+    const bare = gatePaidAction({
+      kind: "video",
+      usd: quoted.usd,
+      fingerprint: quoted.fingerprint,
+      confirm: true,
+      budgetUsd: 0,
+      spentUsd: 3,
+    });
+    expect(bare.decision).toBe("spend");
+    expect(bare.authorizesSpend).toBe(true);
+    expect(bare.unboundApproval?.approvedFingerprint).toBe(quoted.fingerprint);
+    expect(bare.unboundApproval?.approvedKind).toBe("video");
+    expect(bare.unboundApproval?.approvedUsd).toBe(quoted.usd);
+    expect(bare.budgetWarning).toMatch(/does not authorize/);
+  });
+
   it("does not let overrideValidation skip cost confirmation", () => {
     const quoted = videoQuote({ resolution: "720p", pin: "start", durations: [8] });
     const withoutConfirm = authorizeSpend({
@@ -128,8 +179,7 @@ describe("explicit cost gates", () => {
     expect(overridden.reason).toMatch(/estimate changed/i);
   });
 
-  it("does not abort a render that was already approved", () => {
-    expect(inFlightSpendAborted()).toBe(false);
+  it("does not let a budget warning change a spend into a refusal", () => {
     const approved = gatePaidAction({
       kind: "video",
       usd: 2,
@@ -144,6 +194,6 @@ describe("explicit cost gates", () => {
     expect(approved.decision).toBe("spend");
     expect(approved.authorizesSpend).toBe(true);
     expect(approved.budgetWarning).toMatch(/does not authorize/);
-    expect(inFlightSpendAborted()).toBe(false);
+    expect(approved.unboundApproval).toBeUndefined();
   });
 });

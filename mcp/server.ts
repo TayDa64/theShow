@@ -27,6 +27,7 @@ import {
   OUTPUT_DIR,
   assembleClips,
   closingFrameAgreement,
+  extractFirstFrame,
   extractLastFrame,
   pathToDataUrl,
   probeDuration,
@@ -40,8 +41,6 @@ import {
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
 import {
   gatePaidAction,
-  hasCostAnnotation,
-  inFlightSpendAborted,
   quoteFingerprint,
   videoQuote,
   type PaidAction,
@@ -54,7 +53,6 @@ import {
   type ReviewShot,
 } from "./continuityReview.ts";
 import {
-  approveRepairOption,
   buildDependencyGraph,
   proposeRepair,
   type DependencyGraph,
@@ -86,7 +84,7 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -94,6 +92,7 @@ import { runResumeClaimProbe } from "./resume-claim-probe.ts";
 import {
   atomicWriteFile,
   currentMcpServer,
+  sweepOrphanTemps,
   elicitTimeoutMs,
   flushJobWrites,
   installShutdown,
@@ -1102,8 +1101,7 @@ function quoteGate(
   usd: number,
   fingerprint: string,
   spentUsd = 0,
-): PaidAction | undefined {
-  if (!hasCostAnnotation(args)) return undefined;
+): PaidAction {
   return gatePaidAction({
     kind,
     usd,
@@ -1136,6 +1134,37 @@ function costFields(paid: PaidAction | undefined): Record<string, unknown> {
   return {
     costQuote: paid.quote,
     ...(paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}),
+    ...(paid.unboundApproval ? { unboundApproval: paid.unboundApproval } : {}),
+  };
+}
+
+export function recordedSpendUsd(job: {
+  shots: Array<{ costUsd?: number }>;
+  spendLedger?: PersistedSpend;
+}): number {
+  const entries = job.spendLedger?.entries ?? [];
+  if (entries.length > 0) {
+    return Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  }
+  return Math.round(job.shots.reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100) / 100;
+}
+
+export function noteReportedSpend(job: SequenceJob, kind: SpendKind, usd: number): void {
+  if (!(usd > 0)) return;
+  const entries = [...(job.spendLedger?.entries ?? [])];
+  if (entries.length === 0) {
+    for (const shot of job.shots) {
+      if ((shot.costUsd ?? 0) > 0) entries.push({ kind: "video", usd: shot.costUsd ?? 0 });
+    }
+  }
+  entries.push({ kind, usd: Math.round(usd * 100) / 100 });
+  const spentUsd = Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  job.spendLedger = {
+    version: 1,
+    spentUsd,
+    pendingUsd: 0,
+    ...(job.spendLedger?.thresholdUsd !== undefined ? { thresholdUsd: job.spendLedger.thresholdUsd } : {}),
+    entries,
   };
 }
 
@@ -1591,12 +1620,16 @@ server.registerTool(
       model: z.string().default("grok-imagine-video-1.5"),
       waitForCompletion: z.boolean().default(true),
       timeoutSeconds: z.number().min(10).max(600).default(240),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this clip counts toward.",
+      ),
       ...costApprovalFields,
     }),
   },
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    if (args.jobId) await refreshJobsFromDisk();
     const {
       waitForCompletion,
       timeoutSeconds,
@@ -1611,6 +1644,7 @@ server.registerTool(
       approvedKind,
       approvedFingerprint,
       budgetUsd,
+      jobId,
       ...rest
     } = args;
     const gate = gateRenderSequence({
@@ -1626,16 +1660,20 @@ server.registerTool(
     const clipLint = lintSentPrompt(args.prompt, args.negative);
     const clipRate = ratePerSecond(args.resolution);
     const clipEstimate = Math.round(args.durationSeconds * clipRate * 100) / 100;
-    const clipQuoted = videoQuote({
+    const clipFingerprint = quoteFingerprint({
+      kind: "video",
+      prompt: args.prompt,
       resolution: args.resolution,
       pin: pin ?? "start",
       durations: [args.durationSeconds],
     });
+    const clipJob = jobId ? sequenceJobs.get(jobId) : undefined;
     const clipPaid = quoteGate(
       { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd },
       "video",
       clipEstimate,
-      clipQuoted.fingerprint,
+      clipFingerprint,
+      clipJob ? recordedSpendUsd(clipJob) : 0,
     );
     const clipCostRefusal = costRefusal(clipPaid);
     if (clipCostRefusal) return clipCostRefusal;
@@ -1693,6 +1731,11 @@ server.registerTool(
     job.referenceImageUrls = prepared.length > 0 ? prepared : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
+    if (clipJob && (result.costUsd ?? 0) > 0) {
+      noteReportedSpend(clipJob, "video", result.costUsd ?? 0);
+      if (budgetUsd !== undefined && clipJob.spendLedger) clipJob.spendLedger.thresholdUsd = budgetUsd;
+      await persistJob(clipJob);
+    }
     return {
       content: [{
         type: "text",
@@ -1705,6 +1748,7 @@ server.registerTool(
               : "Stub response: no credential available, so nothing was generated.",
           referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
           unknownCharacters: missing.length > 0 ? missing : undefined,
+          ...costFields(clipPaid),
           args,
         }, null, 2)
       }]
@@ -1731,18 +1775,29 @@ server.registerTool(
       timeoutSeconds: z.number().min(10).max(600).default(240),
       confirm: z.boolean().default(false),
       overrideValidation: z.boolean().default(false),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this extension counts toward.",
+      ),
       ...costApprovalFields,
     }),
   },
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    if (args.jobId) await refreshJobsFromDisk();
     const extensionUsd = Math.round(args.durationSeconds * ratePerSecond("720p") * 100) / 100;
+    const extensionJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
     const extensionPaid = quoteGate(
       args,
       "extend",
       extensionUsd,
-      quoteFingerprint({ kind: "extend", durationSeconds: args.durationSeconds, resolution: "720p" }),
+      quoteFingerprint({
+        kind: "extend",
+        prompt: args.prompt,
+        durationSeconds: args.durationSeconds,
+        resolution: "720p",
+      }),
+      extensionJob ? recordedSpendUsd(extensionJob) : 0,
     );
     const extensionCostRefusal = costRefusal(extensionPaid);
     if (extensionCostRefusal) return extensionCostRefusal;
@@ -1969,6 +2024,9 @@ server.registerTool(
         "Names of characters created with create_character. Their reference images are merged " +
         "into referenceImageUrls automatically.",
       ),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this still counts toward. Omit it and the still is not added to a film.",
+      ),
       ...costApprovalFields,
     }),
   },
@@ -1994,8 +2052,16 @@ server.registerTool(
         }],
       };
     }
-    const stillFingerprint = quoteFingerprint({ kind: "still", usd: STILL_USD, count: 1 });
-    const stillPaid = quoteGate(args, "still", STILL_USD, stillFingerprint);
+    if (args.jobId) await refreshJobsFromDisk();
+    const stillFingerprint = quoteFingerprint({
+      kind: "still",
+      prompt: args.prompt,
+      aspectRatio: args.aspectRatio,
+      baseImageUrl: args.baseImageUrl ?? "",
+      referenceImageUrls: args.referenceImageUrls ?? [],
+    });
+    const stillJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    const stillPaid = quoteGate(args, "still", STILL_USD, stillFingerprint, stillJob ? recordedSpendUsd(stillJob) : 0);
     const stillCostRefusal = costRefusal(stillPaid);
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
@@ -2044,6 +2110,7 @@ server.registerTool(
             costUsd: result.costUsd,
             referenceImagesUsed: urls.length,
             unknownCharacters: missing.length > 0 ? missing : undefined,
+            ...costFields(stillPaid),
           }, null, 2),
         }],
       };
@@ -2276,6 +2343,9 @@ export type SequenceJob = {
     /** The prompt that produced it, so a repair can re-render the same beat. */
     prompt?: string;
     durationSeconds?: number;
+    /** The opening frame actually sent for this shot. Absent on jobs rendered before it was recorded. */
+    openingFramePath?: string;
+    pinUsed?: "start" | "both";
   }>;
   /** Set when this job continued an earlier one, so cost and provenance stay honest. */
   resumedFrom?: { jobId: string; fromShot: number };
@@ -2462,6 +2532,7 @@ export async function refreshJobsFromDisk(): Promise<void> {
 }
 
 export async function loadJobsFromDisk() {
+  await sweepOrphanTemps(JOBS_DIR);
   await refreshJobsFromDisk();
 }
 
@@ -2724,6 +2795,8 @@ export function rememberedJob(jobId: string): SequenceJob | undefined {
  * Write one optional Phase 1 field onto a finished film.
  * A running render is left alone. The claim is released before this returns.
  */
+export const CLAIM_CONTENTION = "Another process is writing this film; retry shortly.";
+
 export async function saveJobAnnotation(
   jobId: string,
   patch: (job: SequenceJob) => void,
@@ -2738,19 +2811,29 @@ export async function saveJobAnnotation(
     };
   }
   const claim = await claimFilm(jobId);
-  if (!claim.ok) return claim;
+  if (!claim.ok) {
+    const latest = sequenceJobs.get(jobId);
+    if (latest && latest.state !== "running") {
+      return { ok: false, message: CLAIM_CONTENTION };
+    }
+    return claim;
+  }
   try {
-    const current = sequenceJobs.get(jobId);
-    if (!current) return { ok: false, message: "Unknown job" };
-    if (current.state === "running") {
+    const disk = await readPersistedJob(jobId);
+    if (!disk) return { ok: false, message: "Unknown job" };
+    if (disk.state === "running") {
       return {
         ok: false,
         message: "This film is rendering. The note was not written and the render was not stopped.",
       };
     }
-    patch(current);
-    await persistJob(current);
-    return { ok: true, job: current };
+    const held = sequenceJobs.get(jobId)?.claim;
+    noteRevision(disk);
+    const fresh: SequenceJob = { ...disk, claim: held };
+    sequenceJobs.set(jobId, fresh);
+    patch(fresh);
+    await persistJob(fresh);
+    return { ok: true, job: fresh };
   } finally {
     await releaseFilmClaim(jobId);
   }
@@ -2897,13 +2980,6 @@ async function runSequenceJob(
   /** Things that still made a film, but not the film that was asked for. */
   const degradations: string[] = [];
   try {
-    if (inFlightSpendAborted()) {
-      job.state = "stopped";
-      job.error = "A budget warning must not stop a render that has already started.";
-      job.finishedAt = Date.now();
-      void persistJob(job);
-      return;
-    }
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
       // Explicit frames beat chaining. A boarded shot already knows both of its
@@ -3000,6 +3076,8 @@ async function runSequenceJob(
         error: result.error,
         localPath: undefined as string | undefined,
         framePath: undefined as string | undefined,
+        openingFramePath: shotFirstFrame,
+        pinUsed: args.pin ?? "start",
         lastFrameUrl: shot.lastFrameUrl,
         lastFramePath: localImagePath(shot.lastFrameUrl),
         closingFrameAgreement: undefined as number | undefined,
@@ -3008,6 +3086,7 @@ async function runSequenceJob(
         durationSeconds: shot.durationSeconds,
       };
       job.spentUsd += result.costUsd ?? 0;
+      if ((result.costUsd ?? 0) > 0) noteReportedSpend(job, "video", result.costUsd ?? 0);
       job.shots.push(entry);
 
       if (result.status !== "completed" || !result.videoUrl) {
@@ -3331,7 +3410,7 @@ server.registerTool(
       "video",
       estimate,
       sequenceQuote.fingerprint,
-      (resumeJob?.spentUsd ?? 0) + (resumeJob?.carriedOverUsd ?? 0),
+      resumeJob ? recordedSpendUsd(resumeJob) : 0,
     );
     const sequenceCostRefusal = costRefusal(sequencePaid);
     if (sequenceCostRefusal) return sequenceCostRefusal;
@@ -3758,6 +3837,9 @@ server.registerTool(
         "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. " +
         "confirm alone does not unblock a refusal.",
       ),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this board counts toward.",
+      ),
       ...costApprovalFields,
     }),
   },
@@ -3892,44 +3974,26 @@ server.registerTool(
         message: contractValidation.message ?? messageForBoard(undefined),
       });
     }
-    if (decision === "spend") {
-      const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
-      if (sessionRefusal) return sessionRefusal;
-    }
-    const boardFingerprint = quoteFingerprint({
-      kind: "board",
-      shotCount: boardedShots.length,
-      middles: boardedShots.map((shot) => Boolean(shot.middleKeyframe)),
-      aspectRatio: args.aspectRatio,
-    });
-    let boardPaid: PaidAction | undefined;
-    if (decision === "spend" && hasCostAnnotation(args)) {
-      const priced = await boardFilm(
-        {
-          shots: boardedShots,
-          aspectRatio: args.aspectRatio,
-          look: args.look,
-          scene: locationScene(args.characters),
-          cast: args.cast,
-          maxCostUsd: args.maxCostUsd,
-          confirm: false,
-        },
-        {
-          outputDir: OUTPUT_DIR,
-          referenceImageUrls,
-          baseImageUrl,
-          generateStill: async (job, opts) => generateGrokStill(job, opts),
-        },
-      );
-      boardPaid = quoteGate(args, "board", priced.estimate.estimatedUsd, boardFingerprint);
-      const boardCostRefusal = costRefusal(boardPaid);
-      if (boardCostRefusal) return boardCostRefusal;
-    }
-
+    if (args.jobId) await refreshJobsFromDisk();
+    const boardJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
     const sentRefs = decision === "spend"
       ? await withPersonCutouts(args.characters, rawRefs)
       : rawRefs;
-    const board = await boardFilm(
+    const boardDeps = {
+      outputDir: OUTPUT_DIR,
+      referenceImageUrls: sentRefs.length > 0 ? sentRefs : undefined,
+      baseImageUrl,
+      generateStill: async (job: Parameters<typeof generateGrokStill>[0], opts: Parameters<typeof generateGrokStill>[1]) => generateGrokStill(job, opts),
+    };
+    const boardFingerprint = quoteFingerprint({
+      kind: "board",
+      prompts: boardedShots.map((shot) => shot.prompt ?? shot.action ?? ""),
+      look: args.look ?? "",
+      cast: args.cast ?? "",
+      middles: boardedShots.map((shot) => Boolean(shot.middleKeyframe)),
+      aspectRatio: args.aspectRatio,
+    });
+    const priced = await boardFilm(
       {
         shots: boardedShots,
         aspectRatio: args.aspectRatio,
@@ -3937,20 +4001,42 @@ server.registerTool(
         scene: locationScene(args.characters),
         cast: args.cast,
         maxCostUsd: args.maxCostUsd,
-        confirm: decision === "spend",
+        confirm: false,
       },
-      {
-        outputDir: OUTPUT_DIR,
-        // A base image and a reference set compete for the same body, and the
-        // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself. A person portrait is a feathered cutout; the
-        // original file is not rewritten.
-        referenceImageUrls: sentRefs.length > 0 ? sentRefs : undefined,
-        baseImageUrl,
-        // Injected so tests can board a whole film without reaching the network.
-        generateStill: async (job, opts) => generateGrokStill(job, opts),
-      },
+      boardDeps,
     );
+    const boardPaid = quoteGate(
+      args,
+      "board",
+      priced.estimate.estimatedUsd,
+      boardFingerprint,
+      boardJob ? recordedSpendUsd(boardJob) : 0,
+    );
+    const boardCostRefusal = costRefusal(boardPaid);
+    if (boardCostRefusal) return boardCostRefusal;
+    if (decision === "spend") {
+      const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
+      if (sessionRefusal) return sessionRefusal;
+    }
+    const board = decision === "spend"
+      ? await boardFilm(
+        {
+          shots: boardedShots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          scene: locationScene(args.characters),
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: true,
+        },
+        boardDeps,
+      )
+      : priced;
+    if (boardJob && (board.estimate.spentUsd ?? 0) > 0) {
+      noteReportedSpend(boardJob, "board", board.estimate.spentUsd);
+      if (args.budgetUsd !== undefined && boardJob.spendLedger) boardJob.spendLedger.thresholdUsd = args.budgetUsd;
+      await persistJob(boardJob);
+    }
 
     const boardFrames = Array.isArray(board.frames) ? board.frames : [];
     const payload = {
@@ -3980,7 +4066,7 @@ server.registerTool(
       ...(board.action === "boarded" || board.action === "partial"
         ? { renderShots: toRenderShots(board) }
         : {}),
-      ...costFields(boardPaid ?? quoteGate(args, "board", board.estimate.estimatedUsd, boardFingerprint)),
+      ...costFields(boardPaid),
     };
 
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -4115,7 +4201,7 @@ server.registerTool(
       "retry",
       estimateUsd,
       retryFingerprint,
-      original.spentUsd + (original.carriedOverUsd ?? 0),
+      recordedSpendUsd(original),
     );
     const retryCostRefusal = costRefusal(retryPaid);
     if (retryCostRefusal) return retryCostRefusal;
@@ -4428,12 +4514,27 @@ const reviewShotSchema = z.object({
   extendedFrom: z.string().optional(),
 });
 
-function reviewShotsFromJob(job: SequenceJob): ReviewShot[] {
-  return job.shots.map((shot, index) => {
+function filesIdentical(left: string, right: string): boolean {
+  try {
+    const a = createHash("sha256").update(readFileSync(left)).digest("hex");
+    const b = createHash("sha256").update(readFileSync(right)).digest("hex");
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
+async function reviewShotsFromJob(job: SequenceJob): Promise<ReviewShot[]> {
+  const shots: ReviewShot[] = [];
+  for (let index = 0; index < job.shots.length; index += 1) {
+    const shot = job.shots[index];
     const ledger = job.ledger?.shots?.find((entry) => entry.shot === shot.index);
-    const previous = job.shots[index - 1];
     const worn = ledger?.checklists.flatMap((list) => list.worn.map((layer) => layer.id));
-    return {
+    let opening = shot.openingFramePath;
+    if (!opening && shot.localPath && existsSync(shot.localPath)) {
+      opening = await extractFirstFrame(shot.localPath);
+    }
+    shots.push({
       index: shot.index,
       ...(ledger ? { worn: worn ?? [] } : {}),
       ...(ledger
@@ -4446,13 +4547,14 @@ function reviewShotsFromJob(job: SequenceJob): ReviewShot[] {
           })),
         }
         : {}),
-      lastFramePath: shot.framePath ?? shot.lastFramePath,
-      firstFramePath: index === 0 ? job.startFramePath : previous?.framePath,
+      lastFramePath: shot.framePath,
+      firstFramePath: opening,
       durationSeconds: shot.durationSeconds,
-      pin: job.settings?.pin,
+      pin: shot.pinUsed ?? job.settings?.pin,
       ...(shot.lastFramePath ? { boardStillPaths: [shot.lastFramePath] } : {}),
-    };
-  });
+    });
+  }
+  return shots;
 }
 
 server.registerTool(
@@ -4479,16 +4581,39 @@ server.registerTool(
     }),
   },
   async (args) => {
+    const callerSupplied = Boolean(args.shots);
     let shots = args.shots as ReviewShot[] | undefined;
-    let ledgerArtifact = "ledger";
-    if (!shots && args.jobId) {
-      await refreshJobsFromDisk();
-      const job = sequenceJobs.get(args.jobId);
-      if (!job) {
-        return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
-      }
-      shots = reviewShotsFromJob(job);
+    let ledgerArtifact = callerSupplied ? "caller-supplied" : "ledger";
+    let plannedShots: number[] = [];
+    let diskMeasurements: Array<{
+      afterShot: number;
+      agreement: number;
+      method: string;
+      source: "disk";
+    }> = [];
+    if (args.jobId) await refreshJobsFromDisk();
+    const job = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    if (args.jobId && !job) {
+      return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
+    }
+    if (!shots && job) {
+      shots = await reviewShotsFromJob(job);
       ledgerArtifact = `job:${job.id}#ledger`;
+      plannedShots = [
+        ...(job.ledger?.wardrobeEvents ?? []).map((event) => event.shot),
+        ...(job.ledger?.propEvents ?? []).map((event) => event.shot),
+      ];
+      diskMeasurements = job.shots.flatMap((shot) => {
+        if (typeof shot.closingFrameAgreement !== "number") return [];
+        if (!shot.localPath || !shot.lastFramePath) return [];
+        if (!existsSync(shot.localPath) || !existsSync(shot.lastFramePath)) return [];
+        return [{
+          afterShot: shot.index,
+          agreement: shot.closingFrameAgreement,
+          method: "closing-frame-agreement",
+          source: "disk" as const,
+        }];
+      });
     }
     if (!shots || shots.length === 0) {
       return refusal({
@@ -4500,18 +4625,23 @@ server.registerTool(
     }
     const review = reviewContinuity({
       shots,
-      measurements: args.measurements,
+      measurements: [
+        ...diskMeasurements,
+        ...(args.measurements ?? []).map((measurement) => ({ ...measurement, source: "caller" as const })),
+      ],
       fileExists: (file) => existsSync(file),
+      filesIdentical,
       ledgerArtifact,
+      plannedShots,
       styleNotes: args.styleNotes,
       narrativeSuggestions: args.narrativeSuggestions,
       resolution: args.resolution,
     });
     let persisted = false;
     let persistError: string | undefined;
-    if (args.jobId) {
-      const saved = await saveJobAnnotation(args.jobId, (job) => {
-        job.continuityReview = review;
+    if (args.jobId && !callerSupplied) {
+      const saved = await saveJobAnnotation(args.jobId, (current) => {
+        current.continuityReview = review;
       });
       persisted = saved.ok;
       if (!saved.ok) persistError = saved.message;
@@ -4519,6 +4649,8 @@ server.registerTool(
     return refusal({
       ...review,
       persisted,
+      source: callerSupplied ? "caller-supplied" : "job",
+      reproducible: !callerSupplied,
       ...(persistError ? { persistError } : {}),
     });
   },
@@ -4528,10 +4660,9 @@ server.registerTool(
   "propose_repair",
   {
     description:
-      "Propose least-cost repairs for one bad shot from the frames that were actually used: " +
-      "retry that shot and accept the hard cut, retry the shots seeded from it, re-board the " +
-      "boundary still and re-render, or accept with a note. Free. It does not render. A strategy " +
-      "runs only when retry_shot or render_sequence is confirmed for that quote.",
+      "Propose least-cost repairs for one bad shot from the frames that were actually used. " +
+      "Free and advisory: it does not approve and it does not render. Pass an option's costQuote " +
+      "to retry_shot or render_sequence, which are the calls that can spend.",
     inputSchema: z.object({
       jobId: z.string().optional(),
       badShot: z.number().int().min(1),
@@ -4553,7 +4684,7 @@ server.registerTool(
         "Film budget recorded with the proposal. Crossing it warns. It does not render.",
       ),
       confirm: z.boolean().default(false).describe(
-        "Records approval of strategyId when the quote matches. Never renders.",
+        "Ignored. This tool never approves and never renders.",
       ),
       approvedUsd: z.number().optional(),
       approvedKind: z.enum(["board", "video", "still", "extend", "retry"]).optional(),
@@ -4580,14 +4711,15 @@ server.registerTool(
         return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
       }
       const pin = job.settings?.pin ?? "start";
-      source = job.shots.map((shot, index) => ({
+      source = job.shots.map((shot) => ({
         index: shot.index,
         durationSeconds: shot.durationSeconds ?? 8,
-        pin,
+        pin: shot.pinUsed ?? pin,
         framePath: shot.framePath,
-        firstFramePath: index === 0 ? job.startFramePath : job.shots[index - 1]?.framePath,
+        firstFramePath: shot.openingFramePath,
         lastFramePath: shot.lastFramePath,
         boardStillPaths: shot.lastFramePath ? [shot.lastFramePath] : undefined,
+        framesRecorded: Boolean(shot.openingFramePath),
       }));
       const fromJob = job.settings?.resolution;
       if (!args.resolution && (fromJob === "480p" || fromJob === "720p" || fromJob === "1080p")) {
@@ -4599,38 +4731,47 @@ server.registerTool(
     }
     const graph = buildDependencyGraph(source);
     const proposal = proposeRepair({ graph, badShot: args.badShot, resolution });
-    const chosen = args.strategyId
-      ? proposal.options.find((option) => option.id === args.strategyId)
-      : undefined;
-    const fingerprint = chosen
-      ? quoteFingerprint({ strategy: chosen.id, shots: chosen.shotsToRender, usd: chosen.costUsd })
-      : undefined;
-    const quoteBound = args.approvedUsd !== undefined
-      || args.approvedFingerprint !== undefined
-      || args.approvedKind !== undefined;
-    const approval = chosen && fingerprint
-      ? approveRepairOption({
-        option: chosen,
-        fingerprint,
-        confirm: args.confirm && quoteBound,
-        approvedUsd: args.approvedUsd,
-        approvedKind: args.approvedKind,
-        approvedFingerprint: args.approvedFingerprint,
-        overrideValidation: args.overrideValidation,
-      })
-      : undefined;
+    const repairJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    const badRecord = source.find((shot) => shot.index === args.badShot);
+    const options = proposal.options.map((option) => {
+      const fingerprint = option.id === "retry-alone" && args.jobId
+        ? quoteFingerprint({
+          kind: "retry",
+          jobId: args.jobId,
+          shotIndex: args.badShot,
+          durationSeconds: badRecord?.durationSeconds ?? 0,
+          resolution,
+          prompt: repairJob?.shots.find((shot) => shot.index === args.badShot)?.prompt ?? "",
+        })
+        : quoteFingerprint({
+          kind: option.id === "reboard-boundary" ? "board" : "video",
+          strategy: option.id,
+          shots: option.shotsToRender,
+          usd: option.costUsd,
+          resolution,
+        });
+      return {
+        ...option,
+        costQuote: {
+          version: 1 as const,
+          kind: option.id === "retry-alone" ? "retry" as const : option.id === "reboard-boundary" ? "board" as const : "video" as const,
+          usd: option.costUsd,
+          fingerprint,
+        },
+      };
+    });
     let persisted = false;
     let persistError: string | undefined;
     if (args.jobId) {
       const saved = await saveJobAnnotation(args.jobId, (job) => {
         job.dependencies = graph;
         job.repairProposal = proposal;
-        if (args.budgetUsd !== undefined || job.spentUsd > 0) {
+        if (args.budgetUsd !== undefined) {
+          const spent = recordedSpendUsd(job);
           job.spendLedger = {
-            version: 1,
-            spentUsd: Math.round(job.spentUsd * 100) / 100,
-            pendingUsd: chosen?.costUsd ?? proposal.options.find((option) => option.id === "retry-alone")?.costUsd ?? 0,
-            ...(args.budgetUsd !== undefined ? { thresholdUsd: args.budgetUsd } : {}),
+            ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+            thresholdUsd: args.budgetUsd,
+            spentUsd: job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : spent,
           };
         }
       });
@@ -4639,8 +4780,8 @@ server.registerTool(
     }
     return refusal({
       ...proposal,
-      ...(fingerprint ? { fingerprint } : {}),
-      ...(approval ? { approval } : {}),
+      options,
+      advisory: true,
       persisted,
       ...(persistError ? { persistError } : {}),
     });

@@ -37,30 +37,6 @@ const TOOL_NAMES = [
   "check_sequence",
 ] as const;
 
-const ADDED_TOOLS = ["review_continuity", "propose_repair"] as const;
-
-function expectCompatibleTools(
-  actual: Array<{ name: string; description?: string; inputSchema?: unknown }>,
-  fixtureTools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
-) {
-  expect(actual.map((tool) => tool.name)).toEqual([...TOOL_NAMES, ...ADDED_TOOLS]);
-  for (const expected of fixtureTools) {
-    const found = actual.find((tool) => tool.name === expected.name);
-    expect(found, expected.name).toBeTruthy();
-    expect(found?.description).toBe(expected.description);
-    const previous = expected.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
-    const next = found?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
-    expect(next?.required ?? []).toEqual(previous.required ?? []);
-    for (const [key, value] of Object.entries(previous.properties ?? {})) {
-      expect(next?.properties?.[key], `${expected.name}.${key}`).toEqual(value);
-    }
-    for (const key of Object.keys(next?.properties ?? {})) {
-      if (key in (previous.properties ?? {})) continue;
-      expect(next?.required ?? [], `${expected.name}.${key} must stay optional`).not.toContain(key);
-    }
-  }
-}
-
 type LaunchMode = "bundle" | "source";
 
 type JsonRpcMessage = {
@@ -241,8 +217,14 @@ describe("desktop stdio launch", () => {
       expect(stderr).toContain("theShow MCP server running on stdio");
       expect(stderr).not.toContain("running on http");
 
-      expect(fixture.tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
-      expectCompatibleTools(tools, fixture.tools);
+      expect(tools.map((tool) => tool.name).slice(0, TOOL_NAMES.length)).toEqual([...TOOL_NAMES]);
+      expect(fixture.tools.map((tool) => tool.name).slice(0, TOOL_NAMES.length)).toEqual([...TOOL_NAMES]);
+      const actual = tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      }));
+      expect(actual).toEqual(fixture.tools);
     },
     20_000,
   );

@@ -5,7 +5,9 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { saveCharacter } from "../mcp/characters.ts";
-import { claimFilm, readPersistedJob } from "../mcp/server.ts";
+import { JOBS_DIR } from "../mcp/media.ts";
+import { setBeforeRenameProbe, sweepOrphanTemps } from "../mcp/runtime.ts";
+import { claimFilm, readPersistedJob, saveJobAnnotation } from "../mcp/server.ts";
 
 async function main(): Promise<void> {
   const [mode, ...rest] = process.argv.slice(2);
@@ -18,9 +20,53 @@ async function main(): Promise<void> {
     else throw new Error(`unknown field ${field}`);
     return;
   }
+  if (mode === "annotate-review" || mode === "annotate-repair") {
+    const id = rest[0];
+    if (!id) throw new Error("annotate needs a job id");
+    if (process.env.THESHOW_PAUSE_BEFORE_RENAME === "1") {
+      setBeforeRenameProbe(async () => {
+        process.stdout.write("paused-before-rename\n");
+        await new Promise(() => undefined);
+      });
+    }
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const saved = await saveJobAnnotation(id, (job) => {
+        if (mode === "annotate-review") {
+          job.continuityReview = {
+            version: 1,
+            findings: [],
+            executed: false,
+            willRender: false,
+            willSpend: false,
+            mutatedPaths: [],
+          };
+        } else {
+          job.repairProposal = {
+            version: 1,
+            badShot: 1,
+            resolution: "720p",
+            options: [],
+            executed: false,
+            willRender: false,
+            willSpend: false,
+          };
+        }
+      });
+      if (saved.ok) {
+        process.stdout.write("persisted\n");
+        return;
+      }
+      if (!saved.message.includes("retry shortly")) {
+        throw new Error(saved.message);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20 + attempt));
+    }
+    throw new Error("annotation gave up");
+  }
   if (mode === "show-job") {
     const id = rest[0];
     if (!id) throw new Error("show-job needs a job id");
+    await sweepOrphanTemps(JOBS_DIR);
     const job = await readPersistedJob(id);
     process.stdout.write(`${JSON.stringify({
       id: job?.id ?? null,

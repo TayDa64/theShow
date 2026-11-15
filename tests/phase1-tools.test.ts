@@ -2,10 +2,12 @@
  * The free review tools and the additive cost fields on the existing spend tools.
  * Fetch is a spy. A refused quote must not call a generator.
  */
+import { mkdir, writeFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { videoQuote } from "../mcp/costGate.ts";
+import { JOBS_DIR } from "../mcp/media.ts";
 import { server } from "../mcp/server.ts";
 
 let client: Client;
@@ -185,11 +187,127 @@ describe("phase 1 tools", () => {
     expect(body.executed).toBe(false);
     expect(body.willRender).toBe(false);
     expect(body.willSpend).toBe(false);
-    expect(body.approval.decision).toBe("estimate");
-    expect(body.approval.executed).toBe(false);
-    const alone = body.options.find((option: { id: string }) => option.id === "retry-alone");
+    expect(body.advisory).toBe(true);
+    expect(body.approval).toBeUndefined();
+    const alone = body.options.find((option: { id: string; costQuote: { kind: string; usd: number } }) => option.id === "retry-alone");
     expect(alone.costUsd).toBe(1.12);
-    expect(alone.leavesBroken.join(" ")).toMatch(/hard cut/);
+    expect(alone.costQuote.kind).toBe("retry");
+    expect(alone.costQuote.usd).toBe(1.12);
+    expect(alone.leavesBroken.join(" ")).toMatch(/pinned boundary/);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("returns a costQuote from every paid estimate", async () => {
+    fetchCalls.length = 0;
+    const still = JSON.parse(toolText(await client.callTool({
+      name: "generate_still",
+      arguments: { prompt: "A quiet courtyard.", confirm: false },
+    })));
+    const clip = JSON.parse(toolText(await client.callTool({
+      name: "generate_controlled_clip",
+      arguments: { prompt: "A man walks across the courtyard.", confirm: false },
+    })));
+    const extension = JSON.parse(toolText(await client.callTool({
+      name: "extend_clip",
+      arguments: { videoUrl: "https://example.test/clip.mp4", prompt: "The man keeps walking.", confirm: false },
+    })));
+    const board = JSON.parse(toolText(await client.callTool({
+      name: "board_film",
+      arguments: { shots: [{ prompt: "A quiet courtyard." }], confirm: false },
+    })));
+    for (const body of [still, clip, extension, board]) {
+      expect(body.action).toBe("estimate-only");
+      expect(body.costQuote.fingerprint).toEqual(expect.any(String));
+      expect(body.costQuote.usd).toEqual(expect.any(Number));
+      expect(body.costQuote.kind).toEqual(expect.any(String));
+      expect(body.unboundApproval).toBeUndefined();
+    }
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("returns a costQuote on a bare estimate", async () => {
+    fetchCalls.length = 0;
+    const result = await client.callTool({
+      name: "render_sequence",
+      arguments: { shots: [shot], confirm: false },
+    });
+    const body = JSON.parse(toolText(result));
+    expect(body.action).toBe("estimate-only");
+    expect(body.costQuote.kind).toBe("video");
+    expect(body.costQuote.usd).toBe(1.12);
+    expect(body.costQuote.fingerprint).toEqual(expect.any(String));
+    expect(body.unboundApproval).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("refuses a board confirm that names only a video kind, before any session check", async () => {
+    fetchCalls.length = 0;
+    const result = await client.callTool({
+      name: "board_film",
+      arguments: {
+        shots: [{ prompt: "A quiet courtyard." }],
+        confirm: true,
+        overrideValidation: true,
+        approvedKind: "video",
+        approvedUsd: 0.04,
+        approvedFingerprint: "not-the-board",
+      },
+    });
+    const body = JSON.parse(toolText(result));
+    expect(body.action).toBe("refused");
+    expect(body.willSpend).toBe(false);
+    expect(body.reason).toMatch(/video approval does not authorize a board/);
+    expect(JSON.stringify(body)).not.toMatch(/credential|session/i);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("refuses confirm when only approvedUsd is sent", async () => {
+    fetchCalls.length = 0;
+    const result = await client.callTool({
+      name: "render_sequence",
+      arguments: {
+        shots: [shot],
+        confirm: true,
+        overrideValidation: true,
+        approvedUsd: 1.12,
+      },
+    });
+    const body = JSON.parse(toolText(result));
+    expect(body.action).toBe("refused");
+    expect(body.reason).toMatch(/approvedKind, approvedUsd, and approvedFingerprint/);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("warns from the film's recorded shot cost, not a supplied spent figure", async () => {
+    fetchCalls.length = 0;
+    const id = "seq_phase1_recorded_spend";
+    await mkdir(JOBS_DIR, { recursive: true });
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1.12,
+      spentUsd: 0,
+      shots: [{ index: 1, title: "Old", status: "completed", costUsd: 1.12, prompt: "A man walks across the courtyard.", durationSeconds: 8 }],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: true, pin: "start" },
+    }));
+    const result = await client.callTool({
+      name: "render_sequence",
+      arguments: {
+        shots: [shot],
+        confirm: false,
+        resumeFromJobId: id,
+        budgetUsd: 2,
+      },
+    });
+    const body = JSON.parse(toolText(result));
+    expect(body.action).toBe("estimate-only");
+    expect(body.willRender).toBe(false);
+    expect(body.budgetWarning).toMatch(/1\.12/);
+    expect(body.budgetWarning).toMatch(/does not authorize/);
+    expect(body.costQuote.kind).toBe("video");
     expect(fetchCalls).toEqual([]);
   });
 });

@@ -36,6 +36,8 @@ export type ContinuityFinding = {
   summary: string;
   evidence?: ReviewEvidence;
   abstention?: string;
+  /** True when the ledger change is a planned wardrobe or prop event, not a defect. */
+  planned?: boolean;
 };
 
 export type ReviewProp = {
@@ -64,6 +66,8 @@ export type SeamMeasurement = {
   method?: string;
   meanLumaDelta?: number;
   identityAgreement?: number;
+  /** disk: computed from files this process read. caller: not a measurement. */
+  source?: "disk" | "caller";
 };
 
 export type ContinuityReview = {
@@ -85,6 +89,8 @@ export type ReviewInput = {
   styleNotes?: string[];
   narrativeSuggestions?: string[];
   resolution?: VideoResolution;
+  /** Shot numbers where a wardrobe or prop event was planned. Those changes are not defects. */
+  plannedShots?: number[];
 };
 
 function sortedIds(ids: string[] | undefined): string[] {
@@ -143,7 +149,12 @@ function unverified(
   };
 }
 
-function wardrobeFinding(previous: ReviewShot, next: ReviewShot, ledgerArtifact: string): ContinuityFinding {
+function wardrobeFinding(
+  previous: ReviewShot,
+  next: ReviewShot,
+  ledgerArtifact: string,
+  planned: boolean,
+): ContinuityFinding {
   if (!previous.worn || !next.worn) {
     return unverified(
       "wardrobe",
@@ -155,7 +166,7 @@ function wardrobeFinding(previous: ReviewShot, next: ReviewShot, ledgerArtifact:
   const before = sortedIds(previous.worn);
   const after = sortedIds(next.worn);
   const changed = before.join(",") !== after.join(",");
-  return measured(
+  const finding = measured(
     "wardrobe",
     previous.index,
     next.index,
@@ -168,6 +179,11 @@ function wardrobeFinding(previous: ReviewShot, next: ReviewShot, ledgerArtifact:
       value: changed ? "changed" : "unchanged",
     },
   );
+  if (changed && planned) {
+    finding.planned = true;
+    finding.summary = `${finding.summary} The change is a planned wardrobe event, not a defect.`;
+  }
+  return finding;
 }
 
 function propsFinding(previous: ReviewShot, next: ReviewShot, ledgerArtifact: string): ContinuityFinding {
@@ -212,6 +228,14 @@ function poseFinding(
       "No frame on one side of the cut, so pose at the seam was not checked.",
     );
   }
+  if (paths[0] === paths[1]) {
+    return unverified(
+      "pose",
+      previous.index,
+      next.index,
+      "The two seam paths are the same file, so pose at the cut was not checked.",
+    );
+  }
   if (!bothExist(paths, fileExists)) {
     return unverified(
       "pose",
@@ -220,17 +244,29 @@ function poseFinding(
       "A seam frame path is missing on disk, so pose at the seam was not checked.",
     );
   }
-  if (typeof measurement?.agreement === "number" && Number.isFinite(measurement.agreement)) {
+  if (
+    measurement?.source === "disk"
+    && typeof measurement.agreement === "number"
+    && Number.isFinite(measurement.agreement)
+  ) {
     return measured(
       "pose",
       previous.index,
       next.index,
-      `Seam agreement is ${measurement.agreement}.`,
+      `Seam agreement measured from the files on disk is ${measurement.agreement}.`,
       {
-        method: measurement.method?.trim() || "seam-agreement",
+        method: measurement.method?.trim() || "closing-frame-agreement",
         artifactPaths: paths,
         value: measurement.agreement,
       },
+    );
+  }
+  if (measurement && measurement.source !== "disk" && typeof measurement.agreement === "number") {
+    return unverified(
+      "pose",
+      previous.index,
+      next.index,
+      "Caller-reported seam agreement was not measured from the files on disk.",
     );
   }
   return flagged(
@@ -250,7 +286,8 @@ function lightingFinding(
 ): ContinuityFinding {
   const paths = [previous.lastFramePath, next.firstFramePath].filter((path): path is string => Boolean(path));
   if (
-    typeof measurement?.meanLumaDelta === "number"
+    measurement?.source === "disk"
+    && typeof measurement.meanLumaDelta === "number"
     && Number.isFinite(measurement.meanLumaDelta)
     && bothExist(paths, fileExists)
   ) {
@@ -312,7 +349,11 @@ function identityFinding(
       },
     );
   }
-  if (typeof measurement?.identityAgreement === "number" && Number.isFinite(measurement.identityAgreement)) {
+  if (
+    measurement?.source === "disk"
+    && typeof measurement.identityAgreement === "number"
+    && Number.isFinite(measurement.identityAgreement)
+  ) {
     return measured(
       "identity",
       previous.index,
@@ -325,6 +366,14 @@ function identityFinding(
       },
     );
   }
+  if (measurement && measurement.source !== "disk" && typeof measurement.identityAgreement === "number") {
+    return unverified(
+      "identity",
+      previous.index,
+      next.index,
+      "Caller-reported identity agreement was not measured from the files on disk.",
+    );
+  }
   return unverified(
     "identity",
     previous.index,
@@ -335,11 +384,11 @@ function identityFinding(
 
 function defectShot(findings: ContinuityFinding[]): number | undefined {
   for (const finding of findings) {
+    if (finding.planned) continue;
     if (finding.class !== "measured") continue;
-    if (finding.evidence?.value === "changed") return finding.afterShot;
-    if (finding.topic === "pose" && typeof finding.evidence?.value === "number" && finding.evidence.value < 0.6) {
-      return finding.afterShot;
-    }
+    if (finding.topic !== "pose") continue;
+    if (typeof finding.evidence?.value !== "number" || finding.evidence.value >= 0.6) continue;
+    return finding.afterShot;
   }
   return undefined;
 }
@@ -370,8 +419,9 @@ export function reviewContinuity(input: ReviewInput): ContinuityReview {
     const previous = shots[index];
     const next = shots[index + 1];
     const measurement = (input.measurements ?? []).find((entry) => entry.afterShot === previous.index);
+    const planned = (input.plannedShots ?? []).includes(next.index) || (input.plannedShots ?? []).includes(previous.index);
     findings.push(
-      wardrobeFinding(previous, next, ledgerArtifact),
+      wardrobeFinding(previous, next, ledgerArtifact, planned),
       propsFinding(previous, next, ledgerArtifact),
       poseFinding(previous, next, measurement, input.fileExists),
       lightingFinding(previous, next, measurement, input.fileExists),

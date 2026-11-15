@@ -11,7 +11,7 @@ import { STILL_QUOTE_USD, VIDEO_USD_PER_SECOND, authorizeSpend, type SpendDecisi
 
 export const REPAIR_VERSION = 1 as const;
 
-export type DependencyKind = "last-frame-seed" | "end-pin" | "board-still" | "extension";
+export type DependencyKind = "last-frame-seed" | "end-pin" | "board-still" | "extension" | "inferred";
 
 export type DependencyShot = {
   index: number;
@@ -22,6 +22,11 @@ export type DependencyShot = {
   lastFramePath?: string;
   boardStillPaths?: string[];
   extendedFrom?: string;
+  /**
+   * False on a legacy shot that never recorded the frame it actually opened on.
+   * The graph then marks the link inferred instead of asserting a seed.
+   */
+  framesRecorded?: boolean;
 };
 
 export type DependencyEdge = {
@@ -29,6 +34,8 @@ export type DependencyEdge = {
   toShot: number;
   kind: DependencyKind;
   artifact?: string;
+  /** False when the link was not recorded and must not be priced as fact. */
+  verified: boolean;
 };
 
 export type DependencyNode = {
@@ -98,23 +105,42 @@ export function buildDependencyGraph(shots: DependencyShot[]): DependencyGraph {
     const previous = shots[index - 1];
     const next = shots[index];
     const node = nodes[index];
+    if (next.framesRecorded === false || previous.framesRecorded === false) {
+      edges.push({
+        fromShot: previous.index,
+        toShot: next.index,
+        kind: "inferred",
+        verified: false,
+      });
+      continue;
+    }
     if (next.firstFramePath && previous.framePath && next.firstFramePath === previous.framePath) {
       edges.push({
         fromShot: previous.index,
         toShot: next.index,
         kind: "last-frame-seed",
         artifact: previous.framePath,
+        verified: true,
       });
       node.seededByShot = previous.index;
     } else if (next.firstFramePath && previous.lastFramePath && next.firstFramePath === previous.lastFramePath) {
-      const fromBoard = (previous.boardStillPaths ?? []).includes(previous.lastFramePath);
+      const fromBoard = (previous.boardStillPaths ?? []).includes(previous.lastFramePath)
+        || previous.pin === "both";
       edges.push({
         fromShot: previous.index,
         toShot: next.index,
         kind: fromBoard ? "board-still" : "end-pin",
         artifact: previous.lastFramePath,
+        verified: true,
       });
       node.seededByShot = previous.index;
+    } else {
+      edges.push({
+        fromShot: previous.index,
+        toShot: next.index,
+        kind: "inferred",
+        verified: false,
+      });
     }
   }
 
@@ -125,14 +151,15 @@ export function buildDependencyGraph(shots: DependencyShot[]): DependencyGraph {
       toShot: shot.index,
       kind: "extension",
       artifact: shot.extendedFrom,
+      verified: true,
     });
   }
 
   return { version: REPAIR_VERSION, nodes, edges };
 }
 
-function downstreamShots(graph: DependencyGraph, badShot: number): number[] {
-  const chain = graph.edges.filter((edge) => edge.kind !== "extension" && edge.fromShot !== edge.toShot);
+function downstreamShots(graph: DependencyGraph, badShot: number, kinds: DependencyKind[]): number[] {
+  const chain = graph.edges.filter((edge) => edge.verified && kinds.includes(edge.kind) && edge.fromShot !== edge.toShot);
   const found: number[] = [];
   const seen = new Set<number>([badShot]);
   const queue = [badShot];
@@ -160,11 +187,13 @@ export function proposeRepair(input: {
 }): RepairProposal {
   const resolution = input.resolution ?? "720p";
   const bad = input.graph.nodes.find((node) => node.shot === input.badShot);
-  const later = downstreamShots(input.graph, input.badShot);
+  // A retry keeps an end pin and a board still, so those next shots are not re-rendered.
+  const later = downstreamShots(input.graph, input.badShot, ["last-frame-seed"]);
+  const pinned = downstreamShots(input.graph, input.badShot, ["board-still", "end-pin"]);
   const badDuration = bad ? [bad.durationSeconds] : [];
   const laterDurations = later.map((shot) => durationOf(input.graph, shot));
   const boundaryStill = input.graph.edges.find(
-    (edge) => edge.fromShot === input.badShot && (edge.kind === "board-still" || edge.kind === "end-pin"),
+    (edge) => edge.fromShot === input.badShot && edge.verified && (edge.kind === "board-still" || edge.kind === "end-pin"),
   );
   const extension = input.graph.edges.find(
     (edge) => edge.kind === "extension" && edge.fromShot === input.badShot,
@@ -176,7 +205,9 @@ export function proposeRepair(input: {
     fixes: [`Re-renders shot ${input.badShot} only.`],
     leavesBroken: later.length > 0
       ? hardCuts(input.badShot, later)
-      : [],
+      : pinned.length > 0
+        ? [`Shot ${pinned.join(", ")} keeps the pinned boundary frame, so this retry does not open a new cut.`]
+        : [],
     shotsToRender: [input.badShot],
     stillsToBuy: 0,
     requiresApproval: true,
@@ -196,7 +227,7 @@ export function proposeRepair(input: {
     requiresApproval: true,
   };
 
-  const reboardShots = [input.badShot, ...later];
+  const reboardShots = [input.badShot, ...new Set([...later, ...pinned])];
   const reboard: RepairOption = {
     id: "reboard-boundary",
     costUsd: Math.round((STILL_QUOTE_USD + videoUsd(reboardShots.map((shot) => durationOf(input.graph, shot)), resolution)) * 100) / 100,

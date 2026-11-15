@@ -61,11 +61,17 @@ export type BudgetAssessment = {
   authorizesSpend: false;
 };
 
+export type SpendEntry = {
+  kind: SpendKind;
+  usd: number;
+};
+
 export type PersistedSpend = {
   version: 1;
   thresholdUsd?: number;
   spentUsd: number;
   pendingUsd: number;
+  entries?: SpendEntry[];
 };
 
 function roundUsd(value: number): number {
@@ -118,6 +124,16 @@ export function hasCostAnnotation(input: {
     || input.budgetUsd !== undefined;
 }
 
+export function quoteFieldsPresent(input: {
+  approvedUsd?: number;
+  approvedKind?: SpendKind;
+  approvedFingerprint?: string;
+}): boolean {
+  return input.approvedUsd !== undefined
+    || input.approvedKind !== undefined
+    || input.approvedFingerprint !== undefined;
+}
+
 export function authorizeSpend(input: AuthorizeInput): AuthorizeResult {
   const quote: SpendQuote = {
     version: 1,
@@ -126,31 +142,69 @@ export function authorizeSpend(input: AuthorizeInput): AuthorizeResult {
     fingerprint: input.fingerprint,
   };
   // Confirm is the cost gate. overrideValidation is not read here.
+  // budgetUsd is not an approval field and cannot reach this function as one.
   if (!input.confirm) {
     return { decision: "estimate", quote };
   }
-  if (input.approvedKind !== undefined && input.approvedKind !== input.kind) {
-    return {
-      decision: "refused",
-      quote,
-      reason: `A ${input.approvedKind} approval does not authorize a ${input.kind} spend.`,
-    };
-  }
-  if (input.approvedUsd !== undefined && !usdEqual(input.approvedUsd, input.usd)) {
-    return {
-      decision: "refused",
-      quote,
-      reason: "The estimate changed. The earlier confirm is not valid for this quote.",
-    };
-  }
-  if (input.approvedFingerprint !== undefined && input.approvedFingerprint !== input.fingerprint) {
-    return {
-      decision: "refused",
-      quote,
-      reason: "The estimate changed. The earlier confirm is not valid for this quote.",
-    };
+  const namedKind = input.approvedKind !== undefined;
+  const namedUsd = input.approvedUsd !== undefined;
+  const namedFingerprint = input.approvedFingerprint !== undefined;
+  if (namedKind || namedUsd || namedFingerprint) {
+    if (!namedKind || !namedUsd || !namedFingerprint) {
+      return {
+        decision: "refused",
+        quote,
+        reason: "A confirm that names part of a quote has to include approvedKind, approvedUsd, and approvedFingerprint. The partial confirm was refused.",
+      };
+    }
+    if (input.approvedKind !== input.kind) {
+      return {
+        decision: "refused",
+        quote,
+        reason: `A ${input.approvedKind} approval does not authorize a ${input.kind} spend.`,
+      };
+    }
+    if (!usdEqual(input.approvedUsd ?? 0, input.usd)) {
+      return {
+        decision: "refused",
+        quote,
+        reason: "The estimate changed. The earlier confirm is not valid for this quote.",
+      };
+    }
+    if (input.approvedFingerprint !== input.fingerprint) {
+      return {
+        decision: "refused",
+        quote,
+        reason: "The estimate changed. The earlier confirm is not valid for this quote.",
+      };
+    }
   }
   return { decision: "spend", quote };
+}
+
+export type UnboundApproval = {
+  warning: string;
+  approvedKind: SpendKind;
+  approvedUsd: number;
+  approvedFingerprint: string;
+};
+
+/** Bare confirm spends. The response names the quote it actually used. */
+export function unboundApproval(input: {
+  confirm: boolean;
+  approvedUsd?: number;
+  approvedKind?: SpendKind;
+  approvedFingerprint?: string;
+}, quote: SpendQuote): UnboundApproval | undefined {
+  if (!input.confirm || quoteFieldsPresent(input)) return undefined;
+  return {
+    warning:
+      `confirm was not bound to a quote. This spend uses approvedKind ${quote.kind}, ` +
+      `approvedUsd ${quote.usd}, approvedFingerprint ${quote.fingerprint}.`,
+    approvedKind: quote.kind,
+    approvedUsd: quote.usd,
+    approvedFingerprint: quote.fingerprint,
+  };
 }
 
 export function assessBudget(input: {
@@ -178,20 +232,13 @@ export function assessBudget(input: {
   };
 }
 
-/**
- * A render that has already been approved is not stopped because the budget
- * warning fired. This stays false so the render loop cannot grow a budget abort.
- */
-export function inFlightSpendAborted(): boolean {
-  return false;
-}
-
 export type PaidAction = {
   decision: SpendDecision;
   quote: SpendQuote;
   reason?: string;
   budgetWarning?: string;
   authorizesSpend: boolean;
+  unboundApproval?: UnboundApproval;
 };
 
 export function gatePaidAction(input: AuthorizeInput & {
@@ -204,11 +251,13 @@ export function gatePaidAction(input: AuthorizeInput & {
     pendingUsd: input.usd,
     thresholdUsd: input.budgetUsd,
   });
+  const unbound = unboundApproval(input, auth.quote);
   return {
     decision: auth.decision,
     quote: auth.quote,
     ...(auth.reason ? { reason: auth.reason } : {}),
     ...(budget.warning ? { budgetWarning: budget.warning } : {}),
     authorizesSpend: auth.decision === "spend",
+    ...(unbound ? { unboundApproval: unbound } : {}),
   };
 }

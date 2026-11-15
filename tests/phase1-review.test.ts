@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,9 +38,11 @@ describe("continuity review classification", () => {
       narrativeSuggestions: ["he should confess in the doorway"],
       measurements: [{
         afterShot: 1,
-        agreement: 0.41,
-        method: "seam-agreement",
-        meanLumaDelta: 0.08,
+        agreement: 0.99,
+        method: "made-up",
+        meanLumaDelta: 0.1,
+        identityAgreement: 0.97,
+        source: "caller",
       }],
       fileExists: (file) => present.has(file),
       resolution: "720p",
@@ -54,16 +57,11 @@ describe("continuity review classification", () => {
     });
     expect(byTopic.props.class).toBe("measured");
     expect(byTopic.props.evidence?.value).toBe("changed");
-    expect(byTopic.pose.class).toBe("measured");
-    expect(byTopic.pose.evidence).toMatchObject({
-      method: "seam-agreement",
-      value: 0.41,
-      artifactPaths: ["/frames/1-last.png", "/frames/2-first.png"],
-    });
-    expect(byTopic.lighting.class).toBe("measured");
-    expect(byTopic.lighting.evidence?.method).toBe("mean-luma-delta");
+    expect(byTopic.pose.class).toBe("unverified");
+    expect(byTopic.pose.abstention).toMatch(/Caller-reported/);
+    expect(byTopic.lighting.class).toBe("unverified");
     expect(byTopic.identity.class).toBe("unverified");
-    expect(byTopic.identity.abstention).toMatch(/vision auditor is not wired/);
+    expect(byTopic.identity.abstention).toMatch(/Caller-reported/);
 
     for (const finding of review.findings) {
       const evidenced = Boolean(finding.evidence?.method) && Array.isArray(finding.evidence?.artifactPaths);
@@ -81,8 +79,39 @@ describe("continuity review classification", () => {
     expect(review.willRender).toBe(false);
     expect(review.willSpend).toBe(false);
     expect(review.mutatedPaths).toEqual([]);
-    expect(review.repairProposal?.executed).toBe(false);
-    expect(review.repairProposal?.willRender).toBe(false);
+    expect(review.repairProposal).toBeUndefined();
+  });
+
+  it("does not treat a planned wardrobe change as a defect", () => {
+    const review = reviewContinuity({
+      shots: shots(),
+      plannedShots: [2],
+      fileExists: () => false,
+    });
+    const wardrobe = review.findings.find((finding) => finding.topic === "wardrobe");
+    expect(wardrobe?.class).toBe("measured");
+    expect(wardrobe?.planned).toBe(true);
+    expect(review.repairProposal).toBeUndefined();
+  });
+
+  it("measures identity only when the files on disk match", async () => {
+    const dir = path.join(tmpdir(), `theshow-same-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    const frame = path.join(dir, "frame.png");
+    const reference = path.join(dir, "reference.png");
+    await writeFile(frame, "same-bytes");
+    await writeFile(reference, "same-bytes");
+    const review = reviewContinuity({
+      shots: [
+        { index: 1, worn: ["coat"], props: [hanger], lastFramePath: frame },
+        { index: 2, worn: ["coat"], props: [hanger], firstFramePath: reference, referencePath: reference },
+      ],
+      fileExists: () => true,
+      filesIdentical: (left, right) => readFileSync(left).equals(readFileSync(right)),
+    });
+    const identity = review.findings.find((finding) => finding.topic === "identity");
+    expect(identity?.class).toBe("measured");
+    expect(identity?.evidence?.method).toBe("sha256-identity");
   });
 
   it("flags seam frames that exist and were not measured", () => {
