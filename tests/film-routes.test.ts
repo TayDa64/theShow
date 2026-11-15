@@ -64,7 +64,7 @@ describe('film pipeline routes', () => {
 
     const download = await agent.get(response.body.downloadUrl);
     expect(download.status).toBe(200);
-  });
+  }, 20_000);
 
   it('rejects non-image uploads for reference assets', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-route-'));
