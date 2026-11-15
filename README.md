@@ -4,20 +4,24 @@
 
 Most AI video tools give you a slot machine. You type a sentence, you get eight seconds, and the next eight seconds has a different face, a different coat, and a different street.
 
-theShow treats a film as a sequence of planned shots instead of one lucky prompt. It collects the whole brief before spending anything, boards the film as stills so you can see it before you buy it, pins each cut to a single shared frame so two shots meet on identical pixels, and assembles the result with FFmpeg.
+theShow treats a film as a sequence of planned shots. It collects the whole brief before spending anything, boards the film as stills so you can see it before you buy it, checks a per-shot contract before a paid render, pins the opening frame of each clip (and the closing frame when you ask), and assembles the result with FFmpeg.
 
-It runs on your Grok subscription, so there is no separate API key to buy.
+On the desktop plugin, a signed-in Grok session is enough. `XAI_API_KEY` is optional there and is used first when it is set. The optional HTTP server bills the API key unless you opt in to that session file.
 
 <!-- Hero: the proof film, four frames from one 24-second render. -->
 ![Four frames from a 24-second theShow film: the same man, the same tan sherpa coat, the same 17th-floor office and skyline, across four shots](docs/images/proof-film-frames.jpg)
 
-**[Watch the full 24-second film](docs/media/tay-17th-floor-720p.mp4)** — 720p, 8.4 MB
+The 8.4 MB master (`docs/media/tay-17th-floor-720p.mp4`, 1280×720, 24.17 s) is the file the measurements below were taken from. GitHub's file viewer will not play it: the blob page says it can't show a file that big. The clip here is that same film, re-encoded to 960×540 so the page can play it. It is not a new render.
+
+<video src="docs/media/tay-17th-floor-preview.mp4" poster="docs/images/proof-film-frames.jpg" controls width="960"></video>
+
+**[Watch the 24-second film](docs/media/tay-17th-floor-preview.mp4)**
 
 ---
 
 ## A real film, measured
 
-That film was made end to end through the installed plugin: one form, one board, one chained render. It is the evidence behind every claim below.
+That film was made end to end through the installed plugin: one form, one board, one chained render, with both ends of each shot pinned. It is the evidence behind the measurements in this section. The current default pin is `start`; see [How continuity actually works](#how-continuity-actually-works).
 
 | | |
 |---|---|
@@ -30,22 +34,24 @@ That film was made end to end through the installed plugin: one form, one board,
 What was checked, on the rendered pixels rather than on the prompt:
 
 - **Every shot landed on its pinned closing frame.** Correlation to the supplied last frame: 0.999, 0.999, 0.988, 0.980.
-- **Every cut is seamless by construction.** Correlation across the three cuts: 0.9980, 0.9956, 0.9699 — at or above the within-shot controls for the same footage (0.9863, 0.8881). Two shots meeting on the same file cannot disagree.
+- **Every cut met on the shared frame.** Correlation across the three cuts: 0.9980, 0.9956, 0.9699 — at or above the within-shot controls for the same footage (0.9863, 0.8881). That film pinned both ends, so two shots met on the same file.
 - **The face held.** SFace identity against the reference portrait, sampled every half second across 47 detected faces: mean 0.519. Every score below 0.36 was inspected and is a pose, not a different person — a profile, a face leaving frame, a man turned away.
 - **The wardrobe held.** Tan coat presence mean 0.684; navy, the garment the old prompt wrongly named, mean 0.008 (max 0.069).
 - **The room held.** The left-window patch stayed put within shots that keep the same framing, and the board's frames agreed with each other at 0.843 mean structural correlation.
 
-The numbers, the method and the raw measurements are in [`docs/proof.md`](docs/proof.md). The short version is that the picture was measured, not asserted.
+The numbers, the method and the raw measurements are in [`docs/proof.md`](docs/proof.md).
 
 ---
 
 ## Install
 
+### Grok plugin
+
 ```bash
 grok plugin install TayDa64/theShow --trust
 ```
 
-That is the whole setup. The server ships pre-bundled, so startup runs no `npm install` and needs no network.
+The server ships pre-bundled, so startup runs no `npm install` and needs no network. `.mcp.json` runs `node mcp/launch.mjs` and does not set `THESHOW_TRANSPORT`, so the desktop launch is stdio and opens no port.
 
 Confirm the wiring:
 
@@ -53,7 +59,7 @@ Confirm the wiring:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with **thirteen tools** discovered. Run that on the machine the session is actually using — plugins install per machine, and a Grok web sandbox is not your machine.
+You want `theshow` reported healthy with **thirteen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
 
 If the session's tool list has no `plan_storyboard`, the plugin is not loaded there. theShow's skill tells the model to stop and say so rather than quietly build a film some other way.
 
@@ -63,135 +69,19 @@ To update:
 grok plugin uninstall theshow && grok plugin install TayDa64/theShow --trust
 ```
 
----
+### Desktop stdio from a checkout
 
-## Your first film
+From a source checkout, the same launcher starts stdio when `THESHOW_TRANSPORT` is unset:
 
-Ask in plain language. You never call the tools yourself.
+```bash
+node mcp/launch.mjs
+```
 
-> Use theShow to make a four-shot film of a man in a 17th-floor office at dusk, studying a holographic model of a skyline. Keep his face and his coat the same in every shot.
+Set `THESHOW_MCP_FROM_SOURCE=1` to run `mcp/stdio-main.ts` through `tsx` instead of `mcp/server.bundle.mjs`. That needs `node_modules`.
 
-### It asks before it spends
+### Streamable HTTP
 
-`configure_film` puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, resolution and its price, aspect ratio, audio, what must never appear, a music or voiceover path, and an optional reference image. The card returns your answers as JSON plus a cost estimate, and renders nothing.
-
-![The theShow configuration card inside Grok, showing the scene, characters, style, shots, seconds per shot, resolution and price, shape, audio and never-show fields, with accept and decline at the bottom](docs/images/config-card.png)
-
-One card is one model turn. Asking the same questions one at a time spends a turn on each before a frame exists — and turns cost money on top of renders.
-
-Two rules the tool holds to:
-
-- **A blank stays blank.** Anything you leave empty is left out of the film, and the model is told never to invent a character detail you did not give. An invented detail is a second paid render.
-- **Decline means no.** A declined or cancelled card comes back as an instruction not to render.
-
-The reference field takes a **path or an https URL**, because MCP has no file upload. A photo attached in chat already arrives as a readable local path, so **on a phone you just attach the picture.** HEIC and HEIF are transcoded automatically and oversized images are stepped down until they fit; a 12-megapixel photo arrives around 190 KB. Never resize or convert your own photo.
-
-### Slash commands
-
-Ten commands ship with the plugin. `/theshow` is the primary start. `/film` follows the same recipe. Each one is the same workflow, started partway in.
-
-| Command | What it does |
-|---|---|
-| `/theshow <idea>` | Primary start. The model calls configure_film, then the board, then the render contract |
-| `/film <idea>` | The same recipe as `/theshow` |
-| `/scene <scene> [shots]` | Plans a storyboard only. Free, renders nothing |
-| `/character <name> [look] [photo]` | Creates or updates a character with reference photos |
-| `/board <scene or jobId>` | Boards a film as stills, about two cents a frame |
-| `/render <shots.json>` | Renders a planned shot list |
-| `/check [jobId]` | Progress and real cost on a render, or your recent films |
-| `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
-| `/films [count]` | Lists films on disk. Free |
-| `/continue <jobId> <what next>` | Continues an existing film with more shots |
-
-None of them skips the estimate. A command that spends money still prices the work, shows you the figure, and waits for your yes.
-
-### Board it before you buy it
-
-Between the approved brief and the first paid render there is a cheap checkpoint: **`board_film`**. It generates one still per shot boundary, so you see the film as pictures first.
-
-A still is **$0.02**. A second of 720p video is **$0.14**. Four six-second shots board as five stills for ten cents and render for $3.44 — the board is roughly 3% of the cost and catches the things that are expensive to fix later: wrong wardrobe, wrong light, a face that is not your character, a room that reads nothing like the one you meant.
-
-- **N shots produce N+1 stills**, not 2N. The boundary between two shots is one picture, used as the first shot's last frame and the second shot's first frame. That is what makes the cut exact.
-- **A reference photo outranks the prompt here.** The board edits from your picture rather than treating it as a hint, so the prompt's job is to change the pose and the action and leave the rest alone.
-- **Re-running is free** for anything already on disk, so an interrupted board resumes instead of re-buying.
-
----
-
-## The thirteen tools
-
-| Tool | Costs | What it does |
-|---|---|---|
-| `configure_film` | free | Collects the whole brief on one card, with a cost estimate |
-| `create_character` | free | Stores a named character with reference photos on disk |
-| `plan_storyboard` | free | Turns a scene into numbered shots with framing, wardrobe checklists and a per-room prop ledger |
-| `board_film` | $0.02 a still | Boards a film as stills, one per shot boundary, so cuts land on identical pixels |
-| `generate_still` | $0.02 | One image, for a frame you want on its own |
-| `render_sequence` | per shot | Renders a whole shot list with frame-to-frame continuity, then assembles it |
-| `check_sequence` | free | Progress and real cost on a running sequence |
-| `retry_shot` | one shot | Re-renders a single bad shot and splices it back in, reusing the rest free |
-| `list_films` | free | Films on disk with job ids, costs and paths, including earlier sessions |
-| `generate_controlled_clip` | per shot | One clip, optionally bookended by a first and a last frame |
-| `extract_last_frame` | free | Pulls the bridge frame out of a rendered clip |
-| `assemble_film` | free | Joins ordered clips into one film with FFmpeg, hard cuts by default |
-| `extend_clip` | per call | Continues an existing take. **API-key backends only** |
-
----
-
-## How continuity actually works
-
-A film is not one long generation. It is a chain, and the chain is the whole design.
-
-**The boundary frame belongs to both shots.** A boarded film does not guess where one shot ends and the next begins: N shots produce N+1 stills, and shot 2's first frame is shot 1's last frame, byte for byte. Every cut is between two uses of the same file.
-
-**Pinning changes the deal.** A clip pinned only at its start drifts: two unpinned clips of the same scene sit around 0.20 correlation, which is why a cut between them pops. Pinning both ends holds the opening frame at 0.998 against the supplied image, and the closing frame between 0.87 and 0.99 — the low end is a last frame carrying motion blur, the high end is a clean settle. Either way, shot 1's last frame and shot 2's first frame are the same picture, so there is nothing to hide with a fade.
-
-**A location is the subject, not the setting.** When the cast includes a character whose role is `Location`, its photo becomes the base that every frame is edited from, and the board spends one extra still — two cents — building a hero frame of the cast inside that room first. Measured skyline agreement across a five-frame board: **0.72** by that route, against 0.57 editing from the location alone, 0.36 chaining, and 0.25 when a portrait rode along as a second reference. A face has a portrait pinned on every frame to correct it; a redrawn room has nothing.
-
-**The cast line describes the photo, never argues with it.** A measured board whose cast line said "navy blazer" while the portrait showed a tan sherpa coat produced a different jacket in three of five frames — the prompt was arguing with the picture. Once the line described the coat that is in the photo, the same board held it in all five. Garment agreement rose from 0.51 to 0.64. `mcp/cast.ts` now enforces that: a cast line naming a garment the picture contradicts is rewritten.
-
-**Wardrobe is a checklist of layers, not one sentence.** A character can store ordered layers (what is against the skin, what sits on top, and how much of each the reference photo actually shows), a start state, and optional photos of later states. Named events — take off, put on, adjust — replay into that checklist for each shot. The board prompt then describes only what is worn. A removed coat does not vanish: it becomes a prop at its destination, for example on a hanger.
-
-**Props belong to a room.** The living-room hanger and the study hanger are different objects with different ids, even when they share a name, and they are never merged. Each shot's prompt names the props in view at that location as fixed set dressing. An unnamed prop is left where it is; only an event that names a prop by id can move or remove it. The ledger is stored on the film job in `~/.theshow/jobs`, so a resumed film keeps the same rooms and objects.
-
-**Cuts are planned, not hidden.** Chained generations drift in fine texture, so any join between near-identical framings shows it — a dissolve double-exposes both patterns, a hard cut pops. Neither is a fix. The real fix is to change the framing between shots, and that is why the storyboard varies shot type and camera move per shot.
-
-**A film survives the session.** Every job is written to `~/.theshow/jobs` as it renders and reloaded at startup, with the footage in `~/.theshow/media`. A film can be continued, repaired or re-assembled days later, and `list_films` is how you find it.
-
----
-
-## Cost
-
-Every render is a real charge, and **resolution sets the price**. Measured on real eight-second renders:
-
-| Resolution | Output | Per second | 8-second shot | Four 8-second shots |
-|---|---|---|---|---|
-| `480p` | 848×480 | $0.08 | $0.64 | $2.56 |
-| `720p` | 1280×720 | $0.14 | $1.12 | $4.48 |
-| `1080p` | 1920×1088 | $0.25 | $2.00 | $8.00 |
-
-- **A still is $0.02**, measured. Board first when the look matters: five stills for a four-shot film is ten cents against $3.44 of footage at six seconds a shot.
-- **The default is 720p.** Leaving resolution unset does not mean 480p pricing — the API returns a soft 848×480 frame for it, so the old flat "eight cents a second" figure was quoting the cheapest, worst-looking setting and made every estimate a third too low. Always name the resolution beside a price.
-- **One shot runs to 15 seconds.** Nothing caps a film except patience and budget; 12 shots at 8 seconds is 96 seconds, and two continued runs pass three minutes.
-- **Every render returns its actual `costUsd`.** Quote that, not the estimate. Failed renders are not billed.
-
----
-
-## Authentication
-
-`render_sequence`, `generate_controlled_clip`, `board_film` and the rest resolve a credential in this order:
-
-1. **`XAI_API_KEY`**, if genuinely set — billed as xAI API credits at `https://api.x.ai`.
-2. **Grok subscription session** — read from `~/.grok/auth.json` after `grok login`. No API key required. This is the normal path, and the one the proof film ran on.
-
-An unset MCP environment variable can arrive as a literal `${XAI_API_KEY}` string, so theShow treats that shape as absent rather than sending it as a bearer token. An expired token reports a reason that names `grok login`.
-
-`extend_clip` needs the API key: the subscription proxy answers `POST /v1/videos/extensions` with **HTTP 405**. On a subscription, continue a shot with `generate_controlled_clip` and `firstFrameUrl` instead. The tool says this plainly rather than retrying.
-
----
-
-## Remote HTTP
-
-The desktop plugin speaks MCP over stdio and does not open a port. A second process can expose the same thirteen tools over Streamable HTTP, which is the shape a Grok Chat connector on iOS needs. Tool names, input schemas, and handlers are the ones the desktop server uses.
+A second process can expose the same thirteen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
 
 ```bash
 THESHOW_TRANSPORT=http \
@@ -203,12 +93,12 @@ node mcp/launch.mjs
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `THESHOW_TRANSPORT` | no | `stdio` | `stdio` or `http`. Unset is stdio. `.mcp.json` does not set it, so the desktop launch never listens. |
+| `THESHOW_TRANSPORT` | no | `stdio` | `stdio` or `http`. Unset is stdio. |
 | `THESHOW_HTTP_TOKEN` | yes, in http mode | none | Bearer token. The process exits if this is missing or blank when transport is `http`. |
 | `THESHOW_HTTP_HOST` | no | `127.0.0.1` | Bind address. Anything other than loopback is refused unless `THESHOW_HTTP_EXPOSE=1`. |
 | `THESHOW_HTTP_PORT` | no | `8787` | Bind port. `0` asks the OS for a free port. |
 | `THESHOW_HTTP_EXPOSE` | no | off | Set to `1` before binding a non-loopback host. Put TLS in front of that listener. |
-| `THESHOW_HTTP_ALLOW_GROK_SESSION` | no | off | HTTP bills `XAI_API_KEY` (API credits). Set to `1` to use `~/.grok/auth.json` instead, which spends the Grok subscription of the account in that file. |
+| `THESHOW_HTTP_ALLOW_GROK_SESSION` | no | off | HTTP bills `XAI_API_KEY`. Set to `1` to use `~/.grok/auth.json`, which spends the Grok subscription of the account in that file. |
 | `THESHOW_HTTP_ALLOWED_HOSTS` | no | the bound host, `127.0.0.1`, and `localhost`, with the port | Extra `Host` values accepted when DNS-rebinding protection is on. |
 | `THESHOW_HTTP_ALLOWED_ORIGINS` | no | `http://127.0.0.1:<port>` and `http://localhost:<port>` | `Origin` values a browser may send. Any other `Origin` is rejected. |
 | `THESHOW_HTTP_SESSION_TTL_MS` | no | `1800000` | Idle session lifetime. |
@@ -216,11 +106,11 @@ node mcp/launch.mjs
 | `THESHOW_JOB_LEASE_MS` | no | `30000` | How long a running film may go without a heartbeat before another process may mark it stopped. |
 | `THESHOW_JOB_HEARTBEAT_MS` | no | `10000` | How often the process that owns a render rewrites that heartbeat. |
 
-The endpoint is `http://127.0.0.1:8787/mcp`. Every request needs `Authorization: Bearer <token>`. A missing or wrong token is rejected before any tool runs. `initialize` returns an `Mcp-Session-Id` header; send that header, and `MCP-Protocol-Version`, on later requests. `DELETE` the same URL with those headers closes the session and its transport. A dropped connection does not cancel a film. The process that started the render keeps a heartbeat on the job file under `~/.theshow/jobs`. Another process, stdio or HTTP, can see that film and will not mark it stopped while the heartbeat is fresh and the owner process is alive. A heartbeat dated more than five seconds in the future is ignored when the owner is on this machine, because a stamp that far ahead would never expire. An owner on a different machine is allowed a minute of clock skew before a future stamp is treated the same way.
+The endpoint is `http://127.0.0.1:8787/mcp`. Every request needs `Authorization: Bearer <token>`. A missing or wrong token is rejected before any tool runs. `initialize` returns an `Mcp-Session-Id` header; send that header, and `MCP-Protocol-Version`, on later requests. `DELETE` the same URL with those headers closes the session. A dropped connection does not cancel a film. The process that started the render keeps a heartbeat on the job file under `~/.theshow/jobs`. Another process, stdio or HTTP, can see that film and will not mark it stopped while the heartbeat is fresh and the owner process is alive. A heartbeat dated more than five seconds in the future is ignored when the owner is on this machine. An owner on a different machine is allowed a minute of clock skew before a future stamp is treated the same way.
 
-HTTP tool results leave out the `auth` field, so a remote client does not receive the operator email from `~/.grok/auth.json`. Without `THESHOW_HTTP_ALLOW_GROK_SESSION=1`, HTTP renders require `XAI_API_KEY` and bill API credits. Desktop stdio still tries the API key first, then the subscription session.
+HTTP tool results leave out the `auth` field, so a remote client does not receive the operator email from `~/.grok/auth.json`. Desktop stdio still tries the API key first, then the subscription session.
 
-`configure_film` returns the form fields as `needsInput` when the HTTP client has no GET stream to receive elicitation. A client that does open the stream gets the form, and on HTTP a missing answer comes back after `THESHOW_ELICIT_TIMEOUT_MS` (default 10 seconds) instead of hanging. Desktop stdio waits for the form with no timeout.
+`configure_film` returns the form fields as `needsInput` when the HTTP client has no GET stream to receive elicitation. A client that does open the stream gets the form, and on HTTP a missing answer comes back after `THESHOW_ELICIT_TIMEOUT_MS` (default 10 seconds). Desktop stdio waits for the form with no timeout.
 
 The desktop bundle is `mcp/server.bundle.mjs` (`mcp/stdio-main.ts`). HTTP is `mcp/server-http.bundle.mjs` (`mcp/http-server.ts`). `node mcp/launch.mjs` picks from `THESHOW_TRANSPORT`. Importing `mcp/server.ts` does not listen and does not start stdio.
 
@@ -234,7 +124,7 @@ curl -sS -D - http://127.0.0.1:8787/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 ```
 
-To reach it from Grok Chat, keep this process on `127.0.0.1` and put TLS in front of it (a reverse proxy or a tunnel). This process does not terminate TLS and does not serve rendered media over HTTPS. Point the connector at the public `https` URL of `/mcp`. If the connector has a headers field, send the bearer token there:
+To reach it from Grok Chat, keep this process on `127.0.0.1` and put TLS in front of it. This process does not terminate TLS and does not serve rendered media over HTTPS. Point the connector at the public `https` URL of `/mcp`, and send the bearer token in a header. Do not put the token in the URL.
 
 ```json
 {
@@ -249,13 +139,150 @@ To reach it from Grok Chat, keep this process on `127.0.0.1` and put TLS in fron
 }
 ```
 
-Set `THESHOW_HTTP_HOST=0.0.0.0` only when something else on the machine is the thing exposed to the network, and that something else is what clients connect to. Do not put the token in the URL.
+---
+
+## Your first film
+
+Ask in plain language. You never call the tools yourself.
+
+> Use theShow to make a four-shot film of a man in a 17th-floor office at dusk, studying a holographic model of a skyline. Keep his face and his coat the same in every shot.
+
+`configure_film` puts the whole brief on one interactive card: scene, characters, style, shot count, seconds per shot, resolution and its price, aspect ratio, audio, what must never appear, a music or voiceover path, and an optional reference image. The card returns your answers as JSON plus a cost estimate, and renders nothing.
+
+![The theShow configuration card inside Grok, showing the scene, characters, style, shots, seconds per shot, resolution and price, shape, audio and never-show fields, with accept and decline at the bottom](docs/images/config-card.png)
+
+One card is one model turn. Asking the same questions one at a time spends a turn on each before a frame exists.
+
+Two rules the tool holds to:
+
+- **A blank stays blank.** Anything you leave empty is left out of the film, and the model is told never to invent a character detail you did not give.
+- **Decline means no.** A declined or cancelled card comes back as an instruction not to render.
+
+The reference field takes a **path or an https URL**, because MCP has no file upload. A photo attached in chat already arrives as a readable local path. HEIC and HEIF are transcoded automatically and oversized images are stepped down until they fit.
+
+### Slash commands
+
+Ten commands ship with the plugin. `/theshow` is the primary start. `/film` follows the same recipe.
+
+| Command | What it does |
+|---|---|
+| `/theshow <idea>` | Primary start. The model calls `configure_film`, then the board, then the render contract |
+| `/film <idea>` | The same recipe as `/theshow` |
+| `/scene <scene> [shots]` | Plans a storyboard only. Free, renders nothing |
+| `/character <name> [look] [photo]` | Creates or updates a character with reference photos |
+| `/board <scene or jobId>` | Boards a film as stills, about two cents a frame |
+| `/render <shots.json>` | Renders a planned shot list |
+| `/check [jobId]` | Progress and real cost on a render, or your recent films |
+| `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
+| `/films [count]` | Lists films on disk. Free |
+| `/continue <jobId> <what next>` | Continues an existing film with more shots |
+
+A command that spends money still prices the work and waits for a yes. The command files are in [`commands/`](commands/theshow.md).
+
+---
+
+## The film workflow
+
+1. **Configure.** `configure_film` collects the brief and a cost estimate. It spends nothing.
+2. **Plan.** `plan_storyboard` turns the scene into numbered shots. Omit `promptStyle`, or pass `legacy`, for the paragraph prompt. `sections-v2` is opt-in: it writes a sectioned prompt and does not append the ledger paragraph. Planning is free.
+3. **Board stills.** `board_film` generates one still per shot boundary. Call it without `confirm` for the estimate. Pass `confirm` only after a yes. Frames already on disk are reused and cost nothing.
+4. **Render gates and the contract.** Before a paid video call, the server builds one contract per shot from the continuity ledger: the state at the start, the steps in between, the state at the end, invariants, and things that must not appear. Validation refuses more than three steps, a garment that is both worn and hanging, a count that invents a second coat or a third shoe, and a shot whose start does not match the previous shot's end. `confirm` does not unblock a failed board or a failed render. `overrideValidation: true` is the explicit bypass. A prompt lint also rejects forbidden nouns and negation before any paid call, because the image API has no negative-prompt field. `extend_clip` has no ledger, so `confirm` spends on an extension only when `overrideValidation` is set.
+5. **Render.** `render_sequence` prices the shot list without `confirm` and spends only after `confirm`. It returns a `jobId`. Poll `check_sequence`. A long sequence keeps running, so do not call `render_sequence` again to check on it.
+6. **Assemble.** `render_sequence` can assemble the finished shots. `assemble_film` joins an ordered list of clips with FFmpeg. Joins are hard cuts by default. A music bed shorter than the film is refused. It is not looped.
+7. **Retry.** `retry_shot` re-renders one shot of a finished film and splices it back. The other shots stay as they were. The seam after the repaired shot is a cut, and the tool says so in `warnings`.
+
+---
+
+## The thirteen tools
+
+| Tool | Costs | What it does |
+|---|---|---|
+| `configure_film` | free | Collects the whole brief on one card, with a cost estimate |
+| `create_character` | free | Stores a named character with reference photos on disk |
+| `plan_storyboard` | free | Turns a scene into numbered shots, with wardrobe checklists and a per-room prop ledger |
+| `generate_controlled_clip` | per shot, after `confirm` | One clip. `pin` defaults to `start`. An end-frame pin has to be asked for |
+| `extend_clip` | per call, API key only | Continues an existing take. `confirm` spends only with `overrideValidation` |
+| `extract_last_frame` | free | Pulls the last frame out of a clip as a PNG |
+| `generate_still` | $0.02, after `confirm` | One image |
+| `assemble_film` | free | Joins ordered clips into one film with FFmpeg |
+| `render_sequence` | per shot, after `confirm` | Renders a shot list with continuity, then can assemble it |
+| `board_film` | $0.02 a still, after `confirm` | Boards a film as stills, one per shot boundary |
+| `retry_shot` | one shot, after `confirm` | Re-renders a single bad shot and splices it back in |
+| `list_films` | free | Films on disk, including earlier sessions |
+| `check_sequence` | free | Progress and real cost on a `render_sequence` job |
+
+---
+
+## How continuity actually works
+
+**The board shares a picture at each cut.** N shots produce N+1 stills. The boundary between two shots is one picture. `render_sequence` sends that closing frame only when `pin` is `"both"`. The default pin is `start`, so the cut is not pixel-pinned unless you ask. A start pin holds the opening frame. The proof film above used both ends, which is why its cuts met on one file.
+
+**A location can be the base image.** When the cast includes a character whose role is `Location`, its photo becomes the base that frames are edited from. Measured skyline agreement across a five-frame board: **0.72** by that route, against 0.57 editing from the location alone, 0.36 chaining, and 0.25 when a portrait rode along as a second reference.
+
+**The cast line describes the photo.** `mcp/cast.ts` drops garment words from the cast line when a picture is present, so the prompt does not invent a second coat on top of the one in the photo. A measured board whose cast line said "navy blazer" while the portrait showed a tan sherpa coat produced a different jacket in three of five frames. Once the line stopped arguing with the photo, the same board held the coat in all five.
+
+### The continuity ledger
+
+`mcp/continuity.ts` stores wardrobe as an ordered checklist of layers, including footwear: what is against the skin, what sits on top, and how much of each the reference photo shows. Named events (remove, put on, adjust) replay into that checklist for later shots. A removed coat becomes a prop at its destination.
+
+Props are scoped to a location id. The living-room hanger and the study hanger stay different objects even when they share a name. An unnamed prop stays where it is. Only an event that names a prop by id can move or remove it. The ledger is stored on the film job in `~/.theshow/jobs`, so a resumed film keeps the same rooms and objects.
+
+`mcp/contracts.ts` turns that ledger into the per-shot contract the render gate checks. Validation is offline. The vision auditor in that module is a stub: it refuses to run, because a vision pass costs money and that cost has not been measured. `mcp/admission.ts` is the post-generation checklist. It does not call a vision API. The caller supplies the measurements, and a failed take is deleted so it cannot be pinned or chained.
+
+**A film survives the session.** Every job is written to `~/.theshow/jobs` as it renders and reloaded at startup, with the footage in `~/.theshow/media`. Characters live in `~/.theshow/characters`. `list_films` is how you find a film to continue or repair.
+
+---
+
+## Cost
+
+Every render is a real charge, and **resolution sets the price**. The rates in code are:
+
+| Resolution | Per second |
+|---|---|
+| `480p` | $0.08 |
+| `720p` | $0.14 |
+| `1080p` | $0.25 |
+
+Measured on real eight-second renders, those rates produced:
+
+| Resolution | Output | 8-second shot | Four 8-second shots |
+|---|---|---|---|
+| `480p` | 848×480 | $0.64 | $2.56 |
+| `720p` | 1280×720 | $1.12 | $4.48 |
+| `1080p` | 1920×1088 | $2.00 | $8.00 |
+
+What is free, and what is not:
+
+| | |
+|---|---|
+| Free | `configure_film`, `create_character`, `plan_storyboard`, `extract_last_frame`, `assemble_film`, `list_films`, `check_sequence`, and any still or clip the tool reports as already on disk |
+| $0.02 | one still from `generate_still` or `board_film`, after `confirm` |
+| Per second | video from `render_sequence`, `generate_controlled_clip`, `retry_shot`, and `extend_clip`, after the gate and `confirm` |
+| Unbilled | an estimate (`confirm` omitted), a declined card, a contract the gate refuses, and a render the provider does not bill |
+
+- **The default resolution is 720p.** An estimate that omits the resolution is a 720p estimate.
+- **One shot runs to 15 seconds.** A film is a chain of shots.
+- **Every render returns its actual `costUsd`.** Quote that, not the estimate. Failed renders are not billed.
+- **A still already on disk is free.** Re-running `board_film` after a partial board reuses those frames. A hero built from a portrait and a room is bought again on each confirmed board, and a new hero buys the shot frames again.
+
+---
+
+## Authentication
+
+`render_sequence`, `generate_controlled_clip`, `board_film` and the rest resolve a credential in this order on desktop stdio:
+
+1. **`XAI_API_KEY`**, if set — billed as xAI API credits at `https://api.x.ai`.
+2. **Grok subscription session** — read from `~/.grok/auth.json` after `grok login`.
+
+HTTP uses `XAI_API_KEY` and does not read `~/.grok/auth.json` unless `THESHOW_HTTP_ALLOW_GROK_SESSION=1`.
+
+An unset MCP environment variable can arrive as a literal `${XAI_API_KEY}` string. theShow treats that shape as absent. An expired token reports a reason that names `grok login`.
+
+`extend_clip` needs the API key. The subscription proxy answers `POST /v1/videos/extensions` with **HTTP 405**. On a subscription, continue a shot with `generate_controlled_clip` and `firstFrameUrl` instead.
 
 ---
 
 ## Network, files and credentials
-
-Everything theShow touches, so you can check it rather than trust it:
 
 | What | Where |
 |---|---|
@@ -264,78 +291,106 @@ Everything theShow touches, so you can check it rather than trust it:
 | Your films | Writes `~/.theshow/jobs` and `~/.theshow/media` |
 | Your cast | Writes `~/.theshow/characters`, with your reference photos copied in |
 | FFmpeg | Runs the local `ffmpeg` and `ffprobe` on your `PATH` |
-| Remote MCP | Only when `THESHOW_TRANSPORT=http`. Listens on `127.0.0.1:8787` unless host and port are set. The desktop plugin does not set that variable, so it opens no port. |
+| Remote MCP | Only when `THESHOW_TRANSPORT=http`. Listens on `127.0.0.1:8787` unless host and port are set |
 
-That is the whole list. No telemetry, no analytics, no third-party services, and nothing is sent anywhere you did not ask a film about. Reference photos you attach are uploaded to the generation endpoint as part of the request that uses them, and are not sent anywhere else.
+Reference photos you attach are uploaded to the generation endpoint as part of the request that uses them.
 
-The MCP server ships as `mcp/server.bundle.mjs`, a committed esbuild bundle, because an install must never run `npm install`. It is **not minified and has no postinstall step** — `mcp/server.ts` and every module it imports are in this repo, and `npm run build:mcp` regenerates the bundle from them.
+The MCP server ships as two committed esbuild bundles, `mcp/server.bundle.mjs` and `mcp/server-http.bundle.mjs`, because an install must never run `npm install`. They are not minified and there is no postinstall step. `npm run build:mcp` regenerates both from `mcp/stdio-main.ts` and `mcp/http-server.ts`.
 
 ---
 
-## Limits and known edges
+## Limits
 
+- **`pin` defaults to `start`.** Pass `pin: "both"` when the cut must land on the boarded closing still.
 - **`firstFrameUrl` must be an image.** A clip there returns `invalid_image`.
-- **`first_frame` is silently ignored** by the underlying API — a shot sent with it landed at 0.14 correlation against the supplied image, same as an unpinned render. It fails without saying so. theShow sends `image` on the wire, which is what `firstFrameUrl` does for you. `last_frame` works.
+- **`first_frame` is ignored by the underlying API.** theShow sends `image` on the wire. `last_frame` works.
 - **A shot is at most 15 seconds.** For longer, chain shots or resume a job.
-- **Rate limits exist** on the generation endpoints. Space calls out; theShow reports the real error rather than silently switching backends.
-- **`retry_shot` cannot repair the seam after the repair.** Shots after the new one were built from the original shot's last frame, so that next join becomes a cut. The tool says so in `warnings` every time.
-- **A film caught mid-render when the server stopped** returns as `state: "stopped"`. Every shot it had already finished is still on disk and still paid for — assemble them, or continue from the last one.
-- **No garment check.** A colour check was built and removed: it learned the coat from the hero frame's arms, the hero is cropped at the chest, and it quietly abstained on every frame of a real board. What holds the wardrobe is the cast line, the layer checklist, plus your own eyes on a board that costs pennies. This README would rather say that than imply a safeguard that does not exist.
-- **Post-render continuity audit is not implemented.** The interface exists so a later pass can sample frames and flag props that vanished, appeared or moved, with frame numbers. It is not wired to any vision or image call. The cost of that pass per shot has not been measured.
+- **A music bed shorter than the film is refused.** It is not looped to cover the runtime.
+- **Rate limits exist** on the generation endpoints. theShow reports the real error.
+- **`retry_shot` cannot repair the seam after the repair.** Shots after the new one were built from the original shot's last frame. The tool says so in `warnings`.
+- **A film caught mid-render when the server stopped** returns as `state: "stopped"`. Shots already finished stay on disk.
+- **There is no colour garment check.** A colour check was built and removed: it learned the coat from a hero frame cropped at the chest and abstained on a real board. What holds the wardrobe is the cast line, the layer checklist, and your eyes on a board that costs pennies.
+- **Post-render vision audit is not wired.** The interface exists. It does not call an image or video API. The cost of that pass has not been measured.
 
 ---
 
 ## StoryForge Studio
 
-The plugin is the fast path. The repository also contains **StoryForge Studio**, the web workspace the pipeline grew out of: a character roster, scene library, storyboard editor, timeline, and export panel.
+The repository also contains **StoryForge Studio**, the web workspace: a timeline, a character roster, a scene library, and a pipeline panel. These shots are the local app on the built-in sample cast (Kaelen Thorne and Lyra), in local draft mode, with no account and no provider key on screen.
 
 ```bash
 npm install
 npm run dev          # http://localhost:3000
 ```
 
-The workspace loads in local draft mode with no account. **Live video routes require a signed-in local account.** The header line shows the account's provider mode, or local draft mode when signed out, and the export panel names the video backend in use.
+![StoryForge Studio timeline in local draft mode, with an empty preview player and no beats in the cut](docs/images/studio-timeline.jpg)
 
-Optional environment for the Studio (`GEMINI_API_KEY` for the Veo path, `SESSION_SECRET`, `STORYFORGE_ENCRYPTION_KEY`, and the `GOOGLE_OIDC_*` set for Google sign-in) is documented in [`.env.example`](.env.example). StoryForge keeps **app login** separate from **provider credentials**; a personal Gemini key connected in the Account dashboard is stored server-side and encrypted at rest.
+![The roster popup, showing the sample characters Kaelen Thorne and Lyra with empty portraits](docs/images/studio-roster.jpg)
 
-The Studio prefers Grok when a credential resolves and falls back to Gemini Veo, via `GEMINI_API_KEY` or a key on the account, when it does not.
+![The scenes popup, with Act I Handshake Protocol and an empty storyboard](docs/images/studio-scenes.jpg)
+
+![The pipeline popup, asking for an account before live video routes and offering a sandbox preview](docs/images/studio-pipeline.jpg)
+
+The workspace loads in local draft mode with no account. **Live video routes require a signed-in local account.** Optional Studio environment (`GEMINI_API_KEY` for the Veo path, `SESSION_SECRET`, `STORYFORGE_ENCRYPTION_KEY`, and the `GOOGLE_OIDC_*` set) is documented in [`.env.example`](.env.example). The MCP server does not need those. StoryForge keeps app login separate from provider credentials. A personal Gemini key connected in the Account dashboard is stored server-side and encrypted at rest.
+
+The Studio prefers Grok when a credential resolves and falls back to Gemini Veo when it does not.
 
 ---
 
 ## Developing
 
+Node 22. CI uses that version.
+
 ```bash
-npm run build:mcp    # bundle mcp/server.ts → mcp/server.bundle.mjs (committed)
-npm test             # 191 tests across 16 files
-npm run typecheck
+npm run typecheck    # app, Express server, and mcp/tsconfig
 npm run lint
+npm test             # Vitest, with coverage
+npm run build        # Vite app plus dist/server.cjs
+npm run build:mcp    # mcp/server.bundle.mjs and mcp/server-http.bundle.mjs
 ```
 
-`mcp/server.bundle.mjs` is committed on purpose: an install must never run `npm install`. After changing anything under `mcp/`, rebuild the bundle and commit it, or the plugin will keep running the old code.
+`npm test` is the suite CI runs. It does not call xAI. `npm run test:e2e` is Playwright. `npm run test:e2e:live` sets `RUN_LIVE_VEO=1` and is a paid path. CI does not run it.
+
+After changing anything under `mcp/`, run `npm run build:mcp` and commit both bundles. CI's bundle job rebuilds them and fails if `git diff` is not empty.
+
+CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `main`:
+
+| Job | What it runs |
+|---|---|
+| `typecheck` | `npm run typecheck` |
+| `lint` | `npm run lint` |
+| `build` | `npm run build`, then checks `dist/assets` for `GEMINI_API_KEY` |
+| `test` | `npm test`, with paid keys refused and `GROK_AUTH_FILE` pointed at a missing file |
+| `bundle` | `npm run build:mcp`, then `git diff --exit-code` on both bundles |
+| `all-green` | waits for the five jobs above |
 
 ```
-mcp/          the MCP server and its continuity logic
-  server.ts     tool definitions
-  storyboard.ts board planning and still generation
-  cast.ts       cast-line reconciliation against the reference photo
-  continuity.ts wardrobe layers and the per-location prop ledger
-  grokVideo.ts  the video and image API client
-  characters.ts the on-disk character store
+mcp/            the MCP server
+  server.ts       tool handlers and createTheShowServer
+  stdio-main.ts   desktop entry
+  http-server.ts  Streamable HTTP entry
+  launch.mjs      picks stdio or http from THESHOW_TRANSPORT
+  continuity.ts   wardrobe layers and the per-location prop ledger
+  contracts.ts    per-shot contracts and the pre-render gate
+  admission.ts    post-generation checklist (no vision API)
+  promptLint.ts   forbidden nouns and negation, before a paid call
+  storyboard.ts   board planning and stills
+  cast.ts         cast line against the reference photo
+  grokVideo.ts    video and image client
+  characters.ts   on-disk character store
+  runtime.ts      claims, locks, HTTP session limits
 skills/theshow/ the workflow the model follows
-commands/       the ten slash commands, `/theshow` first
-docs/           install guide and proof images
-src/            StoryForge Studio (React + Express)
-tests/          vitest
+commands/       the ten slash commands
+docs/           proof measurements, the film, and screenshots
+src/            StoryForge Studio (React)
+server.ts       Studio dev server
+tests/          Vitest
 ```
 
 ---
 
-## Where this goes next
+## License
 
-The interesting problems left are continuity problems: holding a light source across a cut, checking a finished shot against the prop ledger without a measured vision cost, and doing the expensive half without charging for the same shot twice.
-
-If you build something with it, that is where the tool earns its keep.
-
-MIT licensed, so you can fork it, ship it inside something else, or sell what you make with it. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
 Built by [@TayDa64](https://github.com/TayDa64).

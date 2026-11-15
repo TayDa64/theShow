@@ -1,7 +1,9 @@
 # theShow proof render, 2026-11-02 — final
 
-Film: [`docs/media/tay-17th-floor-720p.mp4`](media/tay-17th-floor-720p.mp4), 24.17 s, 580 frames,
-1280×720, 8.4 MB, **$3.44** (4 × $0.86).
+Film: `media/tay-17th-floor-720p.mp4`, 24.17 s, 580 frames, 1280×720, 8.4 MB, **$3.44** (4 × $0.86).
+GitHub's file viewer will not play that master ("we can't show files that are this big right now").
+The same pictures, re-encoded to 960×540, play from [`tay-17th-floor-preview.mp4`](media/tay-17th-floor-preview.mp4).
+The measurements below are on the master.
 Job `seq_mvzhmxbj_ahcsd9`, rendered end to end through the installed plugin (install of `bd0800f`),
 4 shots × 6 s at 720p, hard cuts.
 
