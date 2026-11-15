@@ -5,9 +5,11 @@
  * - generate_controlled_clip calls the real Grok Imagine Video backend, through
  *   mcp/grokVideo.ts so the app's HTTP route shares the same implementation.
  *
- * Importing this module does not open a port. mcp/stdio-main.ts is the desktop
- * entry. mcp/http-server.ts is the Streamable HTTP entry and is bundled apart
- * from the stdio server so the desktop bundle does not include that stack.
+ * createTheShowServer builds a server and registers the same tools. startStdioServer
+ * is the desktop entry: it loads saved films and characters, then connects that
+ * server over stdio. Importing this module does not open a port. mcp/stdio-main.ts
+ * calls startStdioServer. mcp/http-server.ts is the Streamable HTTP entry and is
+ * bundled apart from the stdio server so the desktop bundle does not include that stack.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
