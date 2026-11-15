@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These thirteen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These fifteen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -390,10 +390,18 @@ repair a shot with `retry_shot`. Never re-render a film you can find on disk.
 
 A film is not all-or-nothing. When one shot comes back wrong, do not re-render the film.
 
+`propose_repair({ jobId, badShot })` is free. It lists the least-cost options for that shot: retry
+it and accept the hard cut, retry the shots seeded from it, re-board the boundary still and
+re-render, or accept with a note. Each option has a price, what it fixes, and what stays broken.
+It does not render. `confirm` on that tool does not spend.
+
 `retry_shot({ jobId, shotIndex })` re-renders exactly that shot and splices it back in. Every other
 shot is reused at no cost, and the film is re-assembled with its original resolution, joins and
 audio. It is two-step like everything else: call without `confirm` for the price of the one render,
-show it, then call again with `confirm: true`.
+show it, then call again with `confirm: true`. A board approval does not authorize this render, and
+a changed resolution, duration, or pin makes an earlier yes invalid when you pass the quote back
+as `approvedKind`, `approvedUsd`, and `approvedFingerprint`. Omitting those fields keeps the
+previous confirm behavior. `overrideValidation` does not replace `confirm`.
 
 ```
 retry_shot({ jobId: "seq_...", shotIndex: 3 })                  // same prompt, a better roll
@@ -432,6 +440,8 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Continue a film | `resumeFromJobId` | a finished `render_sequence` job id; pass only the new shots |
 | Music / narration | `audioTrackUrl` | mixed under the film; `audioTrackVolume` defaults to 0.25 |
 | Repair one shot | `retry_shot` | `jobId` + `shotIndex`; every other shot reused free |
+| Review a cut | `review_continuity` | free; measured, visually flagged, or unverified; does not render |
+| Repair options | `propose_repair` | free; prices the options and does not render |
 | Find an old film | `list_films` | free; returns job ids, costs and paths from earlier sessions |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
@@ -510,7 +520,16 @@ Every render returns `costUsd`. **Price depends on resolution**, measured on rea
 
 **A still is $0.02**, measured, and it is the cheapest thing here by an order of magnitude. Board
 first when the look matters: four stills for a three-shot film is eight cents against roughly $3.36
-of 720p footage.
+of 720p footage. Approving the board does not approve the video. Each paid call needs its own yes
+for its own quote.
+
+`review_continuity` is free. It classifies wardrobe, props, pose at the seam, lighting, and identity
+on each cut as measured, visually flagged, or unverified. It does not render, delete, or reorder.
+Do not invent a finding it abstained on. The vision auditor stays unwired.
+
+`budgetUsd`, when the user set one, warns if spent money plus the pending estimate crosses it. The
+warning does not spend and does not stop a render that already started. `overrideValidation` does
+not replace `confirm`.
 
 **A single shot runs to 15 seconds.** Verified: a 15-second render came back at 15 seconds and billed
 $1.20 at 480p. The old 16-second ceiling was never the model's limit, it was how the calls were being

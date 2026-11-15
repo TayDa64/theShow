@@ -36,6 +36,30 @@ const TOOL_NAMES = [
   "check_sequence",
 ] as const;
 
+const ADDED_TOOLS = ["review_continuity", "propose_repair"] as const;
+
+function expectCompatibleTools(
+  actual: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+  fixtureTools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+) {
+  expect(actual.map((tool) => tool.name)).toEqual([...TOOL_NAMES, ...ADDED_TOOLS]);
+  for (const expected of fixtureTools) {
+    const found = actual.find((tool) => tool.name === expected.name);
+    expect(found, expected.name).toBeTruthy();
+    expect(found?.description).toBe(expected.description);
+    const previous = expected.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+    const next = found?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+    expect(next?.required ?? []).toEqual(previous.required ?? []);
+    for (const [key, value] of Object.entries(previous.properties ?? {})) {
+      expect(next?.properties?.[key], `${expected.name}.${key}`).toEqual(value);
+    }
+    for (const key of Object.keys(next?.properties ?? {})) {
+      if (key in (previous.properties ?? {})) continue;
+      expect(next?.required ?? [], `${expected.name}.${key} must stay optional`).not.toContain(key);
+    }
+  }
+}
+
 type LaunchMode = "bundle" | "source";
 
 type ListedTool = {
@@ -235,7 +259,7 @@ describe("streamable HTTP transport", () => {
   );
 
   it.each(["bundle", "source"] as const)(
-    "discovers the same 13 tools and isolates sessions (%s)",
+    "discovers the original 13 tools plus the free review tools and isolates sessions (%s)",
     async (mode) => {
       const home = await mkdtemp(path.join(tmpdir(), "theshow-http-"));
       await writeFile(path.join(home, "no-auth.json"), "{}\n");
@@ -284,12 +308,7 @@ describe("streamable HTTP transport", () => {
         const listed = await postJson(endpoint, { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }, authed);
         expect(listed.status).toBe(200);
         const tools = (listed.json?.result as { tools?: ListedTool[] } | undefined)?.tools ?? [];
-        expect(tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
-        expect(tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        }))).toEqual(fixture.tools);
+        expectCompatibleTools(tools, fixture.tools);
 
         const unknown = await postJson(endpoint, createCharacterBody(), {
           ...authed,

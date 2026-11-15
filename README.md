@@ -59,7 +59,7 @@ Confirm the wiring:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with **thirteen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
+You want `theshow` reported healthy with **fifteen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
 
 If the session's tool list has no `plan_storyboard`, the plugin is not loaded there. theShow's skill tells the model to stop and say so rather than quietly build a film some other way.
 
@@ -81,7 +81,7 @@ Set `THESHOW_MCP_FROM_SOURCE=1` to run `mcp/stdio-main.ts` through `tsx` instead
 
 ### Streamable HTTP
 
-A second process can expose the same thirteen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
+A second process can expose the same fifteen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
 
 ```bash
 THESHOW_TRANSPORT=http \
@@ -189,11 +189,12 @@ A command that spends money still prices the work and waits for a yes. The comma
 4. **Render gates and the contract.** Before a paid video call, the server builds one contract per shot from the continuity ledger: the state at the start, the steps in between, the state at the end, invariants, and things that must not appear. Validation refuses more than three steps, a garment that is both worn and hanging, a count that invents a second coat or a third shoe, and a shot whose start does not match the previous shot's end. `confirm` does not unblock a failed board or a failed render. `overrideValidation: true` is the explicit bypass. A prompt lint also rejects forbidden nouns and negation before any paid call, because the image API has no negative-prompt field. `extend_clip` has no ledger, so `confirm` spends on an extension only when `overrideValidation` is set.
 5. **Render.** `render_sequence` prices the shot list without `confirm` and spends only after `confirm`. It returns a `jobId`. Poll `check_sequence`. A long sequence keeps running, so do not call `render_sequence` again to check on it.
 6. **Assemble.** `render_sequence` can assemble the finished shots. `assemble_film` joins an ordered list of clips with FFmpeg. Joins are hard cuts by default. A music bed shorter than the film is refused. It is not looped.
-7. **Retry.** `retry_shot` re-renders one shot of a finished film and splices it back. The other shots stay as they were. The seam after the repaired shot is a cut, and the tool says so in `warnings`.
+7. **Retry.** `retry_shot` re-renders one shot of a finished film and splices it back. The other shots stay as they were. The seam after the repaired shot is a cut, and the tool says so in `warnings`. `propose_repair` lists cheaper and wider options first and does not render them.
+8. **Review.** `review_continuity` classifies each cut as measured, visually flagged, or unverified. It does not render or delete anything.
 
 ---
 
-## The thirteen tools
+## The tools
 
 | Tool | Costs | What it does |
 |---|---|---|
@@ -210,6 +211,8 @@ A command that spends money still prices the work and waits for a yes. The comma
 | `retry_shot` | one shot, after `confirm` | Re-renders a single bad shot and splices it back in |
 | `list_films` | free | Films on disk, including earlier sessions |
 | `check_sequence` | free | Progress and real cost on a `render_sequence` job |
+| `review_continuity` | free | Evidence review of each cut. It does not render or spend |
+| `propose_repair` | free | Repair options with a price, what they fix, and what stays broken. It does not render |
 
 ---
 
@@ -255,7 +258,7 @@ What is free, and what is not:
 
 | | |
 |---|---|
-| Free | `configure_film`, `create_character`, `plan_storyboard`, `extract_last_frame`, `assemble_film`, `list_films`, `check_sequence`, and any still or clip the tool reports as already on disk |
+| Free | `configure_film`, `create_character`, `plan_storyboard`, `extract_last_frame`, `assemble_film`, `list_films`, `check_sequence`, `review_continuity`, `propose_repair`, and any still or clip the tool reports as already on disk |
 | $0.02 | one still from `generate_still` or `board_film`, after `confirm` |
 | Per second | video from `render_sequence`, `generate_controlled_clip`, `retry_shot`, and `extend_clip`, after the gate and `confirm` |
 | Unbilled | an estimate (`confirm` omitted), a declined card, a contract the gate refuses, and a render the provider does not bill |
@@ -264,6 +267,8 @@ What is free, and what is not:
 - **One shot runs to 15 seconds.** A film is a chain of shots.
 - **Every render returns its actual `costUsd`.** Quote that, not the estimate. Failed renders are not billed.
 - **A still already on disk is free.** Re-running `board_film` after a partial board reuses those frames. A hero built from a portrait and a room is bought again on each confirmed board, and a new hero buys the shot frames again.
+- **A board confirm does not authorize video, and a video confirm does not authorize a board.** Optional `approvedKind`, `approvedUsd`, and `approvedFingerprint` bind a yes to that quote. If the resolution, duration, shot count, or pin changes, the old yes is refused. Omitting those fields keeps the previous confirm behavior.
+- **`budgetUsd` warns.** Spent money plus the pending estimate is compared with that threshold. Crossing it does not spend and does not stop a render that already started. `overrideValidation` still does not stand in for `confirm`. `maxCostUsd` on a board is unchanged: over that ceiling, the board spends nothing.
 
 ---
 

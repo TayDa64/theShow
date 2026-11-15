@@ -5,7 +5,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { saveCharacter } from "../mcp/characters.ts";
-import { claimFilm } from "../mcp/server.ts";
+import { claimFilm, readPersistedJob } from "../mcp/server.ts";
 
 async function main(): Promise<void> {
   const [mode, ...rest] = process.argv.slice(2);
@@ -16,6 +16,27 @@ async function main(): Promise<void> {
     else if (field === "description") await saveCharacter({ name, description: value });
     else if (field === "appearance") await saveCharacter({ name, appearance: value });
     else throw new Error(`unknown field ${field}`);
+    return;
+  }
+  if (mode === "show-job") {
+    const id = rest[0];
+    if (!id) throw new Error("show-job needs a job id");
+    const job = await readPersistedJob(id);
+    process.stdout.write(`${JSON.stringify({
+      id: job?.id ?? null,
+      state: job?.state ?? null,
+      shots: job?.shots.length ?? null,
+      pin: job?.settings?.pin ?? null,
+      reviewVersion: job?.continuityReview?.version ?? null,
+      findingCount: job?.continuityReview?.findings.length ?? null,
+      spendSpent: job?.spendLedger?.spentUsd ?? null,
+      spendPending: job?.spendLedger?.pendingUsd ?? null,
+      spendThreshold: job?.spendLedger?.thresholdUsd ?? null,
+      proposalVersion: job?.repairProposal?.version ?? null,
+      proposalExecuted: job?.repairProposal?.executed ?? null,
+      dependencyEdges: job?.dependencies?.edges.length ?? null,
+      filmPath: job?.filmPath ?? null,
+    })}\n`);
     return;
   }
   if (mode === "claim") {

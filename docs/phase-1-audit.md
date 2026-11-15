@@ -92,7 +92,7 @@ There is no spend-approval record and no review record on `SequenceJob` today. `
 
 ### `skills/theshow/` and `commands/`
 
-- `skills/theshow/SKILL.md` tells the model the workflow: `configure_film`, then `board_film` (estimate, then `confirm`), then `render_sequence` (its own confirm), then `check_sequence`, with `retry_shot` for one bad shot. Line 12 calls the thirteen tools the whole plugin. Slash commands in `commands/` (`theshow.md`, `film.md`, `board.md`, `render.md`, `retry.md`, `check.md`, `scene.md`, `continue.md`, `character.md`, `films.md`) are the same workflow started partway in. None of them observe a bot.
+- `skills/theshow/SKILL.md` tells the model the workflow: `configure_film`, then `board_film` (estimate, then `confirm`), then `render_sequence` (its own confirm), then `check_sequence`, with `retry_shot` for one bad shot. At audit time it called the thirteen tools the whole plugin. Slash commands in `commands/` (`theshow.md`, `film.md`, `board.md`, `render.md`, `retry.md`, `check.md`, `scene.md`, `continue.md`, `character.md`, `films.md`) are the same workflow started partway in. None of them observe a bot. The implementation adds `review_continuity` and `propose_repair`, so the skill and README now say fifteen tools.
 - Behavior text changes only where Phase 1 adds a free review or a repair proposal. The thirteen-tool count has to stay accurate after that addition.
 
 ### Studio surfaces (`src/`)

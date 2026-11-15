@@ -38,6 +38,29 @@ import {
   type GrokClipResult,
 } from "./grokVideo.ts";
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
+import {
+  gatePaidAction,
+  hasCostAnnotation,
+  inFlightSpendAborted,
+  quoteFingerprint,
+  videoQuote,
+  type PaidAction,
+  type PersistedSpend,
+  type SpendKind,
+} from "./costGate.ts";
+import {
+  reviewContinuity,
+  type ContinuityReview,
+  type ReviewShot,
+} from "./continuityReview.ts";
+import {
+  approveRepairOption,
+  buildDependencyGraph,
+  proposeRepair,
+  type DependencyGraph,
+  type DependencyShot,
+  type RepairProposal,
+} from "./repairPlan.ts";
 import { charactersRoot, loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import {
   annotateAction,
@@ -63,6 +86,7 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -1048,6 +1072,73 @@ function refusal(payload: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
+const costApprovalFields = {
+  approvedUsd: z.number().optional().describe(
+    "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+  ),
+  approvedKind: z.enum(["board", "video", "still", "extend", "retry"]).optional().describe(
+    "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+  ),
+  approvedFingerprint: z.string().optional().describe(
+    "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+  ),
+  budgetUsd: z.number().min(0).optional().describe(
+    "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+  ),
+};
+
+type CostArgs = {
+  confirm: boolean;
+  approvedUsd?: number;
+  approvedKind?: SpendKind;
+  approvedFingerprint?: string;
+  overrideValidation?: boolean;
+  budgetUsd?: number;
+};
+
+function quoteGate(
+  args: CostArgs,
+  kind: SpendKind,
+  usd: number,
+  fingerprint: string,
+  spentUsd = 0,
+): PaidAction | undefined {
+  if (!hasCostAnnotation(args)) return undefined;
+  return gatePaidAction({
+    kind,
+    usd,
+    fingerprint,
+    confirm: args.confirm,
+    approvedUsd: args.approvedUsd,
+    approvedKind: args.approvedKind,
+    approvedFingerprint: args.approvedFingerprint,
+    overrideValidation: args.overrideValidation,
+    spentUsd,
+    budgetUsd: args.budgetUsd,
+  });
+}
+
+function costRefusal(paid: PaidAction | undefined) {
+  if (!paid || paid.decision !== "refused") return undefined;
+  return refusal({
+    action: "refused",
+    willRender: false,
+    willSpend: false,
+    reason: paid.reason,
+    message: paid.reason,
+    costQuote: paid.quote,
+    ...(paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}),
+  });
+}
+
+function costFields(paid: PaidAction | undefined): Record<string, unknown> {
+  if (!paid) return {};
+  return {
+    costQuote: paid.quote,
+    ...(paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}),
+  };
+}
+
 async function refuseIfSessionWillNotLast(estimatedJobMs: number) {
   const session = await ensureCredentialForJob(estimatedJobMs);
   if (session.ok) return undefined;
@@ -1500,6 +1591,7 @@ server.registerTool(
       model: z.string().default("grok-imagine-video-1.5"),
       waitForCompletion: z.boolean().default(true),
       timeoutSeconds: z.number().min(10).max(600).default(240),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -1515,6 +1607,10 @@ server.registerTool(
       confirm,
       pin,
       voiceId,
+      approvedUsd,
+      approvedKind,
+      approvedFingerprint,
+      budgetUsd,
       ...rest
     } = args;
     const gate = gateRenderSequence({
@@ -1530,6 +1626,19 @@ server.registerTool(
     const clipLint = lintSentPrompt(args.prompt, args.negative);
     const clipRate = ratePerSecond(args.resolution);
     const clipEstimate = Math.round(args.durationSeconds * clipRate * 100) / 100;
+    const clipQuoted = videoQuote({
+      resolution: args.resolution,
+      pin: pin ?? "start",
+      durations: [args.durationSeconds],
+    });
+    const clipPaid = quoteGate(
+      { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd },
+      "video",
+      clipEstimate,
+      clipQuoted.fingerprint,
+    );
+    const clipCostRefusal = costRefusal(clipPaid);
+    if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
       sentPrompt: args.prompt,
       lintHits: clipLint,
@@ -1564,6 +1673,7 @@ server.registerTool(
         estimate: { totalUsd: clipEstimate, resolution: args.resolution, isEstimate: true },
         contract: clipContract,
         contractValidation: gate,
+        ...costFields(clipPaid),
         message: decision === "estimate"
           ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves."
           : (gate.message ?? RENDER_BLOCKED_BY_CONTRACT),
@@ -1621,17 +1731,28 @@ server.registerTool(
       timeoutSeconds: z.number().min(10).max(600).default(240),
       confirm: z.boolean().default(false),
       overrideValidation: z.boolean().default(false),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    const extensionUsd = Math.round(args.durationSeconds * ratePerSecond("720p") * 100) / 100;
+    const extensionPaid = quoteGate(
+      args,
+      "extend",
+      extensionUsd,
+      quoteFingerprint({ kind: "extend", durationSeconds: args.durationSeconds, resolution: "720p" }),
+    );
+    const extensionCostRefusal = costRefusal(extensionPaid);
+    if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
     if (decideSpend(args.confirm, extensionGate) !== "spend") {
       return refusal({
         action: args.confirm ? "refused" : "estimate-only",
         willRender: false,
         contractValidation: extensionGate,
+        ...costFields(extensionPaid),
         message: args.confirm
           ? (extensionGate.message ?? RENDER_UNCHECKED)
           : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation.",
@@ -1848,6 +1969,7 @@ server.registerTool(
         "Names of characters created with create_character. Their reference images are merged " +
         "into referenceImageUrls automatically.",
       ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -1872,6 +1994,10 @@ server.registerTool(
         }],
       };
     }
+    const stillFingerprint = quoteFingerprint({ kind: "still", usd: STILL_USD, count: 1 });
+    const stillPaid = quoteGate(args, "still", STILL_USD, stillFingerprint);
+    const stillCostRefusal = costRefusal(stillPaid);
+    if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
       return {
         content: [{
@@ -1885,6 +2011,7 @@ server.registerTool(
               isEstimate: true,
               basis: "One still at $0.02. Nothing is generated until confirm is true.",
             },
+            ...costFields(stillPaid),
             next: "Show the estimate. Call again with confirm: true only after the user approves.",
           }, null, 2),
         }],
@@ -2203,6 +2330,14 @@ export type SequenceJob = {
     bodyClearance?: ContinuityPlan["bodyClearance"];
     tier1?: ContinuityPlan["tier1"];
   };
+  /** Versioned continuity review. Absent on jobs written before Phase 1. */
+  continuityReview?: ContinuityReview;
+  /** Versioned spend totals. Absent on older jobs. */
+  spendLedger?: PersistedSpend;
+  /** Versioned shot graph. Absent on older jobs. */
+  dependencies?: DependencyGraph;
+  /** Versioned repair quote. Absent on older jobs. Approving it does not render. */
+  repairProposal?: RepairProposal;
 };
 
 /**
@@ -2570,6 +2705,57 @@ async function liveTurnWithoutClaim(jobId: string): Promise<boolean> {
   return age === undefined || claimIsStale(existing, age);
 }
 
+export async function readPersistedJob(jobId: string): Promise<SequenceJob | undefined> {
+  try {
+    const raw = await readFile(join(JOBS_DIR, `${jobId}.json`), "utf8");
+    const job = JSON.parse(raw) as SequenceJob;
+    if (!job || job.id !== jobId) return undefined;
+    return job;
+  } catch {
+    return undefined;
+  }
+}
+
+export function rememberedJob(jobId: string): SequenceJob | undefined {
+  return sequenceJobs.get(jobId);
+}
+
+/**
+ * Write one optional Phase 1 field onto a finished film.
+ * A running render is left alone. The claim is released before this returns.
+ */
+export async function saveJobAnnotation(
+  jobId: string,
+  patch: (job: SequenceJob) => void,
+): Promise<{ ok: true; job: SequenceJob } | { ok: false; message: string }> {
+  await refreshJobsFromDisk();
+  const existing = sequenceJobs.get(jobId);
+  if (!existing) return { ok: false, message: "Unknown job" };
+  if (existing.state === "running") {
+    return {
+      ok: false,
+      message: "This film is rendering. The note was not written and the render was not stopped.",
+    };
+  }
+  const claim = await claimFilm(jobId);
+  if (!claim.ok) return claim;
+  try {
+    const current = sequenceJobs.get(jobId);
+    if (!current) return { ok: false, message: "Unknown job" };
+    if (current.state === "running") {
+      return {
+        ok: false,
+        message: "This film is rendering. The note was not written and the render was not stopped.",
+      };
+    }
+    patch(current);
+    await persistJob(current);
+    return { ok: true, job: current };
+  } finally {
+    await releaseFilmClaim(jobId);
+  }
+}
+
 export async function releaseFilmClaim(jobId: string): Promise<void> {
   const job = sequenceJobs.get(jobId);
   if (job?.claim?.token === processToken) {
@@ -2619,6 +2805,10 @@ function jobPayload(job: SequenceJob) {
       warnings: job.warnings?.length ? job.warnings : undefined,
       error: job.error,
       ledger: job.ledger,
+      ...(job.continuityReview ? { continuityReview: job.continuityReview } : {}),
+      ...(job.spendLedger ? { spendLedger: job.spendLedger } : {}),
+      ...(job.dependencies ? { dependencies: job.dependencies } : {}),
+      ...(job.repairProposal ? { repairProposal: job.repairProposal } : {}),
     } : {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId.",
@@ -2707,6 +2897,13 @@ async function runSequenceJob(
   /** Things that still made a film, but not the film that was asked for. */
   const degradations: string[] = [];
   try {
+    if (inFlightSpendAborted()) {
+      job.state = "stopped";
+      job.error = "A budget warning must not stop a render that has already started.";
+      job.finishedAt = Date.now();
+      void persistJob(job);
+      return;
+    }
     for (let i = 0; i < args.shots.length; i++) {
       const shot = args.shots[i];
       // Explicit frames beat chaining. A boarded shot already knows both of its
@@ -3044,6 +3241,7 @@ server.registerTool(
         "call again with true only after they approve.",
       ),
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3123,6 +3321,20 @@ server.registerTool(
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100,
     ) / 100;
+    const sequenceQuote = videoQuote({
+      resolution: args.resolution,
+      pin: args.pin ?? "start",
+      durations: args.shots.map((shot) => shot.durationSeconds),
+    });
+    const sequencePaid = quoteGate(
+      args,
+      "video",
+      estimate,
+      sequenceQuote.fingerprint,
+      (resumeJob?.spentUsd ?? 0) + (resumeJob?.carriedOverUsd ?? 0),
+    );
+    const sequenceCostRefusal = costRefusal(sequencePaid);
+    if (sequenceCostRefusal) return sequenceCostRefusal;
 
     // A resumed film is the one place a stale cast hides, because the shots it
     // joins to were paid for in an earlier session and cannot be re-checked by
@@ -3263,6 +3475,7 @@ server.registerTool(
             },
             contract: { shots: outgoing },
             ...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {}),
+            ...costFields(sequencePaid),
             next: lintBlocked
               ? "The prompts fail the check. Show the sent prompts and the lint hits. Rewrite them " +
                 "before confirm. Nothing was spent, and a retry is an edit of that prompt."
@@ -3396,6 +3609,9 @@ server.registerTool(
         } : {}),
       }),
     };
+    if (sequencePaid?.budgetWarning) {
+      job.warnings = [...(job.warnings ?? []), sequencePaid.budgetWarning];
+    }
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
@@ -3542,6 +3758,7 @@ server.registerTool(
         "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. " +
         "confirm alone does not unblock a refusal.",
       ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3679,6 +3896,35 @@ server.registerTool(
       const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
       if (sessionRefusal) return sessionRefusal;
     }
+    const boardFingerprint = quoteFingerprint({
+      kind: "board",
+      shotCount: boardedShots.length,
+      middles: boardedShots.map((shot) => Boolean(shot.middleKeyframe)),
+      aspectRatio: args.aspectRatio,
+    });
+    let boardPaid: PaidAction | undefined;
+    if (decision === "spend" && hasCostAnnotation(args)) {
+      const priced = await boardFilm(
+        {
+          shots: boardedShots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          scene: locationScene(args.characters),
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: false,
+        },
+        {
+          outputDir: OUTPUT_DIR,
+          referenceImageUrls,
+          baseImageUrl,
+          generateStill: async (job, opts) => generateGrokStill(job, opts),
+        },
+      );
+      boardPaid = quoteGate(args, "board", priced.estimate.estimatedUsd, boardFingerprint);
+      const boardCostRefusal = costRefusal(boardPaid);
+      if (boardCostRefusal) return boardCostRefusal;
+    }
 
     const sentRefs = decision === "spend"
       ? await withPersonCutouts(args.characters, rawRefs)
@@ -3734,6 +3980,7 @@ server.registerTool(
       ...(board.action === "boarded" || board.action === "partial"
         ? { renderShots: toRenderShots(board) }
         : {}),
+      ...costFields(boardPaid ?? quoteGate(args, "board", board.estimate.estimatedUsd, boardFingerprint)),
     };
 
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -3776,6 +4023,7 @@ server.registerTool(
       confirm: z.boolean().default(false),
       overrideValidation: z.boolean().default(false),
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3854,6 +4102,23 @@ server.registerTool(
     const retryResolution = original.settings?.resolution ?? "720p";
     const retryRate = ratePerSecond(retryResolution);
     const estimateUsd = Math.round(duration * retryRate * 100) / 100;
+    const retryFingerprint = quoteFingerprint({
+      kind: "retry",
+      jobId: original.id,
+      shotIndex: index,
+      durationSeconds: duration,
+      resolution: retryResolution,
+      prompt,
+    });
+    const retryPaid = quoteGate(
+      args,
+      "retry",
+      estimateUsd,
+      retryFingerprint,
+      original.spentUsd + (original.carriedOverUsd ?? 0),
+    );
+    const retryCostRefusal = costRefusal(retryPaid);
+    if (retryCostRefusal) return retryCostRefusal;
     const retrySent = sentShotPrompt(original.settings?.continuity, { prompt: prompt ?? "" });
     const retryHits = lintSentPrompt(retrySent);
     const retryContract = {
@@ -3901,6 +4166,7 @@ server.registerTool(
               isEstimate: true,
             },
             contract: retryContract,
+            ...costFields(retryPaid),
             caveat:
               after.length === 0
                 ? "This is the last shot, so nothing downstream depends on it."
@@ -3985,7 +4251,7 @@ server.registerTool(
       shots: [],
       settings,
       startFramePath: original.startFramePath,
-      warnings: [...(original.warnings ?? [])],
+      warnings: [...(original.warnings ?? []), ...(retryPaid?.budgetWarning ? [retryPaid.budgetWarning] : [])],
       repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
       ledger: original.ledger,
       // Every reused shot was paid for by the original film. Count it, so the
@@ -4142,4 +4408,241 @@ server.registerTool(
       content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }],
     };
   }
+);
+
+const reviewShotSchema = z.object({
+  index: z.number().int().min(1),
+  worn: z.array(z.string()).optional(),
+  props: z.array(z.object({
+    id: z.string(),
+    locationId: z.string(),
+    placement: z.string(),
+    holder: z.string().optional(),
+  })).optional(),
+  lastFramePath: z.string().optional(),
+  firstFramePath: z.string().optional(),
+  referencePath: z.string().optional(),
+  durationSeconds: z.number().optional(),
+  pin: z.enum(["start", "both"]).optional(),
+  boardStillPaths: z.array(z.string()).optional(),
+  extendedFrom: z.string().optional(),
+});
+
+function reviewShotsFromJob(job: SequenceJob): ReviewShot[] {
+  return job.shots.map((shot, index) => {
+    const ledger = job.ledger?.shots?.find((entry) => entry.shot === shot.index);
+    const previous = job.shots[index - 1];
+    const worn = ledger?.checklists.flatMap((list) => list.worn.map((layer) => layer.id));
+    return {
+      index: shot.index,
+      ...(ledger ? { worn: worn ?? [] } : {}),
+      ...(ledger
+        ? {
+          props: ledger.propsInView.map((prop) => ({
+            id: prop.id,
+            locationId: prop.locationId,
+            placement: prop.placement,
+            ...(prop.holder ? { holder: prop.holder } : {}),
+          })),
+        }
+        : {}),
+      lastFramePath: shot.framePath ?? shot.lastFramePath,
+      firstFramePath: index === 0 ? job.startFramePath : previous?.framePath,
+      durationSeconds: shot.durationSeconds,
+      pin: job.settings?.pin,
+      ...(shot.lastFramePath ? { boardStillPaths: [shot.lastFramePath] } : {}),
+    };
+  });
+}
+
+server.registerTool(
+  "review_continuity",
+  {
+    description:
+      "Review what crosses each cut in a film: wardrobe, props, pose at the seam, lighting, and " +
+      "identity. Each finding is measured, visually flagged, or unverified, and each one carries " +
+      "evidence or an abstention. Free. It does not render, delete, reorder, or spend, and it " +
+      "does not call a vision API. Style and story notes are ignored.",
+    inputSchema: z.object({
+      jobId: z.string().optional().describe("Persist the review on this film. A running render is not stopped."),
+      shots: z.array(reviewShotSchema).optional(),
+      measurements: z.array(z.object({
+        afterShot: z.number().int().min(1),
+        agreement: z.number().optional(),
+        method: z.string().optional(),
+        meanLumaDelta: z.number().optional(),
+        identityAgreement: z.number().optional(),
+      })).optional(),
+      styleNotes: z.array(z.string()).optional().describe("Ignored. Not a boundary finding."),
+      narrativeSuggestions: z.array(z.string()).optional().describe("Ignored. Not a boundary finding."),
+      resolution: z.enum(["480p", "720p", "1080p"]).optional(),
+    }),
+  },
+  async (args) => {
+    let shots = args.shots as ReviewShot[] | undefined;
+    let ledgerArtifact = "ledger";
+    if (!shots && args.jobId) {
+      await refreshJobsFromDisk();
+      const job = sequenceJobs.get(args.jobId);
+      if (!job) {
+        return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
+      }
+      shots = reviewShotsFromJob(job);
+      ledgerArtifact = `job:${job.id}#ledger`;
+    }
+    if (!shots || shots.length === 0) {
+      return refusal({
+        error: "No shots to review",
+        executed: false,
+        willRender: false,
+        willSpend: false,
+      });
+    }
+    const review = reviewContinuity({
+      shots,
+      measurements: args.measurements,
+      fileExists: (file) => existsSync(file),
+      ledgerArtifact,
+      styleNotes: args.styleNotes,
+      narrativeSuggestions: args.narrativeSuggestions,
+      resolution: args.resolution,
+    });
+    let persisted = false;
+    let persistError: string | undefined;
+    if (args.jobId) {
+      const saved = await saveJobAnnotation(args.jobId, (job) => {
+        job.continuityReview = review;
+      });
+      persisted = saved.ok;
+      if (!saved.ok) persistError = saved.message;
+    }
+    return refusal({
+      ...review,
+      persisted,
+      ...(persistError ? { persistError } : {}),
+    });
+  },
+);
+
+server.registerTool(
+  "propose_repair",
+  {
+    description:
+      "Propose least-cost repairs for one bad shot from the frames that were actually used: " +
+      "retry that shot and accept the hard cut, retry the shots seeded from it, re-board the " +
+      "boundary still and re-render, or accept with a note. Free. It does not render. A strategy " +
+      "runs only when retry_shot or render_sequence is confirmed for that quote.",
+    inputSchema: z.object({
+      jobId: z.string().optional(),
+      badShot: z.number().int().min(1),
+      resolution: z.enum(["480p", "720p", "1080p"]).optional().describe(
+        "Quote the options at this resolution. Omitted means 720p, the same default as a render.",
+      ),
+      shots: z.array(z.object({
+        index: z.number().int().min(1),
+        durationSeconds: z.number().min(1).max(15),
+        pin: z.enum(["start", "both"]).optional(),
+        framePath: z.string().optional(),
+        firstFramePath: z.string().optional(),
+        lastFramePath: z.string().optional(),
+        boardStillPaths: z.array(z.string()).optional(),
+        extendedFrom: z.string().optional(),
+      })).optional(),
+      strategyId: z.enum(["retry-alone", "retry-dependents", "reboard-boundary", "accept-note"]).optional(),
+      budgetUsd: z.number().min(0).optional().describe(
+        "Film budget recorded with the proposal. Crossing it warns. It does not render.",
+      ),
+      confirm: z.boolean().default(false).describe(
+        "Records approval of strategyId when the quote matches. Never renders.",
+      ),
+      approvedUsd: z.number().optional(),
+      approvedKind: z.enum(["board", "video", "still", "extend", "retry"]).optional(),
+      approvedFingerprint: z.string().optional(),
+      overrideValidation: z.boolean().default(false),
+    }),
+  },
+  async (args) => {
+    let source: DependencyShot[] | undefined = args.shots?.map((shot) => ({
+      index: shot.index,
+      durationSeconds: shot.durationSeconds,
+      pin: shot.pin ?? "start",
+      framePath: shot.framePath,
+      firstFramePath: shot.firstFramePath,
+      lastFramePath: shot.lastFramePath,
+      boardStillPaths: shot.boardStillPaths,
+      extendedFrom: shot.extendedFrom,
+    }));
+    let resolution = args.resolution ?? "720p";
+    if (!source && args.jobId) {
+      await refreshJobsFromDisk();
+      const job = sequenceJobs.get(args.jobId);
+      if (!job) {
+        return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
+      }
+      const pin = job.settings?.pin ?? "start";
+      source = job.shots.map((shot, index) => ({
+        index: shot.index,
+        durationSeconds: shot.durationSeconds ?? 8,
+        pin,
+        framePath: shot.framePath,
+        firstFramePath: index === 0 ? job.startFramePath : job.shots[index - 1]?.framePath,
+        lastFramePath: shot.lastFramePath,
+        boardStillPaths: shot.lastFramePath ? [shot.lastFramePath] : undefined,
+      }));
+      const fromJob = job.settings?.resolution;
+      if (!args.resolution && (fromJob === "480p" || fromJob === "720p" || fromJob === "1080p")) {
+        resolution = fromJob;
+      }
+    }
+    if (!source || source.length === 0) {
+      return refusal({ error: "No shots", executed: false, willRender: false, willSpend: false });
+    }
+    const graph = buildDependencyGraph(source);
+    const proposal = proposeRepair({ graph, badShot: args.badShot, resolution });
+    const chosen = args.strategyId
+      ? proposal.options.find((option) => option.id === args.strategyId)
+      : undefined;
+    const fingerprint = chosen
+      ? quoteFingerprint({ strategy: chosen.id, shots: chosen.shotsToRender, usd: chosen.costUsd })
+      : undefined;
+    const quoteBound = args.approvedUsd !== undefined
+      || args.approvedFingerprint !== undefined
+      || args.approvedKind !== undefined;
+    const approval = chosen && fingerprint
+      ? approveRepairOption({
+        option: chosen,
+        fingerprint,
+        confirm: args.confirm && quoteBound,
+        approvedUsd: args.approvedUsd,
+        approvedKind: args.approvedKind,
+        approvedFingerprint: args.approvedFingerprint,
+        overrideValidation: args.overrideValidation,
+      })
+      : undefined;
+    let persisted = false;
+    let persistError: string | undefined;
+    if (args.jobId) {
+      const saved = await saveJobAnnotation(args.jobId, (job) => {
+        job.dependencies = graph;
+        job.repairProposal = proposal;
+        if (args.budgetUsd !== undefined || job.spentUsd > 0) {
+          job.spendLedger = {
+            version: 1,
+            spentUsd: Math.round(job.spentUsd * 100) / 100,
+            pendingUsd: chosen?.costUsd ?? proposal.options.find((option) => option.id === "retry-alone")?.costUsd ?? 0,
+            ...(args.budgetUsd !== undefined ? { thresholdUsd: args.budgetUsd } : {}),
+          };
+        }
+      });
+      persisted = saved.ok;
+      if (!saved.ok) persistError = saved.message;
+    }
+    return refusal({
+      ...proposal,
+      ...(fingerprint ? { fingerprint } : {}),
+      ...(approval ? { approval } : {}),
+      persisted,
+      ...(persistError ? { persistError } : {}),
+    });
+  },
 );
