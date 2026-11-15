@@ -249,19 +249,55 @@ export type AssembleClip = {
  * chained generations come back at slightly different sizes (848x480 then
  * 736x416) and neither filter accepts mismatched streams.
  */
+/**
+ * A short bed used to be looped and padded with silence, which is how a drone
+ * stopped before the first line. A bed that does not cover the film is refused.
+ */
+export function assertBedCoversFilm(bedSeconds: number | undefined, filmSeconds: number): void {
+  if (bedSeconds === undefined || bedSeconds + 0.05 < filmSeconds) {
+    throw new Error(
+      "Audio bed is shorter than the film, so it was refused instead of being padded or looped.",
+    );
+  }
+}
+
+/** Per-clip audio taps. mute and replace never read [i:a]. */
+export function planClipAudioFilters(input: {
+  durations: number[];
+  clipHasAudio: boolean[];
+  clipAudio?: "keep" | "mute" | "replace";
+}): string[] {
+  const mode = input.clipAudio ?? "keep";
+  return input.durations.map((duration, index) => {
+    const useClip = mode === "keep" && Boolean(input.clipHasAudio[index]);
+    if (useClip) {
+      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
+    }
+    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration},asetpts=PTS-STARTPTS[a${index}]`;
+  });
+}
+
 export async function assembleClips(input: {
   clips: AssembleClip[];
   fadeDuration: number;
   /**
    * Optional music, narration, or ambience laid under the whole film. It is
-   * looped if short, trimmed to the film, faded out at the end, and mixed under
+   * refused if shorter than the film, trimmed to the film, faded out at the end, and mixed under
    * the clips' own audio rather than replacing it.
    */
   audioTrackFile?: string;
-  /** Bed level as a linear gain. 0.25 is a bed you can talk over; 1.0 is loud. */
+  /**
+   * Bed level as a linear gain. 0.25 is a bed you can talk over; 1.0 is loud.
+   * 0 omits the bed.
+   */
   audioTrackVolume?: number;
   /** Seconds of fade at the end of the bed, so a film never ends on a cut-off note. */
   audioTrackFadeOutSeconds?: number;
+  /**
+   * keep mixes each clip's own audio. mute drops it and keeps the bed or silence.
+   * replace drops it so the bed is the soundtrack.
+   */
+  clipAudio?: "keep" | "mute" | "replace";
 }) {
   const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
@@ -272,7 +308,10 @@ export async function assembleClips(input: {
   const outPath = join(dir, `film-${digest}.mp4`);
 
   if (input.clips.length === 0) throw new Error("No clips to assemble.");
-  if (input.clips.length === 1) {
+  const clipAudio = input.clipAudio ?? "keep";
+  const bedGain = input.audioTrackVolume ?? 0.25;
+  const wantBed = Boolean(input.audioTrackFile) && bedGain > 0;
+  if (input.clips.length === 1 && clipAudio === "keep" && !wantBed) {
     // Fast path: normalize the single clip into an mp4 container.
     await exec(ffmpeg, [
       "-y", "-hide_banner", "-loglevel", "error",
@@ -346,15 +385,12 @@ export async function assembleClips(input: {
       `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`,
     );
-    if (withAudio[i]) {
-      filters.push(`[${i}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`);
-    } else {
-      // Silent bed so every input contributes an audio track either way.
-      filters.push(
-        `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${durations[i]},asetpts=PTS-STARTPTS[a${i}]`,
-      );
-    }
   }
+  filters.push(...planClipAudioFilters({
+    durations,
+    clipHasAudio: withAudio,
+    clipAudio,
+  }));
 
   let mode: "concat" | "xfade";
   // Needed for the bed: it has to be trimmed to exactly the film's length.
@@ -388,26 +424,30 @@ export async function assembleClips(input: {
     mode = "xfade";
   }
 
-  // Music or narration bed, if one was supplied. Added as an extra input after
-  // the clips so its index is the clip count, and looped so a 30-second track
-  // can sit under a three-minute film.
+  // A bed is mixed under clip audio, or it replaces that audio. It is not looped:
+  // a track shorter than the film is refused before ffmpeg runs.
   let audioMap = "[aout]";
-  if (input.audioTrackFile) {
+  if (wantBed && input.audioTrackFile) {
+    const bedSeconds = await probeDuration(input.audioTrackFile);
+    assertBedCoversFilm(bedSeconds, totalDuration);
     const bedIndex = input.clips.length;
-    const gain = Math.min(Math.max(input.audioTrackVolume ?? 0.25, 0.01), 4);
+    const gain = Math.min(Math.max(bedGain, 0), 4);
     const fadeOut = Math.min(
       input.audioTrackFadeOutSeconds ?? 1.5,
       Math.max(totalDuration / 2, 0.1),
     );
-    args.push("-stream_loop", "-1", "-i", input.audioTrackFile);
-    filters.push(
+    args.push("-i", input.audioTrackFile);
+    const bedFilter =
       `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
       `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
       `volume=${gain.toFixed(3)},` +
-      `afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}[bed]`,
-    );
-    // duration=first keeps the film's own length and lets the music stop with it.
-    filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+      `afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+    if (clipAudio === "replace") {
+      filters.push(`${bedFilter}[aoutmix]`);
+    } else {
+      filters.push(`${bedFilter}[bed]`);
+      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    }
     audioMap = "[aoutmix]";
   }
 

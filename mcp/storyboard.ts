@@ -43,15 +43,39 @@ export type BoardShotInput = {
   action?: string;
   title?: string;
   durationSeconds?: number;
+  /** Extra checklist wording (wardrobe and set dressing) folded into this frame. */
+  continuityPrompt?: string;
+  /**
+   * True when this shot carries a structured wardrobe event. The free-text
+   * `asksForChange` path still works; this flag covers the same case when the
+   * change was named as an event rather than in prose.
+   */
+  wardrobeChanged?: boolean;
+  /**
+   * When true, the board plans an extra still at the midpoint of this shot so
+   * the beat is not pinned only at its two ends.
+   */
+  middleKeyframe?: boolean;
 };
 
+export type BoardFrameRole = "opening" | "middle" | "boundary" | "closing";
+
 export type BoardFrame = {
-  /** 1-based position in the film's frame sequence: shots + 1 boundaries. */
+  /** 0-based position in the planned frame sequence. */
   index: number;
   /** What the still should show. */
   prompt: string;
   /** Content-addressed file stem, so a re-run recognises this frame. */
   stem: string;
+  /** Opening, shared boundary, optional midpoint, or closing frame. */
+  role: BoardFrameRole;
+  /** 1-based shot this frame primarily belongs to. */
+  shot: number;
+  /**
+   * True when this take names a cast and neither a portrait nor a location
+   * picture is attached. Callers must report it; it is not a silent pass.
+   */
+  wardrobeUnchecked?: boolean;
 };
 
 export type BoardedShot = {
@@ -65,6 +89,9 @@ export type BoardedShot = {
   /** Which board frames those are, so a caller can see the shared boundary. */
   firstFrameIndex: number;
   lastFrameIndex: number;
+  /** Optional midpoint still, when the shot asked for a middle keyframe. */
+  middleFrameUrl?: string;
+  middleFrameIndex?: number;
 };
 
 export type BoardedFrame = {
@@ -108,7 +135,10 @@ export type BoardFilmResult = {
 
 /** Resolve the prompt for a shot, whichever key the caller used. */
 function shotPrompt(shot: BoardShotInput): string {
-  return (shot.prompt ?? shot.action ?? "").trim();
+  const base = (shot.prompt ?? shot.action ?? "").trim();
+  const extra = shot.continuityPrompt?.trim() ?? "";
+  if (!extra || base.includes(extra)) return base;
+  return `${base} ${extra}`.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -142,6 +172,8 @@ export function planBoardFrames(opts: {
    * the previous one.
    */
   baseImageUrl?: string;
+  /** Portraits. A portrait without a location base still locks clothing. */
+  referenceImageUrls?: string[];
   /**
    * What the frames will actually be edited from, when that is not the same file
    * the caller passed.
@@ -167,7 +199,10 @@ export function planBoardFrames(opts: {
   // attached the cast is a description OF the picture, so the instruction is to
   // preserve it, not to re-imagine it. A shot prompt can still change something,
   // but it has to say so explicitly — see WARDROBE_CHANGE below.
-  const hasPicture = Boolean(opts.baseImageUrl);
+  const hasPortrait = Boolean(opts.referenceImageUrls?.some((url) => url.trim()));
+  const hasBase = Boolean(opts.baseImageUrl);
+  const hasPicture = hasPortrait || hasBase;
+  const wardrobeUnchecked = !hasPicture && Boolean(opts.cast?.trim());
   // When a picture is attached, the cast line is stripped of anything the
   // picture can disagree with — see mcp/cast.ts. A cast line is written once, by
   // hand, from memory; the picture is the thing that is actually true.
@@ -182,14 +217,37 @@ export function planBoardFrames(opts: {
       "through them unchanged."
     : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
-  const still = " Single held frame, no motion blur, no text, no watermark.";
+  const still = " Single held frame, sharp focus, a clean picture.";
 
-  return Array.from({ length: prompts.length + 1 }, (_, index) => {
+  type FrameSpec = {
+    role: BoardFrameRole;
+    shot: number;
+    incoming?: number;
+    outgoing?: number;
+  };
+
+  const specs: FrameSpec[] = [{ role: "opening", shot: 1, incoming: 0 }];
+  for (let i = 0; i < shots.length; i += 1) {
+    if (shots[i].middleKeyframe) {
+      specs.push({ role: "middle", shot: i + 1, incoming: i, outgoing: i });
+    }
+    if (i < shots.length - 1) {
+      specs.push({ role: "boundary", shot: i + 2, incoming: i + 1, outgoing: i });
+    } else {
+      specs.push({ role: "closing", shot: i + 1, outgoing: i });
+    }
+  }
+
+  return specs.map((spec, index) => {
     let prompt: string;
-    if (index === 0) {
+    if (spec.role === "opening") {
       prompt = `Opening frame of shot 1. ${prompts[0]}`;
-    } else if (index === prompts.length) {
-      prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
+    } else if (spec.role === "closing") {
+      prompt = `Closing frame of shot ${prompts.length}. ${prompts[prompts.length - 1]} The beat has just resolved.`;
+    } else if (spec.role === "middle") {
+      prompt =
+        `Middle frame of shot ${spec.shot}. ${prompts[spec.shot - 1]} ` +
+        "This is neither the start nor the end of the shot; the beat is underway.";
     } else {
       // A boundary belongs to TWO shots, and the wording used to describe it
       // as both at once — "the last frame of shot k and the first frame of
@@ -206,32 +264,57 @@ export function planBoardFrames(opts: {
       // owner: measured on the same pair, the face came out 0.219 and 0.211 of
       // the frame wide, and one of three renders put it out of shot entirely,
       // which is what "close on his hands" was asking for.
+      const incoming = spec.incoming ?? index;
+      const outgoing = spec.outgoing ?? incoming - 1;
       prompt =
-        `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ` +
-        `${prompts[index]} ` +
-        `Shot ${index} travels in to arrive at this picture, so its move ends where this frame ` +
-        `begins — the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) ` +
+        `The opening frame of shot ${incoming + 1}, which is also the closing frame of shot ${outgoing + 1}. ` +
+        `${prompts[incoming]} ` +
+        `Shot ${outgoing + 1} travels in to arrive at this picture, so its move ends where this frame ` +
+        `begins — the camera is already where shot ${incoming + 1} wants it (${prompts[outgoing].trim()}) ` +
         "Hold the same light, wardrobe and room across the boundary.";
     }
 
     // A wardrobe change has to be asked for by name. Without this the picture
     // wins by default, which is what was wanted; with it, a shot that says "he
     // has taken the coat off" is obeyed rather than quietly reverted.
+    const shotForFrame = shots[spec.shot - 1] ?? shots[0];
     const asksForChange =
-      /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
+      /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt)
+      || Boolean(shotForFrame?.wardrobeChanged);
     const personRule = !hasPicture
       ? ""
       : asksForChange
-        ? " This shot asks for the clothing change it names; apply that change and nothing else " +
-          "about the person."
+        ? " This shot asks for the clothing change it names; apply that change and keep the rest of the person."
         : " Keep this person's face, head, beard hair and clothing exactly as the reference " +
-          "picture shows them, and never restyle them.";
+          "picture shows them.";
 
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
     const stem = `board-${createHash("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem };
+    return {
+      index,
+      prompt: full,
+      stem,
+      role: spec.role,
+      shot: spec.shot,
+      ...(wardrobeUnchecked ? { wardrobeUnchecked: true } : {}),
+    };
+  });
+}
+
+/** First, optional middle, and last frame indexes for each shot in a planned board. */
+export function shotFrameSlots(shots: BoardShotInput[]): Array<{ first: number; middle?: number; last: number }> {
+  let cursor = 0;
+  return shots.map((shot) => {
+    const first = cursor;
+    let middle: number | undefined;
+    if (shot.middleKeyframe) {
+      cursor += 1;
+      middle = cursor;
+    }
+    cursor += 1;
+    return { first, middle, last: cursor };
   });
 }
 
@@ -252,7 +335,12 @@ export async function findExistingStill(dir: string, stem: string): Promise<stri
 export type BoardFilmDeps = {
   /** Injected so a test never reaches the network. */
   generateStill: (
-    job: { prompt: string; aspectRatio?: string; referenceImageUrls?: string[] },
+    job: {
+      prompt: string;
+      aspectRatio?: string;
+      referenceImageUrls?: string[];
+      baseImageUrl?: string;
+    },
     opts: { outputDir: string; filename?: string },
   ) => Promise<GrokStillResult>;
   outputDir: string;
@@ -277,6 +365,20 @@ export type BoardFilmDeps = {
  * `maxCostUsd` refuses rather than spends, and the returned `shots` are ready to
  * paste straight into render_sequence with both frames filled in.
  */
+export function heroPrompt(input: { cast?: string; look?: string; scene?: string }): string {
+  const named = (input.scene ?? input.look)?.trim().replace(/\.$/, "");
+  const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
+  const cast = input.cast?.trim() ? castForPicture(input.cast) : "";
+  return (
+    `Place the person from the first photo into ${where}. ` +
+    cast +
+    `The first photo supplies only the person. Its background stays out of the picture. ` +
+    `The second photo is the room and stays as it is: keep its walls, its furniture, its ` +
+    `windows and the view through them exactly as they are, and keep its own light. ` +
+    `Photoreal, single held frame, sharp focus, a clean picture.`
+  );
+}
+
 export async function boardFilm(
   input: {
     shots: BoardShotInput[];
@@ -286,6 +388,13 @@ export async function boardFilm(
     cast?: string;
     maxCostUsd?: number;
     confirm?: boolean;
+    /** The real room, when the caller has one. Never a hardcoded office. */
+    scene?: string;
+    /**
+     * The gate already refused this board. The estimate is still returned, and
+     * the next step must not tell the caller to confirm.
+     */
+    blocked?: boolean;
   },
   deps: BoardFilmDeps,
 ): Promise<BoardFilmResult> {
@@ -318,7 +427,9 @@ export async function boardFilm(
   const heroRefsForStem = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   const heroStem = heroRefsForStem.length > 0
     ? `board-hero-${createHash("sha1")
-        .update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}`)
+        .update(
+          `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input.cast ?? ""}|${input.look ?? ""}|${input.scene ?? ""}`,
+        )
         .digest("hex")
         .slice(0, 16)}`
     : undefined;
@@ -329,6 +440,7 @@ export async function boardFilm(
     look: input.look,
     cast: input.cast,
     baseImageUrl: deps.baseImageUrl,
+    referenceImageUrls: deps.referenceImageUrls,
     baseFingerprint: heroStem,
   });
 
@@ -355,10 +467,22 @@ export async function boardFilm(
     perStillUsd: STILL_USD,
     basis:
       `${planned.length} frames for ${usable.length} shots ` +
-      `(${usable.length} + 1 shared boundaries)` +
+      (usable.some((shot) => shot.middleKeyframe)
+        ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)`
+        : `(${usable.length} + 1 shared boundaries)`) +
       (heroStills ? `, plus one hero frame` : "") +
       `, ${billable} to render at $0.02 each, ` +
       `${existing.length - missing.length} already on disk and free.` +
+      (heroStills
+        ? " The hero still is bought on every confirmed board, and its name is part of every " +
+          "shot frame, so a new hero buys the hero and every shot frame, not the hero alone."
+        : "") +
+      (!deps.baseImageUrl && (deps.referenceImageUrls ?? []).some((url) => url.trim())
+        ? " A portrait with no location photo is part of every frame's name, so a change to " +
+          "that portrait or the cast buys every frame again. There is no single hero still."
+        : "") +
+      " Closing frames are kept on the shot list and are not sent unless render_sequence is " +
+      "called with pin: \"both\". The default pin is start, so those cuts are not pixel-pinned." +
       (deps.baseImageUrl
         ? ` Every frame is edited from the same picture, so look at the board before ` +
           `rendering the video: a still that came back wrong is two cents, and the clip that ` +
@@ -392,8 +516,12 @@ export async function boardFilm(
       next: overBudget
         ? "Tell the user the board is over budget and what it would cost. Do not retry with a " +
           "higher limit unless they ask for one."
-        : "Show the frame count and the estimate. Call again with confirm: true only after the " +
-          "user approves the board. Nothing is rendered until then.",
+        : input.blocked
+          ? "This board is blocked, so confirm will not render anything. Pass overrideValidation: " +
+            "true to board anyway. confirm alone does not unblock it."
+          : "Show the frame count and the estimate. Call again with confirm: true only after the " +
+            "user approves the board. Nothing is rendered until then. Closing frames on the shot " +
+            "list are not sent unless render_sequence uses pin: \"both\". The default pin is start.",
     };
   }
 
@@ -407,25 +535,9 @@ export async function boardFilm(
   // spends two cents building ONE hero frame first and then edits every shot
   // from that single picture.
   //
-  // Which of the two photos is the SUBJECT of that hero edit decides which one
-  // survives, and it is not a toss-up. On `/v1/images/edits` the first picture
-  // is the thing being changed and the rest are context, so:
-  //
-  //  - Portrait first ("place this person into the setting in the second
-  //    photo"): the face is perfect and the room is not. Measured, the frame
-  //    came back as the portrait's own bright living room - sofa, doorway,
-  //    trees in daylight - because the portrait's background is part of the
-  //    subject an edit is inclined to keep. The office was reduced to a hint.
-  //  - Office first ("place the person from the second photo into this
-  //    office"): the room is exact (skyline structure correlation 0.97 against
-  //    0.02-0.08 the other way round) and the person is still the person.
-  //    The office is the thing that must not change, because a redrawn room is
-  //    what makes two shots look like two different films; a face has a
-  //    portrait pinned on every frame afterwards to correct it. Measured on
-  //    three reps, the tan coat survived all three.
-  //
-  // So the office is the base and the portrait is the reference, whichever the
-  // caller passed. Garments are never named in the text - see mcp/cast.ts.
+  // The wire order is portrait first, room second (grokVideo puts reference
+  // images ahead of the base). The words have to name that same order. The
+  // room is whatever scene the caller described, not a fixed office at dusk.
   let boardBase = deps.baseImageUrl;
   const heroRefs = deps.baseImageUrl ? (deps.referenceImageUrls ?? []) : [];
   if (boardBase && heroRefs.length > 0 && !paths.has(-1)) {
@@ -433,15 +545,7 @@ export async function boardFilm(
     const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
-        prompt:
-          `Place the person from the second photo into this office. ` +
-          `${input.cast?.trim() ? castForPicture(input.cast) : ""}` +
-          `${input.look?.trim() ? `${input.look.trim()} ` : ""}` +
-          `The first photo is the room and it does not change: its walls, its furniture, its ` +
-          `windows and the city through them stay exactly as they are, and its own dusk light is ` +
-          `the light of this frame. The second photo supplies the person and nothing else - its ` +
-          `own background is discarded. ` +
-          `Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: heroPrompt(input),
         aspectRatio,
         baseImageUrl: setting,
         referenceImageUrls: [subject],
@@ -516,10 +620,13 @@ export async function boardFilm(
 
   const shots: BoardedShot[] = [];
   const gaps: number[] = [];
+  const slots = shotFrameSlots(usable);
   usable.forEach((shot, i) => {
-    const first = paths.get(i);
-    const last = paths.get(i + 1);
-    if (!first || !last) {
+    const slot = slots[i];
+    const first = paths.get(slot.first);
+    const last = paths.get(slot.last);
+    const middle = slot.middle !== undefined ? paths.get(slot.middle) : undefined;
+    if (!first || !last || (shot.middleKeyframe && !middle)) {
       gaps.push(i + 1);
       return;
     }
@@ -529,8 +636,11 @@ export async function boardFilm(
       durationSeconds: shot.durationSeconds ?? 8,
       firstFrameUrl: first,
       lastFrameUrl: last,
-      firstFrameIndex: i,
-      lastFrameIndex: i + 1,
+      firstFrameIndex: slot.first,
+      lastFrameIndex: slot.last,
+      ...(middle && slot.middle !== undefined
+        ? { middleFrameUrl: middle, middleFrameIndex: slot.middle }
+        : {}),
     });
   });
 
@@ -556,9 +666,10 @@ export async function boardFilm(
       : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were ` +
         "returned. Re-run board_film: frames already on disk are reused and cost nothing.",
     next: complete
-      ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. " +
-        "Consecutive shots share a boundary frame, so every cut lands on identical pixels. " +
-        "Each shot is still one paid video render."
+      ? "Show the stills to the user for approval, then pass `shots` to render_sequence. Consecutive " +
+        "shots share a boundary picture. Those closing frames are not sent unless render_sequence " +
+        "uses pin: \"both\". The default pin is start, so the cuts are not pixel-pinned. Each shot " +
+        "is still one paid video render."
       : "Report which frames failed and re-run board_film. Do not render video from a partial board.",
   };
 }

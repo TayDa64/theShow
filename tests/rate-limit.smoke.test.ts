@@ -36,13 +36,16 @@ const endpoints = [
 ];
 
 describe('generation rate limits', () => {
-  it.each(endpoints)('returns HTTP 429 on the 11th request for $path', async ({ path, body }, index) => {
+  let caseNumber = 0;
+
+  it.each(endpoints)('returns HTTP 429 on the 11th request for $path', async ({ path, body }) => {
+    const octet = ++caseNumber;
     const { agent, csrfToken } = await createAuthenticatedAgent();
 
     for (let attempt = 1; attempt <= 10; attempt += 1) {
       const response = await agent
         .post(path)
-        .set('X-Forwarded-For', `203.0.113.${index + 1}`)
+        .set('X-Forwarded-For', `203.0.113.${octet}`)
         .set('x-csrf-token', csrfToken)
         .send(body);
 
@@ -51,7 +54,7 @@ describe('generation rate limits', () => {
 
     const blocked = await agent
       .post(path)
-      .set('X-Forwarded-For', `203.0.113.${index + 1}`)
+      .set('X-Forwarded-For', `203.0.113.${octet}`)
       .set('x-csrf-token', csrfToken)
       .send(body);
 

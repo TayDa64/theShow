@@ -97,7 +97,7 @@ StoryForge Studio is the other. Clone the repository, run `npm install` and `npm
 
 The plugin is at 0.1.0, and a film can go from the card to a polled job to a file. This document is the write-up, so publishing the install path is the page you are reading.
 
-Slash commands now ship with the plugin: `/film`, `/scene`, `/character`, `/board`, `/render`, `/check`, `/retry`, `/films`, and `/continue`. Each one is the same workflow started partway in, and none of them skips the estimate.
+Slash commands now ship with the plugin. `/theshow` is the primary start. You type `/theshow` because the client lowercases the command name. `/film` follows the same recipe. The others are `/scene`, `/character`, `/board`, `/render`, `/check`, `/retry`, `/films`, and `/continue`. Each one is the same workflow started partway in, and none of them skips the estimate. A command loads instructions. The model then calls `configure_film`. It does not open the form by itself.
 
 If you build something with it, the interesting problems left are continuity problems: how to hold a location, a light source, or a prop across a cut. That is where the tool earns its keep.
 

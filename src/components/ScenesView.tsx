@@ -1084,6 +1084,53 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
                           <option value={8}>8 seconds</option>
                         </select>
                       </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Resolution</label>
+                        <select
+                          title="Storyboard shot resolution"
+                          value={shot.resolution ?? ''}
+                          onChange={e => {
+                            const value = e.target.value;
+                            handleUpdateStoryboardShot(shot.id, {
+                              resolution: value === '480p' || value === '720p' || value === '1080p' ? value : undefined,
+                            });
+                          }}
+                          className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 rounded-xl py-2 px-3 text-xs focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="">720p when unset</option>
+                          <option value="480p">480p</option>
+                          <option value="720p">720p</option>
+                          <option value="1080p">1080p</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Voice</label>
+                        <input
+                          title="Optional voice id"
+                          value={shot.voiceId ?? ''}
+                          placeholder="Optional voice id"
+                          onChange={e => handleUpdateStoryboardShot(shot.id, { voiceId: e.target.value || undefined })}
+                          className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 rounded-xl py-2 px-3 text-xs focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Track seconds</label>
+                        <input
+                          title="Optional track duration"
+                          type="number"
+                          min={1}
+                          max={15}
+                          value={shot.trackDurationSeconds ?? ''}
+                          placeholder="Only when a track is set"
+                          onChange={e => {
+                            const next = Number(e.target.value);
+                            handleUpdateStoryboardShot(shot.id, {
+                              trackDurationSeconds: e.target.value && Number.isFinite(next) && next > 0 ? next : undefined,
+                            });
+                          }}
+                          className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 rounded-xl py-2 px-3 text-xs focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
                     </div>
 
                     <div className="rounded-2xl border border-zinc-900 bg-zinc-900/40 p-4 space-y-3">

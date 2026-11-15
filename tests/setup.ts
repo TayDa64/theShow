@@ -1,7 +1,54 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { __resetAuthStoreForTests } from '../src/lib/authStore';
+
+const suiteRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'theshow-suite-'));
+process.env.THESHOW_OUTPUT_DIR = path.join(suiteRoot, 'media');
+process.env.THESHOW_JOBS_DIR = path.join(suiteRoot, 'jobs');
+fs.mkdirSync(process.env.THESHOW_OUTPUT_DIR, { recursive: true });
+fs.mkdirSync(process.env.THESHOW_JOBS_DIR, { recursive: true });
+process.env.GROK_AUTH_FILE = '/nonexistent/theshow-test-auth.json';
+process.env.THESHOW_FORBID_HOME_AUTH = '1';
+delete process.env.XAI_API_KEY;
+delete process.env.GROK_API_KEY;
+delete process.env.GEMINI_API_KEY;
+
+const realFetch = globalThis.fetch.bind(globalThis);
+const netAttempts: string[] = [];
+
+globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+  const raw = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.href
+      : input.url;
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    parsed = undefined;
+  }
+  const host = parsed?.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+    return realFetch(input, init);
+  }
+  if (parsed) {
+    netAttempts.push(`${init?.method ?? 'GET'} ${parsed.href}`);
+    throw new Error(`[net-guard] real network call blocked: ${parsed.href}`);
+  }
+  return realFetch(input, init);
+}) as typeof fetch;
+
+afterEach(() => {
+  if (!process.env.GROK_AUTH_FILE) {
+    process.env.GROK_AUTH_FILE = '/nonexistent/theshow-test-auth.json';
+  }
+  if (netAttempts.length === 0) return;
+  const seen = netAttempts.splice(0, netAttempts.length);
+  throw new Error(`[net-guard] ${seen.join(', ')}`);
+});
 
 const ffmpegState = {
   setPath: '',
@@ -63,19 +110,19 @@ const ffmpegMock = Object.assign(
 );
 
 const genaiState = {
-  generateContentImpl: vi.fn(async () => ({ text: 'mock cinematic prompt' })),
-  generateVideosImpl: vi.fn(async () => ({ name: 'mock-operation-1' })),
-  getVideosOperationImpl: vi.fn(async () => ({ done: true, response: { generatedVideos: [{ video: { uri: 'https://example.com/mock.mp4' } }] } })),
+  generateContentImpl: vi.fn(async (_args?: unknown) => ({ text: 'mock cinematic prompt' })),
+  generateVideosImpl: vi.fn(async (_args?: unknown) => ({ name: 'mock-operation-1' })),
+  getVideosOperationImpl: vi.fn(async (_args?: unknown) => ({ done: true, response: { generatedVideos: [{ video: { uri: 'https://example.com/mock.mp4' } }] } })),
 };
 
 const googleAuthState = vi.hoisted(() => ({
   generateAuthUrlImpl: vi.fn((options: any) => `https://accounts.google.test/o/oauth2/v2/auth?state=${encodeURIComponent(options.state || '')}`),
-  getTokenImpl: vi.fn(async () => ({
+  getTokenImpl: vi.fn(async (_options?: unknown) => ({
     tokens: {
       id_token: 'mock-google-id-token',
     },
   })),
-  verifyIdTokenImpl: vi.fn(async () => ({
+  verifyIdTokenImpl: vi.fn(async (_options?: unknown) => ({
     getPayload: () => ({
       sub: 'google-subject-1',
       email: 'google-user@example.com',

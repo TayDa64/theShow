@@ -64,8 +64,7 @@ export function castForPicture(cast: string | undefined): string {
     : "THE CAST, taken from the reference picture and identical in every frame: the person in it.";
   return (
     `${body} Their face, head, hair and skin are those of the reference picture: match them ` +
-    `exactly. Their clothing is whatever the reference picture shows them wearing — take the ` +
-    `garments from the picture and copy them unchanged; do not add, swap, layer or remove any ` +
-    `garment, and do not infer one from this description. `
+    `exactly. Their clothing is whatever the reference picture shows them wearing. Take the ` +
+    `garments from the picture and copy them unchanged, in the same layers the picture shows. `
   );
 }

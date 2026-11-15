@@ -12,11 +12,13 @@
  * for films; THESHOW_CHARACTERS_DIR overrides, for tests.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
+import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
+import { atomicWriteFile, pidAlive, processHost, publishExclusive, restoreIfAbsent } from "./runtime.ts";
 
 export const CHARACTERS_DIR =
   process.env.THESHOW_CHARACTERS_DIR || join(homedir(), ".theshow", "characters");
@@ -28,7 +30,7 @@ export const CHARACTERS_DIR =
  * point THESHOW_CHARACTERS_DIR at a temp directory and the module follows it
  * without having to be re-imported in a particular order.
  */
-function charactersRoot() {
+export function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
 
@@ -37,6 +39,10 @@ export type CharacterRecord = {
   name: string;
   role?: string;
   description?: string;
+  /** Identity only: face, hair, skin. Wardrobe lives in `wardrobe`. */
+  appearance?: string;
+  /** Optional layered wardrobe. Absent on older files that only have description. */
+  wardrobe?: CharacterWardrobe;
   /** Local paths point at copies inside this character's own refs folder. */
   referenceImageUrls: string[];
   createdAt: string;
@@ -55,6 +61,8 @@ export type CharacterInput = {
   name: string;
   role?: string;
   description?: string;
+  appearance?: string;
+  wardrobe?: CharacterWardrobe;
   referenceImageUrls?: string[];
 };
 
@@ -114,6 +122,10 @@ function parseRecord(folder: string, raw: string): CharacterRecord | undefined {
       name: parsed.name.trim(),
       role: typeof parsed.role === "string" ? parsed.role : undefined,
       description: typeof parsed.description === "string" ? parsed.description : undefined,
+      appearance: typeof (parsed as { appearance?: unknown }).appearance === "string"
+        ? (parsed as { appearance: string }).appearance
+        : undefined,
+      wardrobe: parseWardrobe((parsed as { wardrobe?: unknown }).wardrobe),
       referenceImageUrls: Array.isArray(parsed.referenceImageUrls)
         ? parsed.referenceImageUrls.filter((ref): ref is string => typeof ref === "string")
         : [],
@@ -160,6 +172,272 @@ async function folderForWrite(root: string, name: string) {
   if (!existsSync(plain)) return plain;
   const record = await readRecord(plain, { quiet: true });
   return record && sameName(record.name, name) ? plain : hashed;
+}
+
+const CHARACTER_LOCK_WAIT_MS = 10_000;
+const CHARACTER_LOCK_STALE_MS = 30_000;
+const CHARACTER_LOCK_REFRESH_MS = 10_000;
+const CHARACTER_LOCK_EMPTY_GRACE_MS = 1_000;
+
+function characterLockRefreshMs(): number {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
+  if (Number.isFinite(raw) && raw >= 10) return raw;
+  return CHARACTER_LOCK_REFRESH_MS;
+}
+
+/** How long a saver waits for someone else's lock. `THESHOW_CHARACTER_LOCK_WAIT_MS` overrides the 10s default. */
+export function characterLockWaitMs(): number {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_WAIT_MS);
+  if (Number.isFinite(raw) && raw >= 50) return raw;
+  return CHARACTER_LOCK_WAIT_MS;
+}
+
+type CharacterLock = { pid: number; token: string; host: string; at: number };
+
+async function readCharacterLock(lockPath: string): Promise<CharacterLock | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(lockPath, "utf8")) as Partial<CharacterLock>;
+    if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return undefined;
+    return {
+      pid: parsed.pid,
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: parsed.at,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function lockFileAge(lockPath: string): Promise<number | undefined> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An empty or unreadable lock is only stale after a short grace, so a writer can finish publishing it. */
+function characterLockIsStale(
+  info: CharacterLock | undefined,
+  ageMs: number | undefined,
+  now = Date.now(),
+): boolean {
+  if (!info) return ageMs === undefined || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (info.at > now + 5_000) return true;
+  if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return false;
+}
+
+function characterLockBody(token: string, at = Date.now()): string {
+  return JSON.stringify({ pid: process.pid, token, host: processHost, at });
+}
+
+/** Rewrite the timestamp in place. Replacing the file would clobber a newer holder. */
+async function refreshCharacterLock(lockPath: string, token: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(lockPath, "r+");
+    const raw = await handle.readFile("utf8");
+    const parsed = JSON.parse(raw) as Partial<CharacterLock>;
+    if (parsed.token !== token) return;
+    const body = Buffer.from(characterLockBody(token));
+    await handle.write(body, 0, body.length, 0);
+    await handle.truncate(body.length);
+    await handle.sync();
+  } catch {
+    // A missing or partial lock is left alone. Readers apply the empty-file grace.
+  } finally {
+    await handle?.close();
+  }
+}
+
+/** Remove the lock only when the moved file still names this holder. Never replace a newer lock. */
+async function releaseCharacterLock(lockPath: string, token: string): Promise<void> {
+  const tomb = `${lockPath}.unlock.${randomUUID()}`;
+  try {
+    await rename(lockPath, tomb);
+  } catch {
+    return;
+  }
+  const moved = await readCharacterLock(tomb);
+  if (moved?.token === token) {
+    await unlink(tomb).catch(() => undefined);
+    return;
+  }
+  await restoreIfAbsent(tomb, lockPath);
+}
+
+type LockTurn = { pid: number; token: string; host: string; at: number };
+
+const activeLockTurns = new Set<string>();
+
+function lockTurnPath(lockPath: string): string {
+  return `${lockPath}.turn`;
+}
+
+async function readLockTurn(path: string): Promise<LockTurn | undefined> {
+  try {
+    const raw = await readFile(path, "utf8");
+    if (!raw.trim()) return undefined;
+    const parsed = JSON.parse(raw) as Partial<LockTurn>;
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return undefined;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** One stealer at a time. A live turn is kept; a dead or abandoned one expires. */
+function lockTurnIsStale(info: LockTurn | undefined, ageMs: number | undefined): boolean {
+  if (!info) return ageMs === undefined || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (ageMs !== undefined && ageMs <= CHARACTER_LOCK_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeLockTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== undefined && ageMs > 15_000;
+}
+
+async function acquireLockTurn(lockPath: string): Promise<string | undefined> {
+  const token = randomUUID();
+  const dest = lockTurnPath(lockPath);
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() } satisfies LockTurn);
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  const age = await lockFileAge(dest);
+  const current = await readLockTurn(dest);
+  if (age === undefined || !lockTurnIsStale(current, age)) return undefined;
+  let raw = "";
+  try {
+    raw = await readFile(dest, "utf8");
+  } catch {
+    return undefined;
+  }
+  const tomb = `${dest}.steal.${randomUUID()}`;
+  try {
+    await rename(dest, tomb);
+    const moved = await readFile(tomb, "utf8").catch(() => "");
+    if (moved !== raw) {
+      // Someone else took the slot. Put the file back only if it is empty,
+      // then drop the steal file either way. This process does not hold the turn.
+      await restoreIfAbsent(tomb, dest);
+      return undefined;
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  } finally {
+    await unlink(tomb).catch(() => undefined);
+  }
+  if (!(await publishExclusive(dest, body))) return undefined;
+  const confirmed = await readLockTurn(dest);
+  if (confirmed?.token !== token) return undefined;
+  activeLockTurns.add(token);
+  return token;
+}
+
+async function releaseLockTurn(lockPath: string, token: string): Promise<void> {
+  activeLockTurns.delete(token);
+  const dest = lockTurnPath(lockPath);
+  const current = await readLockTurn(dest);
+  if (current?.token !== token) return;
+  await unlink(dest).catch(() => undefined);
+}
+
+/**
+ * Drop a stale lock only while this process holds the turn, and only when the
+ * file moved aside is still that same stale file. The .steal file is removed
+ * on every exit, including when the move is put back or the body throws.
+ */
+async function stealStaleLock(lockPath: string): Promise<void> {
+  const turn = await acquireLockTurn(lockPath);
+  if (!turn) return;
+  let tomb: string | undefined;
+  let drop = false;
+  try {
+    const age = await lockFileAge(lockPath);
+    const info = age === undefined ? undefined : await readCharacterLock(lockPath);
+    if (age === undefined || !characterLockIsStale(info, age)) return;
+    const stillHeld = await readLockTurn(lockTurnPath(lockPath));
+    if (stillHeld?.token !== turn) return;
+    let raw = "";
+    try {
+      raw = await readFile(lockPath, "utf8");
+    } catch {
+      return;
+    }
+    tomb = `${lockPath}.steal.${randomUUID()}`;
+    try {
+      await rename(lockPath, tomb);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        tomb = undefined;
+        return;
+      }
+      throw err;
+    }
+    let tombRaw = "";
+    try {
+      tombRaw = await readFile(tomb, "utf8");
+    } catch {
+      tombRaw = "";
+    }
+    const tombAge = await lockFileAge(tomb);
+    const tombInfo = await readCharacterLock(tomb);
+    if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    const heldAfterMove = await readLockTurn(lockTurnPath(lockPath));
+    if (heldAfterMove?.token !== turn) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    drop = true;
+  } finally {
+    if (tomb && !drop) await restoreIfAbsent(tomb, lockPath).catch(() => undefined);
+    if (tomb) await unlink(tomb).catch(() => undefined);
+    await releaseLockTurn(lockPath, turn);
+  }
+}
+
+async function withFolderLock<T>(folder: string, body: () => Promise<T>): Promise<T> {
+  await mkdir(folder, { recursive: true });
+  const lockPath = join(folder, ".write.lock");
+  const deadline = Date.now() + characterLockWaitMs();
+  let delay = 20;
+  const token = randomUUID();
+  while (true) {
+    const published = await publishExclusive(lockPath, characterLockBody(token));
+    if (published) {
+      const refresh = setInterval(() => {
+        void refreshCharacterLock(lockPath, token);
+      }, characterLockRefreshMs());
+      refresh.unref?.();
+      try {
+        return await body();
+      } finally {
+        clearInterval(refresh);
+        await releaseCharacterLock(lockPath, token);
+      }
+    }
+    if (characterLockIsStale(await readCharacterLock(lockPath), await lockFileAge(lockPath))) {
+      await stealStaleLock(lockPath);
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(delay * 2, 250);
+  }
 }
 
 /** A stable filename for a copied photo, recognisable and unique per source. */
@@ -229,6 +507,36 @@ async function keepReferences(input: {
 }
 
 /**
+ * Copy any per-state wardrobe photos into the character folder, the same way
+ * portraits are copied: a state image is only useful if it outlives the path
+ * it arrived on.
+ */
+async function keepWardrobeReferences(input: {
+  folder: string;
+  wardrobe: CharacterWardrobe;
+  warnings: string[];
+}): Promise<CharacterWardrobe> {
+  const stateImages = input.wardrobe.stateImages ?? [];
+  if (stateImages.length === 0) return input.wardrobe;
+  const kept = [];
+  for (const entry of stateImages) {
+    const referenceImageUrls = await keepReferences({
+      folder: input.folder,
+      refs: entry.referenceImageUrls,
+      warnings: input.warnings,
+    });
+    kept.push({ worn: entry.worn, referenceImageUrls });
+  }
+  return { ...input.wardrobe, stateImages: kept };
+}
+
+/** Hold this character's folder lock while `body` runs, refreshing it so a slow save is not treated as abandoned. */
+export async function holdCharacterLock<T>(name: string, body: () => Promise<T>): Promise<T> {
+  const folder = await folderForWrite(charactersRoot(), name.trim());
+  return withFolderLock(folder, body);
+}
+
+/**
  * Create or update a character on disk and return the record as written.
  *
  * Blanks are filled from what the folder already holds, so adding a portrait to
@@ -241,51 +549,63 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
 
   const root = charactersRoot();
   const folder = await folderForWrite(root, name);
-  const existing = await readRecord(folder, { quiet: true });
+  return withFolderLock(folder, async () => {
   const warnings: string[] = [];
+  const existing = await readRecord(folder, { quiet: true });
+    const referenceImageUrls = await keepReferences({
+      folder,
+      refs: input.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
+      warnings,
+    });
+    const wardrobeInput = input.wardrobe ?? existing?.wardrobe;
+    const wardrobe = wardrobeInput
+      ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings })
+      : undefined;
+    // The copy above can take longer than the stale window. Read again so a
+    // field written by the previous holder is not dropped.
+    const latest = await readRecord(folder, { quiet: true });
+    const base = latest ?? existing;
+    const now = new Date().toISOString();
+    const record: CharacterRecord = {
+      id: base?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      name,
+      role: input.role ?? base?.role,
+      description: input.description ?? base?.description,
+      appearance: input.appearance ?? base?.appearance,
+      wardrobe: input.wardrobe ? wardrobe : (base?.wardrobe ?? wardrobe),
+      referenceImageUrls: input.referenceImageUrls
+        ? referenceImageUrls
+        : (base?.referenceImageUrls ?? referenceImageUrls),
+      createdAt: base?.createdAt || now,
+      updatedAt: now,
+      folder,
+    };
+    const onDisk: Record<string, unknown> = {
+      id: record.id,
+      name: record.name,
+      role: record.role,
+      description: record.description,
+      appearance: record.appearance,
+      wardrobe: record.wardrobe,
+      referenceImageUrls: record.referenceImageUrls,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+    for (const key of Object.keys(onDisk)) {
+      if (onDisk[key] === undefined) delete onDisk[key];
+    }
+    try {
+      await mkdir(folder, { recursive: true });
+      await atomicWriteFile(join(folder, "character.json"), JSON.stringify(onDisk, null, 2));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not write ${join(folder, "character.json")}: ${message}`);
+      console.error(`theShow: could not save character ${name}:`, err);
+    }
 
-  const referenceImageUrls = await keepReferences({
-    folder,
-    refs: input.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
-    warnings,
+    if (warnings.length > 0) record.warnings = warnings;
+    return record;
   });
-
-  const now = new Date().toISOString();
-  const record: CharacterRecord = {
-    id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
-    name,
-    role: input.role ?? existing?.role,
-    description: input.description ?? existing?.description,
-    referenceImageUrls,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    folder,
-  };
-
-  // Exactly the documented shape on disk: the runtime extras stay in memory.
-  const onDisk = {
-    id: record.id,
-    name: record.name,
-    role: record.role,
-    description: record.description,
-    referenceImageUrls: record.referenceImageUrls,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-  };
-
-  try {
-    await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
-  } catch (err) {
-    // A failed write must never lose the character. The caller keeps the record
-    // it was handed, and the next save tries again.
-    const message = err instanceof Error ? err.message : String(err);
-    warnings.push(`Could not write ${join(folder, "character.json")}: ${message}`);
-    console.error(`theShow: could not save character ${name}:`, err);
-  }
-
-  if (warnings.length > 0) record.warnings = warnings;
-  return record;
 }
 
 /** A character by name, or undefined when there is no such character on disk. */

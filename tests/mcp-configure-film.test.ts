@@ -203,6 +203,8 @@ describe('choosing a resolution on the form', () => {
     expect(formBlock).toMatch(/480p — \$0\.08\/s/);
     expect(formBlock).toMatch(/720p — \$0\.14\/s/);
     expect(formBlock).toMatch(/1080p — \$0\.25\/s/);
+    expect(formBlock).toContain('refused');
+    expect(formBlock).not.toContain('looped if short');
   });
 
   it('prices the estimate from the chosen resolution instead of a fixed rate', () => {
@@ -212,6 +214,7 @@ describe('choosing a resolution on the form', () => {
     );
     expect(handler).toContain('resolutionFromLabel');
     expect(handler).toContain('ratePerSecond(resolution)');
+    expect(handler).not.toContain('the 720p rate');
     // The old code priced every quote at 0.14 and said so in a comment.
     expect(handler).not.toMatch(/shotSeconds \* 0\.14/);
   });

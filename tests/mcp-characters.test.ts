@@ -254,8 +254,10 @@ describe('a damaged character folder', () => {
     expect(listed.characters.map((c) => c.name)).toEqual(['Dad']);
   });
 
-  it('defaults to ~/.theshow/characters when no override is set', () => {
+  it('defaults to ~/.theshow/characters when no override is set', async () => {
     delete process.env.THESHOW_CHARACTERS_DIR;
-    expect(CHARACTERS_DIR.endsWith(path.join('.theshow', 'characters'))).toBe(true);
+    vi.resetModules();
+    const fresh = await import('../mcp/characters.ts');
+    expect(fresh.CHARACTERS_DIR.endsWith(path.join('.theshow', 'characters'))).toBe(true);
   });
 });

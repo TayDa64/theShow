@@ -8,12 +8,16 @@
  */
 
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { acceptRenderedTake, reviewTake, type TakeReport } from "./admission";
 import { resolveVideoCredential } from "./grok-auth";
+import { memoHttpRender, toolAuth, transportKind } from "./runtime";
 import { resolveTools } from "./media";
+import { lintFailure } from "./promptLint";
 
 const exec = promisify(execFile);
 
@@ -33,12 +37,28 @@ export type GrokClipJob = {
   lastFrameUrl?: string;
   /** 480p, 720p, or 1080p. Unset let the API pick a low default (~848x480). */
   resolution?: string;
+  /**
+   * "start" pins the first frame only. An end-frame pin makes the model arrive
+   * early and then hold, so end pinning is opt-in via "both".
+   * Unset keeps the previous bookend behaviour when lastFrameUrl is present.
+   */
+  pin?: "start" | "both";
+  /** Built-in voice id, such as rex. Sent as reference_audios[].voice_id. */
+  voiceId?: string;
+  /**
+   * Known limits and hallucinations. Used by the lint and the checklist.
+   * Grok Imagine has no negative_prompt field, so this is never copied onto the request.
+   */
+  negative?: string;
+  /** Measurements taken after the clip exists. A failure drops the video URL. */
+  admission?: TakeReport;
 };
 
 /** Why a call stopped, so callers can decide between a retry, a hint and a hard error. */
 export type GrokFailureCode =
   | "no-credential"
   | "expired-credential"
+  | "prompt-rejected"
   | "rejected"
   | "submit-failed"
   | "no-request-id"
@@ -67,6 +87,8 @@ export type GrokClipResult = {
   progress?: number;
   /** Exact amount billed for this request, converted from usage.cost_in_usd_ticks. */
   costUsd?: number;
+  /** Set when HTTP served a remembered result. The new cost is zero. */
+  reused?: boolean;
   /**
    * The render failed in a way that succeeded on the next identical attempt, so
    * the caller may re-chain rather than give up on the film. Retrying is left to
@@ -192,6 +214,48 @@ async function shrinkLocalImage(file: string, budgetBytes: number = INLINE_IMAGE
   return lastUrl;
 }
 
+function pathInside(root: string, candidate: string): boolean {
+  const base = resolve(root);
+  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+}
+
+/**
+ * A local image may be read only from the caller's output folder or a character
+ * folder. https and data-image refs are not local reads. Anything else is refused
+ * before a file is opened.
+ */
+export function localImageRefAllowed(ref: string, roots: string[]): boolean {
+  const trimmed = ref.trim();
+  if (!trimmed) return false;
+  if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
+  let raw = trimmed;
+  if (trimmed.toLowerCase().startsWith("file:")) {
+    try {
+      raw = new URL(trimmed).pathname;
+    } catch {
+      return false;
+    }
+  }
+  const abs = resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs))) return false;
+  let current = abs;
+  const missing: string[] = [];
+  let real = abs;
+  while (true) {
+    try {
+      real = missing.reduceRight((path, part) => join(path, part), realpathSync(current));
+      break;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+  return roots.some((root) => pathInside(root, real));
+}
+
 /**
  * The video API takes an image as a public URL or a data URI. Accept those
  * directly and inline anything local (an anchor frame on disk) as a data URI so
@@ -287,10 +351,34 @@ function isTransientRenderFailure(poll: Record<string, unknown>): boolean {
  * something the caller has to explain to a person (missing login, expired token,
  * rejected credential), and a typed result keeps that message intact.
  */
+function rejectedPrompt(prompt: string, negative?: string) {
+  const lint = lintFailure(prompt, negative);
+  if (lint.ok) return undefined;
+  return { error: lint.reason, code: "prompt-rejected" as const };
+}
+
 export async function generateGrokClip(
   job: GrokClipJob,
   opts: { waitForCompletion: boolean; timeoutSeconds: number },
 ): Promise<GrokClipResult> {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "clip",
+      { job, opts },
+      () => generateGrokClipNow(job, opts),
+      (result) => result.status === "completed" || Boolean(result.videoUrl),
+    );
+  }
+  return generateGrokClipNow(job, opts);
+}
+
+async function generateGrokClipNow(
+  job: GrokClipJob,
+  opts: { waitForCompletion: boolean; timeoutSeconds: number },
+): Promise<GrokClipResult> {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
+
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -313,7 +401,11 @@ export async function generateGrokClip(
   // output looks soft. It also changes the price: at 1 second, 720p billed
   // 0.14 and 1080p billed 0.25, so it is a real quality/cost dial, not a hint.
   if (job.resolution) body.resolution = job.resolution;
-  if (job.firstFrameUrl && job.lastFrameUrl) {
+  if (job.voiceId?.trim()) {
+    body.reference_audios = [{ voice_id: job.voiceId.trim() }];
+  }
+  const sendLastFrame = Boolean(job.lastFrameUrl) && job.pin !== "start";
+  if (job.firstFrameUrl && sendLastFrame && job.lastFrameUrl) {
     // Bookend: pin both ends. They share one request body, so budget the pair.
     // `image` is the first frame; there is no `first_frame` key, the API ignores
     // it (measured: 0.14 correlation, the same as an unpinned render).
@@ -322,7 +414,7 @@ export async function generateGrokClip(
     body.last_frame = { url: pair.last };
   } else if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
-  } else if (job.lastFrameUrl) {
+  } else if (sendLastFrame && job.lastFrameUrl) {
     body.last_frame = { url: await toApiImageRef(job.lastFrameUrl) };
   }
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
@@ -363,7 +455,7 @@ export async function generateGrokClip(
       error: "Submit failed",
       code: "submit-failed",
       detail: transportError instanceof Error ? transportError.message : String(transportError ?? "unknown transport error"),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
     };
   }
 
@@ -374,7 +466,7 @@ export async function generateGrokClip(
       error: `Grok Imagine Video answered ${submitRes.status}`,
       code: rejected ? "rejected" : "submit-failed",
       detail: describeHttpFailure(submitRes.status, text),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
       hint: rejected
         ? "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json."
         : submitRes.status >= 500
@@ -386,14 +478,14 @@ export async function generateGrokClip(
   const submitted = (await submitRes.json()) as { request_id?: string };
   const requestId = submitted.request_id;
   if (!requestId) {
-    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: credential.source };
+    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: toolAuth(credential.source) };
   }
 
   const base = {
     requestId,
     baseUrl: credential.baseUrl,
     statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
     billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits",
   };
 
@@ -424,6 +516,18 @@ export async function generateGrokClip(
     if (typeof poll.progress === "number") lastProgress = poll.progress;
 
     if (poll.status === "done" || poll.status === "completed") {
+      const review = reviewTake(job.admission, job.negative);
+      if (!review.ok) {
+        return {
+          ...base,
+          status: "failed",
+          code: "rejected",
+          error:
+            `Clip failed the checklist: ${review.failures.join("; ")}. ` +
+            `The prompt that was sent: ${job.prompt}. ` +
+            "The take was discarded and will not be used as a pin. No vision model ran. The next take is an edit of that prompt.",
+        };
+      }
       return {
         ...base,
         status: "completed",
@@ -472,6 +576,21 @@ export type GrokStillJob = {
   /** Portraits or location stills: https URLs, data URIs, or local paths. */
   referenceImageUrls?: string[];
   /**
+   * portrait-first (the default) sends reference images, then the base.
+   * plate-first sends the room as image[0] and the character after it.
+   * Paid edits found the first image is the subject: a portrait first holds a
+   * face and often redraws the room; a plate first held the room (right-half
+   * RMSE about 2.8 versus about 67) and tall proportions, with possible face
+   * and wardrobe drift. Opening a closed door in that same two-image call was
+   * unreliable. Edit the plate alone first, with an affirmative empty corridor
+   * ("smooth white end wall"), then place the character into the open plate.
+   */
+  imageOrder?: "portrait-first" | "plate-first";
+  /** Stored for lint and the checklist. Never copied onto the image request. */
+  negative?: string;
+  /** Measurements taken after the still exists. A failure deletes the file. */
+  admission?: TakeReport;
+  /**
    * The picture to EDIT, rather than a hint for a fresh one.
    *
    * Measured: `/v1/images/generations` treats a reference as a loose hint and
@@ -500,6 +619,8 @@ export type GrokStillResult = {
   model?: string;
   usage?: Record<string, unknown>;
   costUsd?: number;
+  /** Set when HTTP served a remembered still. The new cost is zero. */
+  reused?: boolean;
   /** Which body key the API accepted for the shape, so a caller knows what happened. */
   aspectRatioParam?: "aspect_ratio" | "aspectRatio" | "none";
   /** Which route produced the picture: a fresh generation or an edit of a base. */
@@ -547,6 +668,27 @@ export async function generateGrokStill(
     filename?: string;
   },
 ): Promise<GrokStillResult> {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "still",
+      { job, opts },
+      () => generateGrokStillNow(job, opts),
+      (result) => Boolean(result.localPath),
+    );
+  }
+  return generateGrokStillNow(job, opts);
+}
+
+async function generateGrokStillNow(
+  job: GrokStillJob,
+  opts: {
+    outputDir: string;
+    filename?: string;
+  },
+): Promise<GrokStillResult> {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
+
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -581,15 +723,18 @@ export async function generateGrokStill(
     // while a 343 KB one also passed — the encoder's own width cap is what
     // actually binds, so 220 KB is the ceiling that matters).
     const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
-    // Order is meaning, not housekeeping: the FIRST picture is the subject the
-    // edit acts on, the rest are context. A portrait first ("place this man into
-    // the office in the second photo") kept a face that a prompt describing him
-    // could not, which is how the hero frame is built. Base alone is the plain
-    // case: one picture, changed.
+    // The FIRST picture is the subject the edit acts on. The default keeps
+    // references (the portrait) first and the base (the room) last, which is
+    // what existing callers and the hero prompt describe. plate-first swaps
+    // that when the caller is placing a person into a set and needs the room
+    // to hold. Base alone is the plain case: one picture, changed.
     const subjects = job.referenceImageUrls?.length
       ? await inlineReferenceSet(job.referenceImageUrls)
       : [];
-    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    const plateFirst = job.imageOrder === "plate-first";
+    base.image = subjects.length > 0
+      ? (plateFirst ? [baseUrl, ...subjects] : [...subjects, baseUrl])
+      : { url: baseUrl };
     // `reference_images` would be a second, competing copy of the same picture.
     delete base.reference_images;
   }
@@ -624,7 +769,7 @@ export async function generateGrokStill(
         error: "Image request failed",
         code: "submit-failed",
         detail: err instanceof Error ? err.message : String(err),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
       };
     }
 
@@ -640,7 +785,7 @@ export async function generateGrokStill(
           error: "The image route returned no image URL",
           code: "failed",
           raw: payload,
-          auth: credential.source,
+          auth: toolAuth(credential.source),
         };
       }
 
@@ -652,16 +797,28 @@ export async function generateGrokStill(
         image.mime_type,
         opts.filename,
       );
+      const accepted = await acceptRenderedTake(localPath, job.admission, job.negative);
+      if (!accepted.ok) {
+        return {
+          error:
+            `Still failed the checklist: ${accepted.failures.join("; ")}. ` +
+            `The prompt that was sent: ${job.prompt}. ` +
+            "The file was discarded and will not be used as a pin. No vision model ran.",
+          code: "rejected",
+          auth: toolAuth(credential.source),
+          costUsd: costUsdFromUsage(payload.usage),
+        };
+      }
       return {
         imageUrl: image.url,
-        localPath,
+        localPath: accepted.path,
         mimeType: image.mime_type,
         model: payload.model ?? String(variant.body.model),
         usage: payload.usage,
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
         route,
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits",
       };
     }
@@ -673,7 +830,7 @@ export async function generateGrokStill(
         error: `Image generation was rejected (HTTP ${response.status})`,
         code: "rejected",
         detail: describeHttpFailure(response.status, text),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         hint: "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json.",
       };
     }
@@ -687,7 +844,7 @@ export async function generateGrokStill(
       : "Image generation failed",
     code: "submit-failed",
     detail: lastFailure ? describeHttpFailure(lastFailure.status, lastFailure.text) : undefined,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
   };
 }
 

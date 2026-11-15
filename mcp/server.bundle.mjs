@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -2980,7 +2979,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3007,7 +3006,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3867,11 +3866,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse3(serialize(uri, options), options);
+        parse4(serialize(uri, options), options);
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3910,8 +3909,8 @@ var require_fast_uri = __commonJS({
     function resolveComponent(base, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse3(serialize(base, options), options);
-        relative = parse3(serialize(relative, options), options);
+        base = parse4(serialize(base, options), options);
+        relative = parse4(serialize(relative, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative.scheme) {
@@ -4229,7 +4228,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse3(uri, opts) {
+    function parse4(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -4262,11 +4261,11 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
-      parse: parse3
+      parse: parse4
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -10053,7 +10052,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -10080,7 +10079,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -18437,18 +18436,18 @@ var validateAsync = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode = (_Err) => {
-  const parse3 = _parse(_Err);
+  const parse4 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse3(schema, value, ctx, finalizeParams(fn, _params));
+    return parse4(schema, value, ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
 var encode = /* @__PURE__ */ _encode($ZodRealError);
 var _decode = (_Err) => {
-  const parse3 = _parse(_Err);
+  const parse4 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse3(schema, value, _ctx, finalizeParams(fn, _params));
+    return parse4(schema, value, _ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
@@ -19405,9 +19404,9 @@ var asciiTabOrNewline = /[\t\n\r]/g;
 function stripTabAndNewline(value) {
   return value.replace(asciiTabOrNewline, "");
 }
-function urlHostnameOk(url2, hostname3) {
-  hostname3.lastIndex = 0;
-  return hostname3.test(url2.hostname);
+function urlHostnameOk(url2, hostname4) {
+  hostname4.lastIndex = 0;
+  return hostname4.test(url2.hostname);
 }
 function urlProtocolOk(url2, protocol) {
   protocol.lastIndex = 0;
@@ -19943,7 +19942,7 @@ function capSize(inst, size) {
   if (!caps.length)
     return;
   const cap = Math.min(...caps.map((c) => c[0]));
-  const parse3 = inst._zod.parse;
+  const parse4 = inst._zod.parse;
   inst._zod.parse = (payload, ctx) => {
     const n = size(payload.value);
     if (n > cap && !ctx?.skipChecks && ctx?.direction !== "backward") {
@@ -19957,7 +19956,7 @@ function capSize(inst, size) {
         }
       }
     }
-    return parse3(payload, ctx);
+    return parse4(payload, ctx);
   };
 }
 var arraySize = (input2) => Array.isArray(input2) ? input2.length : -1;
@@ -21646,7 +21645,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve) {
+function isRecursive(inst, stack, resolve2) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -21656,7 +21655,7 @@ function isRecursive(inst, stack, resolve) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+      const answer = isRecursive(child, stack, resolve2);
       if (answer > result)
         result = answer;
     }
@@ -21667,7 +21666,7 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -21731,7 +21730,7 @@ function isRecursive(inst, stack, resolve) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -39554,13 +39553,13 @@ var zodToJsonSchema = (schema, options) => {
     }, true) ?? parseAnyDef(refs)
   }), {}) : void 0;
   const name = typeof options === "string" ? options : options?.nameStrategy === "title" ? void 0 : options?.name;
-  const main2 = parseDef(schema._def, name === void 0 ? refs : {
+  const main = parseDef(schema._def, name === void 0 ? refs : {
     ...refs,
     currentPath: [...refs.basePath, refs.definitionPath, name]
   }, false) ?? parseAnyDef(refs);
   const title = typeof options === "object" && options.name !== void 0 && options.nameStrategy === "title" ? options.name : void 0;
   if (title !== void 0) {
-    main2.title = title;
+    main.title = title;
   }
   if (refs.flags.hasReferencedOpenAiAnyType) {
     if (!definitions) {
@@ -39581,9 +39580,9 @@ var zodToJsonSchema = (schema, options) => {
     }
   }
   const combined = name === void 0 ? definitions ? {
-    ...main2,
+    ...main,
     [refs.definitionPath]: definitions
-  } : main2 : {
+  } : main : {
     $ref: [
       ...refs.$refStrategy === "relative" ? [] : refs.basePath,
       refs.definitionPath,
@@ -39591,7 +39590,7 @@ var zodToJsonSchema = (schema, options) => {
     ].join("/"),
     [refs.definitionPath]: {
       ...definitions,
-      [name]: main2
+      [name]: main
     }
   };
   if (refs.target === "jsonSchema7") {
@@ -40169,7 +40168,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -40186,7 +40185,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -40264,7 +40263,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -40526,12 +40525,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -41671,7 +41670,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -42335,107 +42334,219 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
 };
 
-// mcp/grok-auth.ts
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-var API_BASE_URL = "https://api.x.ai";
-var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
-var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
-function readGrokAuthFile() {
-  const path = process.env.GROK_AUTH_FILE || join(homedir(), ".grok", "auth.json");
-  let raw;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return void 0;
+// mcp/admission.ts
+import { rm } from "node:fs/promises";
+
+// mcp/promptLint.ts
+var FORBIDDEN = [
+  /floor lamp/i,
+  /table lamp/i,
+  /amber lamp/i,
+  /wall lamp/i,
+  /\blamps?\b/i,
+  /door handle/i,
+  /\bhandle\b/i,
+  /\bknob\b/i,
+  /\blever\b/i,
+  /\bpull\b/i,
+  /door seals/i,
+  /\bgasket\b/i,
+  /weatherstripping/i,
+  /\bhinged\b/i,
+  /door's swing/i,
+  /swings the door/i,
+  /second doorway/i,
+  /extra door/i,
+  /\bno tie\b/i,
+  /\btie\b/i,
+  /\bsubtitles?\b/i,
+  /\bcaptions?\b/i,
+  /\bwatermark\b/i,
+  /\blogos?\b/i,
+  /\bmusic\b/i,
+  /\bscore\b/i,
+  /easy natural pace/i,
+  /never sped/i
+];
+var NEGATION = /\b(never|don't|do not|does not|didn't|avoid|nothing|without|n't)\b|\bno\b/i;
+function negativePhrases(negative) {
+  if (!negative?.trim()) return [];
+  const seen = /* @__PURE__ */ new Set();
+  const phrases = [];
+  for (const part of negative.split(/[\n,]+/)) {
+    const phrase = part.trim();
+    if (phrase.length < 3) continue;
+    const key = phrase.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    phrases.push(phrase);
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return void 0;
-  }
-  if (!parsed || typeof parsed !== "object") return void 0;
-  const entries = Object.values(parsed).filter(
-    (value) => Boolean(value) && typeof value === "object"
-  );
-  const withToken = entries.filter(
-    (entry) => typeof entry.key === "string" && entry.key.length > 0
-  );
-  if (withToken.length === 0) return void 0;
-  const expiryMs = (entry) => {
-    const parsedExpiry = typeof entry.expires_at === "string" ? Date.parse(entry.expires_at) : NaN;
-    return Number.isNaN(parsedExpiry) ? 0 : parsedExpiry;
-  };
-  return withToken.sort((a, b) => expiryMs(b) - expiryMs(a))[0];
+  return phrases;
 }
-function resolveVideoCredential() {
-  const rawKey = process.env.XAI_API_KEY;
-  if (rawKey && rawKey.trim() && !UNRESOLVED_PLACEHOLDER.test(rawKey.trim())) {
-    return {
-      ok: true,
-      credential: {
-        kind: "api-key",
-        baseUrl: API_BASE_URL,
-        token: rawKey.trim(),
-        source: "XAI_API_KEY"
-      }
-    };
+function lintSentPrompt(prompt, negative) {
+  const hits = [];
+  for (const pattern of FORBIDDEN) {
+    const found = pattern.exec(prompt);
+    if (found) hits.push({ kind: "forbidden", match: found[0] });
   }
-  const entry = readGrokAuthFile();
-  if (!entry || typeof entry.key !== "string") {
-    return {
-      ok: false,
-      code: "missing",
-      reason: "No credential found. Set XAI_API_KEY, or sign in with the Grok CLI (`grok login --device-code`) so ~/.grok/auth.json exists."
-    };
-  }
-  const expiresAt = typeof entry.expires_at === "string" ? entry.expires_at : void 0;
-  if (expiresAt) {
-    const expiryMs = Date.parse(expiresAt);
-    if (!Number.isNaN(expiryMs) && expiryMs <= Date.now()) {
-      return {
-        ok: false,
-        code: "expired",
-        reason: `Grok CLI session token expired at ${expiresAt}. Run any \`grok\` command (or \`grok login\`) to refresh it; this server re-reads the file on the next call.`
-      };
+  const negation = NEGATION.exec(prompt);
+  if (negation) hits.push({ kind: "negation", match: negation[0] });
+  const haystack = prompt.toLowerCase();
+  for (const phrase of negativePhrases(negative)) {
+    if (haystack.includes(phrase.toLowerCase())) {
+      hits.push({ kind: "negative", match: phrase });
     }
   }
-  const who = typeof entry.email === "string" ? ` as ${entry.email}` : "";
+  return hits;
+}
+function lintFailure(prompt, negative) {
+  const hits = lintSentPrompt(prompt, negative);
+  if (hits.length === 0) return { ok: true };
+  const listed = hits.map((hit) => `${hit.kind} "${hit.match}"`).join(", ");
   return {
-    ok: true,
-    credential: {
-      kind: "session",
-      baseUrl: PROXY_BASE_URL,
-      token: entry.key,
-      source: `Grok CLI session${who}`,
-      expiresAt
-    }
+    ok: false,
+    hits,
+    reason: `Prompt rejected before any paid call: ${listed}. Say what is in the frame. The negative list stays off the request.`
   };
 }
+
+// mcp/admission.ts
+var TALL_ADULT = {
+  minLegToStature: 0.42,
+  maxShoulderToStature: 0.3,
+  minTorsoToLeg: 0.75,
+  maxTorsoToLeg: 1.35
+};
+var placedObject = external_exports.object({
+  id: external_exports.string(),
+  room: external_exports.string(),
+  label: external_exports.string().optional()
+});
+var TakeAdmissionSchema = external_exports.object({
+  priorObjects: external_exports.array(placedObject).optional(),
+  objects: external_exports.array(placedObject).optional(),
+  torsoPx: external_exports.number().optional(),
+  legPx: external_exports.number().optional(),
+  shoulderPx: external_exports.number().optional(),
+  staturePx: external_exports.number().optional(),
+  vocalEndSeconds: external_exports.number().optional(),
+  timedEndSeconds: external_exports.number().optional()
+});
+function roomKey(room) {
+  return room.trim().toLowerCase();
+}
+function reviewTake(report, negative) {
+  if (!report && !negative?.trim()) return { ok: true };
+  const failures = [];
+  const current = report?.objects ?? [];
+  const prior = report?.priorObjects;
+  if (prior) {
+    const priorById = new Map(prior.map((object3) => [object3.id, object3]));
+    for (const object3 of current) {
+      const before = priorById.get(object3.id);
+      if (!before) {
+        failures.push(
+          `Object "${object3.id}" is not in the prior frame, so this still added it.`
+        );
+        continue;
+      }
+      if (roomKey(before.room) !== roomKey(object3.room)) {
+        failures.push(
+          `Object "${object3.id}" changed rooms, from "${before.room}" to "${object3.room}".`
+        );
+      }
+    }
+  }
+  for (const phrase of negativePhrases(negative)) {
+    const needle = phrase.toLowerCase();
+    for (const object3 of current) {
+      const label = `${object3.id} ${object3.label ?? ""}`.toLowerCase();
+      if (label.includes(needle)) {
+        failures.push(
+          `Object "${object3.id}" matches a known hallucination ("${phrase}").`
+        );
+      }
+    }
+  }
+  const { torsoPx, legPx, shoulderPx, staturePx } = report ?? {};
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx < TALL_ADULT.minTorsoToLeg) {
+    failures.push("Squashed torso: torso length is short for a tall adult.");
+  }
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx > TALL_ADULT.maxTorsoToLeg) {
+    failures.push("Shortened legs: the legs are short relative to the torso.");
+  }
+  if (legPx !== void 0 && staturePx !== void 0 && staturePx > 0 && legPx / staturePx < TALL_ADULT.minLegToStature) {
+    failures.push("Shortened legs: leg length is short for a tall adult's stature.");
+  }
+  if (shoulderPx !== void 0 && staturePx !== void 0 && staturePx > 0 && shoulderPx / staturePx > TALL_ADULT.maxShoulderToStature) {
+    failures.push("Widened body: the shoulders are wide for a tall adult's stature.");
+  }
+  if (report?.vocalEndSeconds !== void 0 && report.timedEndSeconds !== void 0 && report.vocalEndSeconds > report.timedEndSeconds) {
+    failures.push(
+      `Vocal ends at ${report.vocalEndSeconds}s, past the pre-timed end of ${report.timedEndSeconds}s.`
+    );
+  }
+  if (failures.length === 0) return { ok: true };
+  return { ok: false, failures };
+}
+async function discardTake(path) {
+  if (!path) return;
+  await rm(path, { force: true });
+}
+async function acceptRenderedTake(path, report, negative) {
+  const review = reviewTake(report, negative);
+  if (review.ok) return { ok: true, path };
+  await discardTake(path);
+  return review;
+}
+
+// mcp/beats.ts
+function resolveBeatShotType(beat, index) {
+  const named = beat.framing?.trim() || beat.shotType?.trim();
+  if (named) return named;
+  return index === 0 ? "wide" : "medium";
+}
+function durationFromLine(text, delivery = "spoken") {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const wordsPerSecond = delivery === "sung" ? 2 : 3;
+  return Math.min(15, Math.max(4, Math.ceil(words / wordsPerSecond)));
+}
+function resolveBeatDuration(beat, evenSplitSeconds) {
+  if (typeof beat.durationSeconds === "number" && Number.isFinite(beat.durationSeconds)) {
+    return Math.min(15, Math.max(1, Math.round(beat.durationSeconds)));
+  }
+  const line = beat.line?.text?.trim();
+  if (line) return durationFromLine(line, beat.line?.delivery === "sung" ? "sung" : "spoken");
+  return evenSplitSeconds;
+}
+
+// mcp/cutout.ts
+import { execFile as execFile2 } from "node:child_process";
+import { readFile as readFile2 } from "node:fs/promises";
+import { dirname, join as join2, parse as parse3 } from "node:path";
+import { promisify as promisify2 } from "node:util";
 
 // mcp/media.ts
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { join as join2 } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
-var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join2(homedir2(), ".theshow", "media");
-var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join2(homedir2(), ".theshow", "jobs");
+var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join(homedir(), ".theshow", "media");
+var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join(homedir(), ".theshow", "jobs");
 var toolCache;
 async function binaryVersion(bin) {
   try {
@@ -42541,7 +42652,7 @@ async function extractLastFrame(input2) {
   const { ffmpeg } = await resolveTools();
   const dir = await ensureOutputDir();
   const digest = createHash("sha1").update(`${input2.file}:${Date.now()}`).digest("hex").slice(0, 12);
-  const outPath = join2(dir, `frame-${digest}.png`);
+  const outPath = join(dir, `frame-${digest}.png`);
   const seek = input2.seekBackSeconds ?? 0.15;
   const attempts = [
     // Preferred: seek near the end, decode one frame.
@@ -42613,13 +42724,33 @@ async function closingFrameAgreement(input2) {
   }
 }
 var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
+function assertBedCoversFilm(bedSeconds, filmSeconds) {
+  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
+    throw new Error(
+      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
+    );
+  }
+}
+function planClipAudioFilters(input2) {
+  const mode = input2.clipAudio ?? "keep";
+  return input2.durations.map((duration3, index) => {
+    const useClip = mode === "keep" && Boolean(input2.clipHasAudio[index]);
+    if (useClip) {
+      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
+    }
+    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration3},asetpts=PTS-STARTPTS[a${index}]`;
+  });
+}
 async function assembleClips(input2) {
   const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
   const digest = createHash("sha1").update(input2.clips.map((c) => `${c.file}:${c.trimStart ?? ""}:${c.trimEnd ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
-  const outPath = join2(dir, `film-${digest}.mp4`);
+  const outPath = join(dir, `film-${digest}.mp4`);
   if (input2.clips.length === 0) throw new Error("No clips to assemble.");
-  if (input2.clips.length === 1) {
+  const clipAudio = input2.clipAudio ?? "keep";
+  const bedGain = input2.audioTrackVolume ?? 0.25;
+  const wantBed = Boolean(input2.audioTrackFile) && bedGain > 0;
+  if (input2.clips.length === 1 && clipAudio === "keep" && !wantBed) {
     await exec(ffmpeg, [
       "-y",
       "-hide_banner",
@@ -42644,11 +42775,11 @@ async function assembleClips(input2) {
   const wantsFade = input2.fadeDuration > 0;
   const fade = wantsFade ? Math.min(input2.fadeDuration, Math.min(...durations) / 2) : 0;
   if (!wantsFade && !hasXfade) {
-    const listPath = join2(dir, `concat-${digest}.txt`);
+    const listPath = join(dir, `concat-${digest}.txt`);
     const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
     await writeFile(listPath, `${lines.join("\n")}
 `, "utf8");
-    const copyOut = join2(dir, `film-copy-${digest}.mp4`);
+    const copyOut = join(dir, `film-copy-${digest}.mp4`);
     try {
       await exec(ffmpeg, [
         "-y",
@@ -42690,14 +42821,12 @@ async function assembleClips(input2) {
     filters.push(
       `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
     );
-    if (withAudio[i]) {
-      filters.push(`[${i}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${i}]`);
-    } else {
-      filters.push(
-        `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${durations[i]},asetpts=PTS-STARTPTS[a${i}]`
-      );
-    }
   }
+  filters.push(...planClipAudioFilters({
+    durations,
+    clipHasAudio: withAudio,
+    clipAudio
+  }));
   let mode;
   let totalDuration = durations.reduce((sum, d) => sum + d, 0);
   if (fade === 0) {
@@ -42725,18 +42854,23 @@ async function assembleClips(input2) {
     mode = "xfade";
   }
   let audioMap = "[aout]";
-  if (input2.audioTrackFile) {
+  if (wantBed && input2.audioTrackFile) {
+    const bedSeconds = await probeDuration(input2.audioTrackFile);
+    assertBedCoversFilm(bedSeconds, totalDuration);
     const bedIndex = input2.clips.length;
-    const gain = Math.min(Math.max(input2.audioTrackVolume ?? 0.25, 0.01), 4);
+    const gain = Math.min(Math.max(bedGain, 0), 4);
     const fadeOut = Math.min(
       input2.audioTrackFadeOutSeconds ?? 1.5,
       Math.max(totalDuration / 2, 0.1)
     );
-    args.push("-stream_loop", "-1", "-i", input2.audioTrackFile);
-    filters.push(
-      `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}[bed]`
-    );
-    filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    args.push("-i", input2.audioTrackFile);
+    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+    if (clipAudio === "replace") {
+      filters.push(`${bedFilter}[aoutmix]`);
+    } else {
+      filters.push(`${bedFilter}[bed]`);
+      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
+    }
     audioMap = "[aoutmix]";
   }
   args.push(
@@ -42770,19 +42904,681 @@ async function pathToDataUrl(file2, mime = "image/png") {
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }
 
-// mcp/grokVideo.ts
-import { execFile as execFile2 } from "node:child_process";
-import { mkdir as mkdir2, readFile as readFile2, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join as join3 } from "node:path";
-import { promisify as promisify2 } from "node:util";
+// mcp/cutout.ts
 var exec2 = promisify2(execFile2);
+async function featheredSubjectCutout(sourcePath) {
+  const before = await readFile2(sourcePath);
+  const parsed = parse3(sourcePath);
+  const dest = join2(dirname(sourcePath), `${parsed.name}.cutout.png`);
+  if (dest === sourcePath) {
+    return { ok: false, reason: "Cutout path collided with the original portrait." };
+  }
+  try {
+    const { ffmpeg } = await resolveTools();
+    const alpha = "255*exp(-((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2))/(2*(W*0.28)*(W*0.28)))";
+    const filter = `format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alpha}'`;
+    await exec2(ffmpeg, [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      sourcePath,
+      "-vf",
+      filter,
+      dest
+    ]);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Portrait cutout failed."
+    };
+  }
+  const after = await readFile2(sourcePath);
+  if (!after.equals(before)) {
+    return { ok: false, reason: "Portrait cutout wrote the original file." };
+  }
+  return { ok: true, path: dest };
+}
+
+// mcp/grok-auth.ts
+import { randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname3, join as join3 } from "node:path";
+
+// mcp/runtime.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash as createHash2, randomUUID, timingSafeEqual } from "node:crypto";
+import { link, mkdir as mkdir2, open as open2, readFile as readFile3, rename, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { hostname as hostname3 } from "node:os";
+import { dirname as dirname2 } from "node:path";
+var processToken = randomUUID();
+var processHost = hostname3();
+var scopeStore = new AsyncLocalStorage();
+var serverStore = new AsyncLocalStorage();
+var renderBypass = new AsyncLocalStorage();
+var pendingWrites = /* @__PURE__ */ new Set();
+var renderInflight = /* @__PURE__ */ new Map();
+var renderDone = /* @__PURE__ */ new Map();
+var RENDER_MEMORY_MS = 10 * 60 * 1e3;
+var RENDER_MEMORY_MAX = 64;
+function leaseMs() {
+  const raw = Number(process.env.THESHOW_JOB_LEASE_MS ?? 3e4);
+  return Number.isFinite(raw) && raw >= 1e3 ? raw : 3e4;
+}
+function heartbeatMs() {
+  const raw = Number(process.env.THESHOW_JOB_HEARTBEAT_MS ?? 1e4);
+  return Number.isFinite(raw) && raw >= 200 ? raw : 1e4;
+}
+function elicitTimeoutMs() {
+  const raw = Number(process.env.THESHOW_ELICIT_TIMEOUT_MS ?? 1e4);
+  return Number.isFinite(raw) && raw >= 200 ? raw : 1e4;
+}
+function thisOwner(now = Date.now()) {
+  return { pid: process.pid, token: processToken, host: processHost, heartbeatAt: now };
+}
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function jobShouldStop(owner, now = Date.now()) {
+  if (!owner) return true;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  const lease = leaseMs();
+  const futureSlack = owner.host === processHost ? 5e3 : 6e4;
+  if (owner.heartbeatAt > now + futureSlack) return true;
+  const beat = Math.min(owner.heartbeatAt, now);
+  if (now - beat > lease) return true;
+  if (owner.host === processHost && !pidAlive(owner.pid)) return true;
+  return false;
+}
+function requestScope() {
+  return scopeStore.getStore();
+}
+function currentMcpServer(fallback) {
+  return serverStore.getStore() ?? fallback;
+}
+function transportKind() {
+  return scopeStore.getStore()?.kind ?? "stdio";
+}
+function toolAuth(source) {
+  if (source === void 0) return void 0;
+  if (transportKind() === "http") return void 0;
+  return source;
+}
+function httpAllowsGrokSession() {
+  const flag = process.env.THESHOW_HTTP_ALLOW_GROK_SESSION?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+async function atomicWriteFile(path, data) {
+  await mkdir2(dirname2(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile2(tmp, data, "utf8");
+  await rename(tmp, path);
+}
+var LINK_UNSUPPORTED = /* @__PURE__ */ new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS", "EINVAL"]);
+function linkUnsupported(err) {
+  const code = err.code;
+  return typeof code === "string" && LINK_UNSUPPORTED.has(code);
+}
+var exclusiveFs = {
+  link: (existing, hardLink) => link(existing, hardLink)
+};
+async function publishExclusive(dest, body) {
+  await mkdir2(dirname2(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile2(tmp, body, "utf8");
+  try {
+    try {
+      await exclusiveFs.link(tmp, dest);
+      return true;
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      if (!linkUnsupported(err)) throw err;
+    }
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (err) {
+      if (err.code === "EEXIST") return false;
+      throw err;
+    }
+    try {
+      await handle.writeFile(body, "utf8");
+      await handle.sync();
+      return true;
+    } catch (err) {
+      await unlink(dest).catch(() => void 0);
+      throw err;
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    await unlink(tmp).catch(() => void 0);
+  }
+}
+async function restoreIfAbsent(source, dest) {
+  try {
+    await exclusiveFs.link(source, dest);
+  } catch (err) {
+    if (err.code === "EEXIST") return "occupied";
+    if (!linkUnsupported(err)) throw err;
+    let handle;
+    try {
+      handle = await open2(dest, "wx");
+    } catch (openErr) {
+      if (openErr.code === "EEXIST") return "occupied";
+      throw openErr;
+    }
+    try {
+      await handle.writeFile(await readFile3(source));
+      await handle.sync();
+    } catch (writeErr) {
+      await unlink(dest).catch(() => void 0);
+      throw writeErr;
+    } finally {
+      await handle.close();
+    }
+  }
+  await unlink(source).catch(() => void 0);
+  return "restored";
+}
+function trackWrite(work) {
+  pendingWrites.add(work);
+  void work.finally(() => pendingWrites.delete(work));
+}
+async function flushJobWrites() {
+  await Promise.all([...pendingWrites]);
+}
+function startJobHeartbeat(beat) {
+  const timer = setInterval(beat, heartbeatMs());
+  timer.unref();
+  return () => clearInterval(timer);
+}
+function installShutdown(drain) {
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void drain().finally(() => process.exit(0));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+function renderKey(kind, material) {
+  return `${kind}:${createHash2("sha256").update(JSON.stringify(material)).digest("hex")}`;
+}
+function rememberRender(key, value) {
+  renderDone.delete(key);
+  renderDone.set(key, { at: Date.now(), value });
+  while (renderDone.size > RENDER_MEMORY_MAX) {
+    const oldest = renderDone.keys().next().value;
+    if (oldest === void 0) break;
+    renderDone.delete(oldest);
+  }
+}
+function cachedRender(key) {
+  const done = renderDone.get(key);
+  if (!done) return void 0;
+  if (Date.now() - done.at >= RENDER_MEMORY_MS) {
+    renderDone.delete(key);
+    return void 0;
+  }
+  renderDone.delete(key);
+  renderDone.set(key, done);
+  if (!done.value || typeof done.value !== "object") return done.value;
+  return { ...done.value, costUsd: 0, reused: true };
+}
+function withoutHttpRenderMemo(fn) {
+  return renderBypass.run(true, fn);
+}
+function memoHttpRender(kind, material, run, succeeded) {
+  if (transportKind() !== "http" || renderBypass.getStore()) return run();
+  const key = renderKey(kind, material);
+  const cached2 = cachedRender(key);
+  if (cached2 !== void 0) return Promise.resolve(cached2);
+  const pending = renderInflight.get(key);
+  if (pending) {
+    return pending.then((value) => {
+      if (!value || typeof value !== "object") return value;
+      return { ...value, costUsd: 0, reused: true };
+    });
+  }
+  const promise2 = renderBypass.run(true, run).then((value) => {
+    if (succeeded(value)) rememberRender(key, value);
+    return value;
+  }).finally(() => {
+    renderInflight.delete(key);
+  });
+  renderInflight.set(key, promise2);
+  return promise2;
+}
+
+// mcp/grok-auth.ts
+var API_BASE_URL = "https://api.x.ai";
+var PROXY_BASE_URL = "https://cli-chat-proxy.grok.com";
+var UNRESOLVED_PLACEHOLDER = /^\$\{[A-Z0-9_]+\}$/;
+var SESSION_MARGIN_MS = 15 * 60 * 1e3;
+function grokSessionRefreshEnabled() {
+  const flag = process.env.THESHOW_REFRESH_GROK_SESSION?.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
+function writeSessionFileAtomic(path, contents) {
+  const tmp = join3(dirname3(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  try {
+    writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
+    chmodSync(tmp, 384);
+    renameSync(tmp, path);
+    chmodSync(path, 384);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+    throw err;
+  }
+}
+function grokAuthFilePath() {
+  const fromEnv = process.env.GROK_AUTH_FILE;
+  if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
+  if (process.env.VITEST || process.env.THESHOW_FORBID_HOME_AUTH === "1") {
+    return "/nonexistent/theshow-test-auth.json";
+  }
+  return join3(homedir2(), ".grok", "auth.json");
+}
+function readGrokAuthFile() {
+  const path = grokAuthFilePath();
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+  if (!parsed || typeof parsed !== "object") return void 0;
+  const record2 = parsed;
+  const withToken = Object.entries(record2).filter((pair) => {
+    const value = pair[1];
+    return Boolean(value) && typeof value === "object" && typeof value.key === "string" && value.key.length > 0;
+  });
+  if (withToken.length === 0) return void 0;
+  const expiryMs = (entry2) => {
+    const parsedExpiry = typeof entry2.expires_at === "string" ? Date.parse(entry2.expires_at) : NaN;
+    return Number.isNaN(parsedExpiry) ? 0 : parsedExpiry;
+  };
+  withToken.sort((a, b) => expiryMs(b[1]) - expiryMs(a[1]));
+  const [keyName, entry] = withToken[0];
+  return { keyName, entry };
+}
+function oauthTokenUrl(authKeyName) {
+  const override = process.env.GROK_OAUTH_TOKEN_URL;
+  if (typeof override === "string" && override.trim()) return override.trim();
+  const issuer = authKeyName.split("::")[0]?.trim();
+  if (!issuer || !/^https:\/\//i.test(issuer)) return void 0;
+  try {
+    const url2 = new URL(issuer);
+    if (url2.hostname === "auth.x.ai") return "https://auth.x.ai/oauth2/token";
+    if (url2.pathname.includes("/oauth2/")) {
+      const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
+      return new URL("v1/token", base).toString();
+    }
+    return new URL("/oauth/token", url2.origin).toString();
+  } catch {
+    return void 0;
+  }
+}
+function sessionCoversRender(opts) {
+  const now = opts.now ?? Date.now();
+  const margin = opts.marginMs ?? SESSION_MARGIN_MS;
+  const neededUntilMs = now + Math.max(0, opts.estimatedJobMs) + margin;
+  if (!opts.expiresAt) {
+    return {
+      ok: false,
+      neededUntilMs,
+      reason: "Grok session has no expiry, so it cannot be shown to outlast this render."
+    };
+  }
+  const expiryMs = Date.parse(opts.expiresAt);
+  if (Number.isNaN(expiryMs)) {
+    return { ok: false, neededUntilMs, reason: "Grok session expiry could not be read." };
+  }
+  if (expiryMs <= neededUntilMs) {
+    return {
+      ok: false,
+      neededUntilMs,
+      reason: `Grok session expires at ${opts.expiresAt}, which is before this render would finish plus a 15 minute margin.`
+    };
+  }
+  return { ok: true, neededUntilMs };
+}
+function resolveVideoCredential() {
+  const rawKey = process.env.XAI_API_KEY;
+  if (rawKey && rawKey.trim() && !UNRESOLVED_PLACEHOLDER.test(rawKey.trim())) {
+    return {
+      ok: true,
+      credential: {
+        kind: "api-key",
+        baseUrl: API_BASE_URL,
+        token: rawKey.trim(),
+        source: "XAI_API_KEY"
+      }
+    };
+  }
+  if (transportKind() === "http" && !httpAllowsGrokSession()) {
+    return {
+      ok: false,
+      code: "missing",
+      reason: "HTTP mode bills XAI_API_KEY (xAI API credits), not the Grok subscription. Set XAI_API_KEY, or set THESHOW_HTTP_ALLOW_GROK_SESSION=1 to use ~/.grok/auth.json. That opt-in spends the subscription of whoever owns the auth file on this machine."
+    };
+  }
+  const stored = readGrokAuthFile();
+  const entry = stored?.entry;
+  if (!entry || typeof entry.key !== "string") {
+    return {
+      ok: false,
+      code: "missing",
+      reason: "No credential found. Set XAI_API_KEY, or sign in with the Grok CLI (`grok login --device-code`) so ~/.grok/auth.json exists."
+    };
+  }
+  const expiresAt = typeof entry.expires_at === "string" ? entry.expires_at : void 0;
+  if (expiresAt) {
+    const expiryMs = Date.parse(expiresAt);
+    if (!Number.isNaN(expiryMs) && expiryMs <= Date.now()) {
+      return {
+        ok: false,
+        code: "expired",
+        reason: `Grok CLI session token expired at ${expiresAt}. Run any \`grok\` command (or \`grok login\`) to refresh it; this server re-reads the file on the next call.`
+      };
+    }
+  }
+  const who = typeof entry.email === "string" ? ` as ${entry.email}` : "";
+  return {
+    ok: true,
+    credential: {
+      kind: "session",
+      baseUrl: PROXY_BASE_URL,
+      token: entry.key,
+      source: `Grok CLI session${who}`,
+      expiresAt
+    }
+  };
+}
+async function refreshGrokSession(opts = {}) {
+  if (!grokSessionRefreshEnabled()) {
+    return { ok: false, reason: REFRESH_OFF };
+  }
+  const stored = readGrokAuthFile();
+  if (!stored || typeof stored.entry.refresh_token !== "string" || !stored.entry.refresh_token) {
+    return { ok: false, reason: "Grok session has no refresh token." };
+  }
+  const tokenUrl = oauthTokenUrl(stored.keyName);
+  if (!tokenUrl) {
+    return { ok: false, reason: "Grok session issuer has no token endpoint." };
+  }
+  const clientId = stored.keyName.split("::")[1]?.trim();
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: stored.entry.refresh_token
+  });
+  if (clientId) body.set("client_id", clientId);
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let response;
+  try {
+    response = await fetchImpl(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+  } catch {
+    return { ok: false, reason: "Grok session refresh could not reach the token endpoint." };
+  }
+  if (!response.ok) {
+    return { ok: false, reason: `Grok session refresh was refused (HTTP ${response.status}).` };
+  }
+  let parsed;
+  try {
+    parsed = await response.json();
+  } catch {
+    return { ok: false, reason: "Grok session refresh returned an unreadable body." };
+  }
+  if (typeof parsed.access_token !== "string" || !parsed.access_token) {
+    return { ok: false, reason: "Grok session refresh did not return an access token." };
+  }
+  const now = opts.now ?? Date.now();
+  const expiresIn = Number(parsed.expires_in);
+  const expiresAt = new Date(now + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1e3 : 60 * 60 * 1e3)).toISOString();
+  const path = grokAuthFilePath();
+  let file2;
+  try {
+    file2 = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  const current = file2[stored.keyName];
+  if (!current || typeof current !== "object") {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  file2[stored.keyName] = {
+    ...current,
+    key: parsed.access_token,
+    expires_at: expiresAt,
+    ...typeof parsed.refresh_token === "string" && parsed.refresh_token ? { refresh_token: parsed.refresh_token } : {}
+  };
+  try {
+    writeSessionFileAtomic(path, JSON.stringify(file2, null, 2));
+  } catch {
+    return { ok: false, reason: "Grok session file could not be updated." };
+  }
+  return { ok: true, expiresAt };
+}
+async function ensureCredentialForJob(estimatedJobMs, opts = {}) {
+  const first = resolveVideoCredential();
+  if (first.ok && first.credential.kind === "api-key") return first;
+  let shortReason;
+  if (first.ok) {
+    const covers = sessionCoversRender({
+      expiresAt: first.credential.expiresAt,
+      estimatedJobMs,
+      now: opts.now
+    });
+    if (covers.ok) return first;
+    shortReason = covers.reason;
+  } else if (first.code !== "expired") {
+    return first;
+  }
+  if (!grokSessionRefreshEnabled()) {
+    const why = first.ok ? shortReason ?? "The Grok session will not last the job." : first.reason;
+    return {
+      ok: false,
+      code: "expired",
+      reason: `${why} ${REFRESH_OFF}`
+    };
+  }
+  const refreshed = await refreshGrokSession(opts);
+  if (!refreshed.ok) {
+    if (first.ok) {
+      const covers = sessionCoversRender({
+        expiresAt: first.credential.expiresAt,
+        estimatedJobMs,
+        now: opts.now
+      });
+      if (!covers.ok) return { ok: false, code: "expired", reason: covers.reason };
+      return { ok: false, code: "expired", reason: refreshed.reason };
+    }
+    return { ok: false, code: "expired", reason: refreshed.reason };
+  }
+  const second = resolveVideoCredential();
+  if (!second.ok) return second;
+  if (second.credential.kind === "api-key") return { ...second, refreshed: true };
+  const again = sessionCoversRender({
+    expiresAt: second.credential.expiresAt,
+    estimatedJobMs,
+    now: opts.now
+  });
+  if (!again.ok) return { ok: false, code: "expired", reason: again.reason };
+  return { ...second, refreshed: true };
+}
+
+// mcp/promptSections.ts
+var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
+function normalisedShotType(shotType) {
+  const value = shotType?.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return value || void 0;
+}
+function shouldAnchorFace(prompt, opts) {
+  if (opts?.faceAnchor === "off") return false;
+  if (normalisedShotType(opts?.shotType) === "feet-close") return false;
+  return PERSON_IN_SHOT.test(prompt);
+}
+function ensurePeriod(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (/[.!?]$/.test(trimmed)) return trimmed;
+  return `${trimmed}.`;
+}
+function sentenceCase(text) {
+  const body = text.trim().replace(/[.]+$/, "");
+  if (!body) return "";
+  return `${body.charAt(0).toUpperCase()}${body.slice(1)}.`;
+}
+function layerById(layers, id) {
+  const key = id.trim().toLowerCase();
+  return layers.find((layer) => layer.id.toLowerCase() === key);
+}
+function wearPhrase(layer) {
+  const item = layer.item.trim();
+  if ((layer.type ?? "clothing") === "footwear") return `${item} on both feet`;
+  if (layer.closure === "open") return `an open ${item}`;
+  if (/s$/i.test(item) && !/ss$/i.test(item)) return item;
+  return `a ${item}`;
+}
+function wearsSentence(ids, layers) {
+  if (!ids || ids.length === 0) return void 0;
+  const phrases = ids.map((id) => {
+    const layer = layerById(layers, id);
+    return layer ? wearPhrase(layer) : id;
+  });
+  return `He wears ${phrases.join("; ")}.`;
+}
+function doorSentence(door) {
+  if (!door?.trim()) return void 0;
+  const value = door.trim().toLowerCase();
+  if (value === "closed" || value === "shut") return "The door is shut.";
+  if (value === "open") {
+    return "The door is fully open, swung in against the wall at the frame's left.";
+  }
+  return ensurePeriod(`The door is ${door.trim()}`);
+}
+function hangerSentence(slots, layers) {
+  if (!slots) return void 0;
+  const labels = Object.values(slots).map((id) => {
+    if (!id) return "empty";
+    return layerById(layers, id)?.item ?? id;
+  });
+  if (labels.length === 0) return void 0;
+  return `Hangers from the door side: ${labels.join(", ")}.`;
+}
+function floorSentence(floorAt) {
+  const text = floorAt?.map((entry) => entry.text.trim()).filter(Boolean).join("; ");
+  if (!text) return void 0;
+  return `Floor: ${ensurePeriod(text)}`;
+}
+function positionSentence(state, marks) {
+  if (!state) return void 0;
+  const written = state.text?.trim() || (state.mark ? marks?.[state.mark]?.trim() : void 0);
+  if (!written) return void 0;
+  return ensurePeriod(written);
+}
+function shotLine(beat) {
+  const framing = (beat.framing ?? beat.shotType ?? "wide").trim();
+  if (framing === "wide" && beat.camera === "locked") {
+    return "WIDE SHOT of the whole room, locked-off camera at chest height, framed as the first frame, never moving.";
+  }
+  const label = framing === "wide" ? "WIDE SHOT" : framing === "medium" ? "MEDIUM SHOT" : framing === "feet-close" ? "CLOSE-UP of his feet" : "CLOSE-UP";
+  if (beat.camera === "locked") {
+    return `${label}, locked-off camera, framed as the first frame, never moving.`;
+  }
+  return `${label}.`;
+}
+function lineSentence(line, voiceId) {
+  const text = line?.text?.trim();
+  if (!text) return void 0;
+  const sung = line?.delivery === "sung";
+  const verb = sung ? "sings" : "speaks";
+  const manner = sung ? "softly and warmly, at an easy natural pace" : "briskly and warmly, at a natural pace";
+  const quoted = text.replace(/^"|"$/g, "");
+  const spoken = /[.!?,]$/.test(quoted) ? quoted : `${quoted}.`;
+  const tag = line?.voiceTag?.trim() || (voiceId?.trim() ? "<AUDIO_0>" : "");
+  const voice = tag ? `, in the voice from ${tag}` : "";
+  return `As he moves he ${verb} once, ${manner}, never sped up${voice}: "${spoken}"`;
+}
+function heldSentence(state, steps, layers) {
+  if (!state?.held?.trim()) return void 0;
+  const holding = [...steps ?? []].reverse().find((step) => /\bholds?\b/i.test(step));
+  if (holding) return ensurePeriod(holding);
+  const layer = layerById(layers, state.held);
+  const name = layer?.short?.trim() || layer?.item.trim() || state.held.trim();
+  return `He holds the ${name}.`;
+}
+function stateSentences(state, ctx, opts) {
+  if (!state) return "";
+  const parts = [
+    positionSentence(state, ctx.marks),
+    wearsSentence(state.worn, ctx.layers),
+    opts.includeSet ? doorSentence(state.door) : void 0,
+    hangerSentence(state.slots, ctx.layers),
+    opts.includeSet ? floorSentence(state.floorAt) : void 0,
+    opts.includeSet && ctx.fixedSet?.trim() ? `Fixed set: ${ensurePeriod(ctx.fixedSet)}` : void 0,
+    heldSentence(state, opts.steps, ctx.layers)
+  ].filter((part) => Boolean(part));
+  return parts.join(" ");
+}
+function renderSectionsV2(beat, ctx) {
+  const steps = (beat.steps ?? []).map((step) => step.trim()).filter(Boolean);
+  const actionBody = [
+    steps.length > 0 ? steps.map((step, index) => `${index + 1}) ${ensurePeriod(step)}`).join(" ") : "",
+    lineSentence(beat.line, ctx.voiceId) ?? ""
+  ].filter(Boolean).join(" ");
+  const avoid = beat.avoid?.map((item) => item.trim()).filter(Boolean)[0];
+  const parts = [
+    shotLine(beat),
+    beat.start ? `START: ${stateSentences(beat.start, ctx, { includeSet: true, steps })}` : "",
+    actionBody ? `ACTION: ${actionBody}` : "",
+    beat.end ? `END: ${stateSentences(beat.end, ctx, { includeSet: false, steps })}` : "",
+    beat.contact?.trim() ? `CONTACT: ${sentenceCase(beat.contact)}` : "",
+    avoid ? `AVOID: ${ensurePeriod(avoid)}` : "",
+    beat.audio?.trim() ? `AUDIO: ${ensurePeriod(beat.audio)}` : ""
+  ].filter(Boolean);
+  return parts.join(" ");
+}
+
+// mcp/grokVideo.ts
+import { execFile as execFile3 } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile4, rm as rm2, writeFile as writeFile3 } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname as dirname4, join as join4, resolve, sep } from "node:path";
+import { promisify as promisify3 } from "node:util";
+var exec3 = promisify3(execFile3);
 var USD_TICKS_PER_DOLLAR = 1e10;
 function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
   return Number.isFinite(ticks) && ticks > 0 ? ticks / USD_TICKS_PER_DOLLAR : void 0;
 }
-var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
 function describeHttpFailure(status, body) {
   const text = body.trim();
   if (!text.startsWith("<")) {
@@ -42815,8 +43611,8 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
   ];
   let lastUrl = "";
   for (const attempt of attempts) {
-    const target = join3(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-    await exec2(ffmpeg, [
+    const target = join4(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+    await exec3(ffmpeg, [
       "-y",
       "-hide_banner",
       "-loglevel",
@@ -42831,12 +43627,47 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
       String(attempt.quality),
       target
     ], { maxBuffer: 16 * 1024 * 1024 });
-    const shrunk = await readFile2(target);
-    await rm(target, { force: true });
+    const shrunk = await readFile4(target);
+    await rm2(target, { force: true });
     lastUrl = `data:image/jpeg;base64,${shrunk.toString("base64")}`;
     if (shrunk.byteLength <= budgetBytes && shrunk.byteLength <= INLINE_IMAGE_BUDGET_BYTES) return lastUrl;
   }
   return lastUrl;
+}
+function pathInside(root, candidate) {
+  const base = resolve(root);
+  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+}
+function localImageRefAllowed(ref, roots) {
+  const trimmed = ref.trim();
+  if (!trimmed) return false;
+  if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
+  let raw = trimmed;
+  if (trimmed.toLowerCase().startsWith("file:")) {
+    try {
+      raw = new URL(trimmed).pathname;
+    } catch {
+      return false;
+    }
+  }
+  const abs = resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs))) return false;
+  let current = abs;
+  const missing = [];
+  let real = abs;
+  while (true) {
+    try {
+      real = missing.reduceRight((path, part) => join4(path, part), realpathSync(current));
+      break;
+    } catch {
+      const parent = dirname4(current);
+      if (parent === current) break;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+  return roots.some((root) => pathInside(root, real));
 }
 async function toApiImageRef(ref, opts = {}) {
   const budget = opts.budgetBytes ?? INLINE_IMAGE_BUDGET_BYTES;
@@ -42844,7 +43675,7 @@ async function toApiImageRef(ref, opts = {}) {
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
   const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-  const buffer = await readFile2(path);
+  const buffer = await readFile4(path);
   if (buffer.byteLength > budget) {
     return shrinkLocalImage(path, budget);
   }
@@ -42879,7 +43710,25 @@ function isTransientRenderFailure(poll) {
   const text = typeof err === "string" ? err : JSON.stringify(err ?? "");
   return /internal[_ ]error|please try again|temporarily unavailable|overloaded|rate.?limit/i.test(text);
 }
+function rejectedPrompt(prompt, negative) {
+  const lint = lintFailure(prompt, negative);
+  if (lint.ok) return void 0;
+  return { error: lint.reason, code: "prompt-rejected" };
+}
 async function generateGrokClip(job, opts) {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "clip",
+      { job, opts },
+      () => generateGrokClipNow(job, opts),
+      (result) => result.status === "completed" || Boolean(result.videoUrl)
+    );
+  }
+  return generateGrokClipNow(job, opts);
+}
+async function generateGrokClipNow(job, opts) {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -42897,13 +43746,17 @@ async function generateGrokClip(job, opts) {
     aspect_ratio: job.aspectRatio || "16:9"
   };
   if (job.resolution) body.resolution = job.resolution;
-  if (job.firstFrameUrl && job.lastFrameUrl) {
+  if (job.voiceId?.trim()) {
+    body.reference_audios = [{ voice_id: job.voiceId.trim() }];
+  }
+  const sendLastFrame = Boolean(job.lastFrameUrl) && job.pin !== "start";
+  if (job.firstFrameUrl && sendLastFrame && job.lastFrameUrl) {
     const pair = await toBookendPair(job.firstFrameUrl, job.lastFrameUrl);
     body.image = { url: pair.first };
     body.last_frame = { url: pair.last };
   } else if (job.firstFrameUrl) {
     body.image = { url: await toApiImageRef(job.firstFrameUrl) };
-  } else if (job.lastFrameUrl) {
+  } else if (sendLastFrame && job.lastFrameUrl) {
     body.last_frame = { url: await toApiImageRef(job.lastFrameUrl) };
   }
   if (job.referenceImageUrls && job.referenceImageUrls.length > 0) {
@@ -42937,7 +43790,7 @@ async function generateGrokClip(job, opts) {
       error: "Submit failed",
       code: "submit-failed",
       detail: transportError instanceof Error ? transportError.message : String(transportError ?? "unknown transport error"),
-      auth: credential.source
+      auth: toolAuth(credential.source)
     };
   }
   if (!submitRes.ok) {
@@ -42947,20 +43800,20 @@ async function generateGrokClip(job, opts) {
       error: `Grok Imagine Video answered ${submitRes.status}`,
       code: rejected ? "rejected" : "submit-failed",
       detail: describeHttpFailure(submitRes.status, text),
-      auth: credential.source,
+      auth: toolAuth(credential.source),
       hint: rejected ? "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json." : submitRes.status >= 500 ? "The render proxy was unavailable. Retry the shot in a few seconds." : void 0
     };
   }
   const submitted = await submitRes.json();
   const requestId = submitted.request_id;
   if (!requestId) {
-    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: credential.source };
+    return { error: "No request_id returned", code: "no-request-id", raw: submitted, auth: toolAuth(credential.source) };
   }
   const base = {
     requestId,
     baseUrl: credential.baseUrl,
     statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`,
-    auth: credential.source,
+    auth: toolAuth(credential.source),
     billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
   };
   if (!opts.waitForCompletion) {
@@ -42980,6 +43833,15 @@ async function generateGrokClip(job, opts) {
     const poll = await statusRes.json();
     if (typeof poll.progress === "number") lastProgress = poll.progress;
     if (poll.status === "done" || poll.status === "completed") {
+      const review = reviewTake(job.admission, job.negative);
+      if (!review.ok) {
+        return {
+          ...base,
+          status: "failed",
+          code: "rejected",
+          error: `Clip failed the checklist: ${review.failures.join("; ")}. The prompt that was sent: ${job.prompt}. The take was discarded and will not be used as a pin. No vision model ran. The next take is an edit of that prompt.`
+        };
+      }
       return {
         ...base,
         status: "completed",
@@ -43013,6 +43875,19 @@ async function inlineReferenceSet(urls) {
   return Promise.all(urls.map((url2) => toApiImageRef(url2, { budgetBytes: perImage })));
 }
 async function generateGrokStill(job, opts) {
+  if (transportKind() === "http") {
+    return memoHttpRender(
+      "still",
+      { job, opts },
+      () => generateGrokStillNow(job, opts),
+      (result) => Boolean(result.localPath)
+    );
+  }
+  return generateGrokStillNow(job, opts);
+}
+async function generateGrokStillNow(job, opts) {
+  const blocked = rejectedPrompt(job.prompt, job.negative);
+  if (blocked) return blocked;
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -43035,7 +43910,8 @@ async function generateGrokStill(job, opts) {
     route = "edits";
     const baseUrl = await toApiImageRef(job.baseImageUrl, { budgetBytes: INLINE_IMAGE_BUDGET_BYTES });
     const subjects = job.referenceImageUrls?.length ? await inlineReferenceSet(job.referenceImageUrls) : [];
-    base.image = subjects.length > 0 ? [...subjects, baseUrl] : { url: baseUrl };
+    const plateFirst = job.imageOrder === "plate-first";
+    base.image = subjects.length > 0 ? plateFirst ? [baseUrl, ...subjects] : [...subjects, baseUrl] : { url: baseUrl };
     delete base.reference_images;
   }
   const headers = {
@@ -43062,7 +43938,7 @@ async function generateGrokStill(job, opts) {
         error: "Image request failed",
         code: "submit-failed",
         detail: err instanceof Error ? err.message : String(err),
-        auth: credential.source
+        auth: toolAuth(credential.source)
       };
     }
     if (response.ok) {
@@ -43073,7 +43949,7 @@ async function generateGrokStill(job, opts) {
           error: "The image route returned no image URL",
           code: "failed",
           raw: payload,
-          auth: credential.source
+          auth: toolAuth(credential.source)
         };
       }
       const localPath = await downloadGrokStill(
@@ -43082,16 +43958,25 @@ async function generateGrokStill(job, opts) {
         image.mime_type,
         opts.filename
       );
+      const accepted = await acceptRenderedTake(localPath, job.admission, job.negative);
+      if (!accepted.ok) {
+        return {
+          error: `Still failed the checklist: ${accepted.failures.join("; ")}. The prompt that was sent: ${job.prompt}. The file was discarded and will not be used as a pin. No vision model ran.`,
+          code: "rejected",
+          auth: toolAuth(credential.source),
+          costUsd: costUsdFromUsage(payload.usage)
+        };
+      }
       return {
         imageUrl: image.url,
-        localPath,
+        localPath: accepted.path,
         mimeType: image.mime_type,
         model: payload.model ?? String(variant.body.model),
         usage: payload.usage,
         costUsd: costUsdFromUsage(payload.usage),
         aspectRatioParam: variant.param,
         route,
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         billedTo: credential.kind === "session" ? "Grok subscription" : "xAI API credits"
       };
     }
@@ -43102,7 +43987,7 @@ async function generateGrokStill(job, opts) {
         error: `Image generation was rejected (HTTP ${response.status})`,
         code: "rejected",
         detail: describeHttpFailure(response.status, text),
-        auth: credential.source,
+        auth: toolAuth(credential.source),
         hint: "Credential rejected. For the session path, run `grok login` to refresh ~/.grok/auth.json."
       };
     }
@@ -43112,31 +43997,31 @@ async function generateGrokStill(job, opts) {
     error: lastFailure ? `Image generation answered ${lastFailure.status}` : "Image generation failed",
     code: "submit-failed",
     detail: lastFailure ? describeHttpFailure(lastFailure.status, lastFailure.text) : void 0,
-    auth: credential.source
+    auth: toolAuth(credential.source)
   };
 }
 async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
-  await mkdir2(outputDir, { recursive: true });
+  await mkdir3(outputDir, { recursive: true });
   const ext = mimeType?.includes("jpeg") || mimeType?.includes("jpg") ? "jpg" : mimeType?.includes("webp") ? "webp" : "png";
   const digest = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const named = filename && !/\.[a-z0-9]{2,5}$/i.test(filename) ? `${filename}.${ext}` : filename;
-  const destination = join3(outputDir, named ?? `still-${digest}.${ext}`);
+  const destination = join4(outputDir, named ?? `still-${digest}.${ext}`);
   if (imageUrl.startsWith("data:")) {
     const comma = imageUrl.indexOf(",");
     if (comma === -1) throw new Error("Malformed data URI for generated still.");
-    await writeFile2(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
+    await writeFile3(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
     return destination;
   }
   const response = await fetch(imageUrl, { redirect: "follow" });
   if (!response.ok) throw new Error(`Still download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.byteLength === 0) throw new Error("Still download returned no data.");
-  await writeFile2(destination, bytes);
+  await writeFile3(destination, bytes);
   return destination;
 }
 
 // mcp/storyboard.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 
 // mcp/cast.ts
 var GARMENT = /\b(shirts?|blazers?|jackets?|coats?|suits?|ties?|necktie|bowtie|dress(?:es)?|gowns?|sweaters?|jumpers?|hoodies?|vests?|waistcoats?|trousers?|pants|jeans|shorts|skirts?|kilts?|robes?|capes?|cloaks?|parkas?|trench|sherpa|fleece|pullovers?|cardigans?|polos?|t-?shirts?|button-?downs?|henleys?|uniforms?|aprons?|overalls?|dungarees?|leggings?|tights|socks?|stockings?|shoes?|boots?|trainers|sneakers|loafers?|sandals?|heels|hats?|caps?|beanies?|berets?|helmets?|scar(?:f|ves)|gloves?|mittens?|belts?|suspenders?|braces|watches?|wristwatch|necklaces?|earrings?|bracelets?|rings?|glasses|spectacles|sunglasses|goggles|lapels?|cuffs?|collars?|sleeves?|hem|pockets?|buttons?|zippers?|pinstripes?|plaid|tartan|houndstooth|tweed|denim|corduroy|linen|silk|satin|leather|wool|cashmere|velvet|khaki|chinos|attire|outfit|wardrobe|clothing|clothes|dressed|wearing|dress shirt)\b/i;
@@ -43154,47 +44039,89 @@ function identityOnly(cast) {
 function castForPicture(cast) {
   const identity = cast?.trim() ? identityOnly(cast) : "";
   const body = identity ? `THE CAST, taken from the reference picture and identical in every frame: ${identity}.` : "THE CAST, taken from the reference picture and identical in every frame: the person in it.";
-  return `${body} Their face, head, hair and skin are those of the reference picture: match them exactly. Their clothing is whatever the reference picture shows them wearing \u2014 take the garments from the picture and copy them unchanged; do not add, swap, layer or remove any garment, and do not infer one from this description. `;
+  return `${body} Their face, head, hair and skin are those of the reference picture: match them exactly. Their clothing is whatever the reference picture shows them wearing. Take the garments from the picture and copy them unchanged, in the same layers the picture shows. `;
 }
 
 // mcp/storyboard.ts
 import { stat as stat2 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var STILL_USD = 0.02;
 var STILL_EXTENSIONS = ["png", "jpg", "webp"];
 function shotPrompt(shot) {
-  return (shot.prompt ?? shot.action ?? "").trim();
+  const base = (shot.prompt ?? shot.action ?? "").trim();
+  const extra = shot.continuityPrompt?.trim() ?? "";
+  if (!extra || base.includes(extra)) return base;
+  return `${base} ${extra}`.replace(/\s+/g, " ").trim();
 }
 function planBoardFrames(opts) {
   const { shots, aspectRatio, look, cast } = opts;
   const prompts = shots.map(shotPrompt);
-  const hasPicture = Boolean(opts.baseImageUrl);
+  const hasPortrait = Boolean(opts.referenceImageUrls?.some((url2) => url2.trim()));
+  const hasBase = Boolean(opts.baseImageUrl);
+  const hasPicture = hasPortrait || hasBase;
+  const wardrobeUnchecked = !hasPicture && Boolean(opts.cast?.trim());
   const castLock = cast?.trim() ? hasPicture ? castForPicture(cast) : `THE CAST, identical in every frame: ${cast.trim()}. ` : "";
   const prefix = castLock + (look?.trim() ? `${look.trim()} ` : "");
   const sceneRule = hasPicture ? " The reference picture is the ground truth: keep its room, furniture, windows and the view through them unchanged." : "";
   const shape = ` Composition matches a ${aspectRatio} frame.`;
-  const still = " Single held frame, no motion blur, no text, no watermark.";
-  return Array.from({ length: prompts.length + 1 }, (_, index) => {
-    let prompt;
-    if (index === 0) {
-      prompt = `Opening frame of shot 1. ${prompts[0]}`;
-    } else if (index === prompts.length) {
-      prompt = `Closing frame of shot ${prompts.length}. ${prompts[index - 1]} The beat has just resolved.`;
-    } else {
-      prompt = `The opening frame of shot ${index + 1}, which is also the closing frame of shot ${index}. ${prompts[index]} Shot ${index} travels in to arrive at this picture, so its move ends where this frame begins \u2014 the camera is already where shot ${index + 1} wants it (${prompts[index - 1].trim()}) Hold the same light, wardrobe and room across the boundary.`;
+  const still = " Single held frame, sharp focus, a clean picture.";
+  const specs = [{ role: "opening", shot: 1, incoming: 0 }];
+  for (let i = 0; i < shots.length; i += 1) {
+    if (shots[i].middleKeyframe) {
+      specs.push({ role: "middle", shot: i + 1, incoming: i, outgoing: i });
     }
-    const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing)\b/i.test(prompt);
-    const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and nothing else about the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them, and never restyle them.";
+    if (i < shots.length - 1) {
+      specs.push({ role: "boundary", shot: i + 2, incoming: i + 1, outgoing: i });
+    } else {
+      specs.push({ role: "closing", shot: i + 1, outgoing: i });
+    }
+  }
+  return specs.map((spec, index) => {
+    let prompt;
+    if (spec.role === "opening") {
+      prompt = `Opening frame of shot 1. ${prompts[0]}`;
+    } else if (spec.role === "closing") {
+      prompt = `Closing frame of shot ${prompts.length}. ${prompts[prompts.length - 1]} The beat has just resolved.`;
+    } else if (spec.role === "middle") {
+      prompt = `Middle frame of shot ${spec.shot}. ${prompts[spec.shot - 1]} This is neither the start nor the end of the shot; the beat is underway.`;
+    } else {
+      const incoming = spec.incoming ?? index;
+      const outgoing = spec.outgoing ?? incoming - 1;
+      prompt = `The opening frame of shot ${incoming + 1}, which is also the closing frame of shot ${outgoing + 1}. ${prompts[incoming]} Shot ${outgoing + 1} travels in to arrive at this picture, so its move ends where this frame begins \u2014 the camera is already where shot ${incoming + 1} wants it (${prompts[outgoing].trim()}) Hold the same light, wardrobe and room across the boundary.`;
+    }
+    const shotForFrame = shots[spec.shot - 1] ?? shots[0];
+    const asksForChange = /\b(takes? off|removes?|changes? into|now wearing|has changed|without (?:his|the) \w+|no longer wearing|puts? on)\b/i.test(prompt) || Boolean(shotForFrame?.wardrobeChanged);
+    const personRule = !hasPicture ? "" : asksForChange ? " This shot asks for the clothing change it names; apply that change and keep the rest of the person." : " Keep this person's face, head, beard hair and clothing exactly as the reference picture shows them.";
     const full = `${prefix}${prompt}${shape}${still}${sceneRule}${personRule}`;
     const base = opts.baseFingerprint ?? opts.baseImageUrl;
     const hashInput = base ? `${full}|base:${base}` : full;
-    const stem = `board-${createHash2("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
-    return { index, prompt: full, stem };
+    const stem = `board-${createHash3("sha1").update(hashInput).digest("hex").slice(0, 16)}`;
+    return {
+      index,
+      prompt: full,
+      stem,
+      role: spec.role,
+      shot: spec.shot,
+      ...wardrobeUnchecked ? { wardrobeUnchecked: true } : {}
+    };
+  });
+}
+function shotFrameSlots(shots) {
+  let cursor = 0;
+  return shots.map((shot) => {
+    const first = cursor;
+    let middle;
+    if (shot.middleKeyframe) {
+      cursor += 1;
+      middle = cursor;
+    }
+    cursor += 1;
+    return { first, middle, last: cursor };
   });
 }
 async function findExistingStill(dir, stem) {
   for (const ext of STILL_EXTENSIONS) {
-    const candidate = join4(dir, `${stem}.${ext}`);
+    const candidate = join5(dir, `${stem}.${ext}`);
     try {
       const info = await stat2(candidate);
       if (info.size > 0) return candidate;
@@ -43202,6 +44129,12 @@ async function findExistingStill(dir, stem) {
     }
   }
   return void 0;
+}
+function heroPrompt(input2) {
+  const named = (input2.scene ?? input2.look)?.trim().replace(/\.$/, "");
+  const where = named ? `the room in the second photo, ${named}` : "the room in the second photo";
+  const cast = input2.cast?.trim() ? castForPicture(input2.cast) : "";
+  return `Place the person from the first photo into ${where}. ` + cast + `The first photo supplies only the person. Its background stays out of the picture. The second photo is the room and stays as it is: keep its walls, its furniture, its windows and the view through them exactly as they are, and keep its own light. Photoreal, single held frame, sharp focus, a clean picture.`;
 }
 async function boardFilm(input2, deps) {
   const aspectRatio = input2.aspectRatio ?? "16:9";
@@ -43227,13 +44160,16 @@ async function boardFilm(input2, deps) {
     };
   }
   const heroRefsForStem = deps.baseImageUrl ? deps.referenceImageUrls ?? [] : [];
-  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash2("sha1").update(`officeFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}`).digest("hex").slice(0, 16)}` : void 0;
+  const heroStem = heroRefsForStem.length > 0 ? `board-hero-${createHash3("sha1").update(
+    `portraitFirst|${heroRefsForStem.join(",")}|${deps.baseImageUrl}|${input2.cast ?? ""}|${input2.look ?? ""}|${input2.scene ?? ""}`
+  ).digest("hex").slice(0, 16)}` : void 0;
   const planned = planBoardFrames({
     shots: usable,
     aspectRatio,
     look: input2.look,
     cast: input2.cast,
     baseImageUrl: deps.baseImageUrl,
+    referenceImageUrls: deps.referenceImageUrls,
     baseFingerprint: heroStem
   });
   const existing = await Promise.all(
@@ -43253,7 +44189,7 @@ async function boardFilm(input2, deps) {
     estimatedUsd,
     spentUsd: 0,
     perStillUsd: STILL_USD,
-    basis: `${planned.length} frames for ${usable.length} shots (${usable.length} + 1 shared boundaries)` + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
+    basis: `${planned.length} frames for ${usable.length} shots ` + (usable.some((shot) => shot.middleKeyframe) ? `(${usable.length} + 1 shared boundaries + ${usable.filter((shot) => shot.middleKeyframe).length} midpoint stills)` : `(${usable.length} + 1 shared boundaries)`) + (heroStills ? `, plus one hero frame` : "") + `, ${billable} to render at $0.02 each, ${existing.length - missing.length} already on disk and free.` + (heroStills ? " The hero still is bought on every confirmed board, and its name is part of every shot frame, so a new hero buys the hero and every shot frame, not the hero alone." : "") + (!deps.baseImageUrl && (deps.referenceImageUrls ?? []).some((url2) => url2.trim()) ? " A portrait with no location photo is part of every frame's name, so a change to that portrait or the cast buys every frame again. There is no single hero still." : "") + ' Closing frames are kept on the shot list and are not sent unless render_sequence is called with pin: "both". The default pin is start, so those cuts are not pixel-pinned.' + (deps.baseImageUrl ? ` Every frame is edited from the same picture, so look at the board before rendering the video: a still that came back wrong is two cents, and the clip that inherits it is a lot more.` : ""),
     isEstimate: true
   };
   const overBudget = input2.maxCostUsd !== void 0 && estimatedUsd > input2.maxCostUsd + 1e-9;
@@ -43272,7 +44208,7 @@ async function boardFilm(input2, deps) {
       estimate: baseEstimate,
       maxCostUsd: input2.maxCostUsd,
       error: overBudget ? `The board would cost $${estimatedUsd.toFixed(2)}, over the $${input2.maxCostUsd?.toFixed(2)} limit. Nothing was spent. Raise maxCostUsd or board fewer shots.` : void 0,
-      next: overBudget ? "Tell the user the board is over budget and what it would cost. Do not retry with a higher limit unless they ask for one." : "Show the frame count and the estimate. Call again with confirm: true only after the user approves the board. Nothing is rendered until then."
+      next: overBudget ? "Tell the user the board is over budget and what it would cost. Do not retry with a higher limit unless they ask for one." : input2.blocked ? "This board is blocked, so confirm will not render anything. Pass overrideValidation: true to board anyway. confirm alone does not unblock it." : 'Show the frame count and the estimate. Call again with confirm: true only after the user approves the board. Nothing is rendered until then. Closing frames on the shot list are not sent unless render_sequence uses pin: "both". The default pin is start.'
     };
   }
   const paths = /* @__PURE__ */ new Map();
@@ -43285,7 +44221,7 @@ async function boardFilm(input2, deps) {
     const setting = boardBase;
     const heroResult = await deps.generateStill(
       {
-        prompt: `Place the person from the second photo into this office. ${input2.cast?.trim() ? castForPicture(input2.cast) : ""}${input2.look?.trim() ? `${input2.look.trim()} ` : ""}The first photo is the room and it does not change: its walls, its furniture, its windows and the city through them stay exactly as they are, and its own dusk light is the light of this frame. The second photo supplies the person and nothing else - its own background is discarded. Photoreal, single held frame, no motion blur, no text, no watermark.`,
+        prompt: heroPrompt(input2),
         aspectRatio,
         baseImageUrl: setting,
         referenceImageUrls: [subject]
@@ -43343,10 +44279,13 @@ async function boardFilm(input2, deps) {
   }
   const shots = [];
   const gaps = [];
+  const slots = shotFrameSlots(usable);
   usable.forEach((shot, i) => {
-    const first = paths.get(i);
-    const last = paths.get(i + 1);
-    if (!first || !last) {
+    const slot = slots[i];
+    const first = paths.get(slot.first);
+    const last = paths.get(slot.last);
+    const middle = slot.middle !== void 0 ? paths.get(slot.middle) : void 0;
+    if (!first || !last || shot.middleKeyframe && !middle) {
       gaps.push(i + 1);
       return;
     }
@@ -43356,8 +44295,9 @@ async function boardFilm(input2, deps) {
       durationSeconds: shot.durationSeconds ?? 8,
       firstFrameUrl: first,
       lastFrameUrl: last,
-      firstFrameIndex: i,
-      lastFrameIndex: i + 1
+      firstFrameIndex: slot.first,
+      lastFrameIndex: slot.last,
+      ...middle && slot.middle !== void 0 ? { middleFrameUrl: middle, middleFrameIndex: slot.middle } : {}
     });
   });
   const complete = gaps.length === 0;
@@ -43378,7 +44318,7 @@ async function boardFilm(input2, deps) {
     },
     maxCostUsd: input2.maxCostUsd,
     error: complete ? void 0 : `Frames missing for shots ${gaps.join(", ")}; the board is incomplete, so no shots were returned. Re-run board_film: frames already on disk are reused and cost nothing.`,
-    next: complete ? "Show the stills to the user for approval, then pass `shots` to render_sequence unchanged. Consecutive shots share a boundary frame, so every cut lands on identical pixels. Each shot is still one paid video render." : "Report which frames failed and re-run board_film. Do not render video from a partial board."
+    next: complete ? 'Show the stills to the user for approval, then pass `shots` to render_sequence. Consecutive shots share a boundary picture. Those closing frames are not sent unless render_sequence uses pin: "both". The default pin is start, so the cuts are not pixel-pinned. Each shot is still one paid video render.' : "Report which frames failed and re-run board_film. Do not render video from a partial board."
   };
 }
 function toRenderShots(board) {
@@ -43392,17 +44332,420 @@ function toRenderShots(board) {
 }
 
 // mcp/characters.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile3, readdir, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir, rename as rename2, stat as stat3, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { basename, join as join5, sep } from "node:path";
-var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join5(homedir3(), ".theshow", "characters");
+import { basename as basename2, join as join6, sep as sep2 } from "node:path";
+
+// mcp/continuity.ts
+var IN_REFERENCE = ["visible", "partial", "hidden"];
+var LAYER_TYPES = ["clothing", "footwear"];
+var CLOSURE_TYPES = ["zip", "buttons", "open", "laced", "slip-on", "none"];
+function sameWorn(a, b) {
+  const left = [...a].map((id) => id.trim()).filter(Boolean).sort();
+  const right = [...b].map((id) => id.trim()).filter(Boolean).sort();
+  return left.length === right.length && left.every((id, i) => id === right[i]);
+}
+function layerById2(layers, id) {
+  const key = id.trim().toLowerCase();
+  return layers.find((layer) => layer.id.toLowerCase() === key);
+}
+function sortLayers(layers) {
+  return [...layers].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+}
+function layerType(layer) {
+  return layer.type ?? "clothing";
+}
+function defaultWorn(wardrobe) {
+  if (wardrobe.startState?.worn) return [...wardrobe.startState.worn];
+  return wardrobe.layers.map((layer) => layer.id);
+}
+function findStateImage(wardrobe, worn) {
+  return (wardrobe.stateImages ?? []).find((entry) => sameWorn(entry.worn, worn));
+}
+function resolveProp(props, dest, locationId) {
+  const key = dest.trim().toLowerCase();
+  if (!key) return void 0;
+  const byId = props.find((prop) => prop.id.toLowerCase() === key);
+  if (byId) return byId;
+  const byName = props.filter((prop) => prop.name.trim().toLowerCase() === key);
+  if (byName.length === 0) return void 0;
+  if (locationId) {
+    const here = byName.filter((prop) => prop.locationId === locationId);
+    if (here.length === 1) return here[0];
+    if (here.length > 1) return void 0;
+  }
+  return void 0;
+}
+function stagedPropId(character, layerId) {
+  const slug = `${character.trim().toLowerCase()}-${layerId.trim().toLowerCase()}`.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `garment-${slug}`;
+}
+function startCharacters(characters) {
+  return characters.map((character) => ({
+    name: character.name,
+    wardrobe: character.wardrobe,
+    worn: new Set(character.wardrobe ? defaultWorn(character.wardrobe) : []),
+    adjustments: /* @__PURE__ */ new Map()
+  }));
+}
+function pickCharacter(runtimes, event) {
+  if (event.character?.trim()) {
+    const key = event.character.trim().toLowerCase();
+    return runtimes.find((entry) => entry.name.trim().toLowerCase() === key);
+  }
+  const withLayers = runtimes.filter((entry) => (entry.wardrobe?.layers.length ?? 0) > 0);
+  if (withLayers.length === 1) return withLayers[0];
+  if (runtimes.length === 1) return runtimes[0];
+  return void 0;
+}
+function applyWardrobeEvent(runtimes, props, event, locationId, warnings) {
+  const runtime = pickCharacter(runtimes, event);
+  if (!runtime) {
+    warnings.push(
+      `Wardrobe event on shot ${event.shot} names no character, and more than one cast member has layers.`
+    );
+    return;
+  }
+  const wardrobe = runtime.wardrobe;
+  if (!wardrobe) {
+    warnings.push(
+      `Wardrobe event on shot ${event.shot} targets ${runtime.name}, who has no layered wardrobe.`
+    );
+    return;
+  }
+  const layer = layerById2(wardrobe.layers, event.layer);
+  if (!layer) {
+    warnings.push(
+      `Wardrobe event on shot ${event.shot} names unknown layer "${event.layer}" for ${runtime.name}.`
+    );
+    return;
+  }
+  if (event.action === "remove") {
+    runtime.worn.delete(layer.id);
+    runtime.adjustments.delete(layer.id);
+    if (event.to?.trim()) {
+      const dest = resolveProp(props, event.to, locationId);
+      const destLocation = dest?.locationId ?? locationId;
+      if (!dest && !destLocation) {
+        warnings.push(
+          `Removed ${layer.item} on shot ${event.shot} but "${event.to}" is not a known prop and the shot has no location, so it was not staged anywhere.`
+        );
+        return;
+      }
+      const id = dest ? stagedPropId(runtime.name, layer.id) : stagedPropId(runtime.name, layer.id);
+      const placement = dest ? `on the ${dest.name}${dest.placement ? `, ${dest.placement}` : ""}` : event.to.trim();
+      const next = {
+        id,
+        locationId: destLocation ?? dest?.locationId ?? "unknown",
+        name: layer.item,
+        placement,
+        holder: dest?.id
+      };
+      const existing = props.findIndex((prop) => prop.id === id);
+      if (existing >= 0) props[existing] = next;
+      else props.push(next);
+    }
+    return;
+  }
+  if (event.action === "putOn") {
+    runtime.worn.add(layer.id);
+    if (event.note) runtime.adjustments.set(layer.id, event.note);
+    else runtime.adjustments.delete(layer.id);
+    const id = stagedPropId(runtime.name, layer.id);
+    const leftover = props.findIndex((prop) => prop.id === id);
+    if (leftover >= 0) props.splice(leftover, 1);
+    return;
+  }
+  if (event.action === "adjust") {
+    if (!runtime.worn.has(layer.id)) {
+      warnings.push(
+        `Adjust on shot ${event.shot} names ${layer.item}, which ${runtime.name} is not wearing.`
+      );
+    }
+    runtime.adjustments.set(layer.id, event.note);
+  }
+}
+function applyPropEvent(props, event, warnings) {
+  const id = event.propId.trim();
+  if (!id) {
+    warnings.push(`Prop event on shot ${event.shot} has no prop id; unnamed props are left where they are.`);
+    return;
+  }
+  if (event.action === "add") {
+    if (!event.locationId?.trim() || !event.name?.trim()) {
+      warnings.push(
+        `Add on shot ${event.shot} for "${id}" needs a locationId and a name; the ledger was not changed.`
+      );
+      return;
+    }
+    const next = {
+      id,
+      locationId: event.locationId.trim(),
+      name: event.name.trim(),
+      placement: event.placement?.trim() || "in the room",
+      holder: event.holder?.trim() || void 0
+    };
+    const existing = props.findIndex((prop) => prop.id === id);
+    if (existing >= 0) props[existing] = next;
+    else props.push(next);
+    return;
+  }
+  const index = props.findIndex((prop) => prop.id === id);
+  if (index < 0) {
+    warnings.push(`Prop event on shot ${event.shot} names unknown prop "${id}"; the ledger was not changed.`);
+    return;
+  }
+  if (event.action === "remove") {
+    props.splice(index, 1);
+    return;
+  }
+  const current = props[index];
+  props[index] = {
+    ...current,
+    locationId: event.locationId?.trim() || current.locationId,
+    name: event.name?.trim() || current.name,
+    placement: event.placement?.trim() || current.placement,
+    holder: event.holder !== void 0 ? event.holder.trim() || void 0 : current.holder
+  };
+}
+function checklistFor(runtime, props, warnings) {
+  const wardrobe = runtime.wardrobe;
+  if (!wardrobe) return void 0;
+  const worn = sortLayers(wardrobe.layers.filter((layer) => runtime.worn.has(layer.id)));
+  const outermost = sortLayers(worn.filter((layer) => layerType(layer) === "clothing")).at(-1);
+  const staged = props.filter((prop) => wardrobe.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
+    const layer = wardrobe.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
+    return {
+      layerId: layer?.id ?? prop.id,
+      item: prop.name,
+      character: runtime.name,
+      propId: prop.id,
+      locationId: prop.locationId,
+      placement: prop.placement,
+      holder: prop.holder
+    };
+  });
+  const list = {
+    character: runtime.name,
+    worn,
+    outermost,
+    staged,
+    adjustments: [...runtime.adjustments.entries()].map(([layerId, note]) => ({
+      layerId,
+      item: layerById2(wardrobe.layers, layerId)?.item ?? layerId,
+      note
+    })),
+    warnings: []
+  };
+  const photo = findStateImage(wardrobe, worn.map((layer) => layer.id));
+  const hasPhoto = Boolean(photo?.referenceImageUrls.some((url2) => url2.trim()));
+  if (!hasPhoto) {
+    const groupOutermost = /* @__PURE__ */ new Map();
+    for (const type of LAYER_TYPES) {
+      const top = sortLayers(worn.filter((layer) => layerType(layer) === type)).at(-1);
+      if (top) groupOutermost.set(type, top);
+    }
+    for (const [type, top] of groupOutermost) {
+      if (top.inReference !== "partial" && top.inReference !== "hidden") continue;
+      const how = top.inReference === "partial" ? "only in part" : "not at all";
+      const warning = type === "clothing" ? `After this change, ${runtime.name}'s outermost layer is ${top.item}, but the reference picture shows it ${how} and there is no photo for this state. The model will have to guess the rest of its appearance.` : `${runtime.name}'s ${top.item} (${type}) are shown ${how} in the reference picture, and there is no photo for this state. The model will have to guess their appearance.`;
+      list.warnings.push(warning);
+      warnings.push(warning);
+    }
+  }
+  return list;
+}
+function locationName(locations, locationId) {
+  if (!locationId) return void 0;
+  return locations?.find((entry) => entry.id === locationId)?.name ?? locationId;
+}
+function describeWorn(checklist) {
+  if (checklist.worn.length === 0) {
+    return `${checklist.character} is wearing none of the tracked layers`;
+  }
+  const names = checklist.worn.map((layer, index) => {
+    const tail = checklist.outermost && layer.id === checklist.outermost.id && checklist.worn.length > 1 ? ` (now outermost)` : "";
+    return `${index === 0 ? "" : ""}${layer.item}${tail}`;
+  });
+  const joined = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `${checklist.character} is wearing ${joined}`;
+}
+function describeChange(event, character, layerItem2) {
+  if (event.action === "remove") {
+    return `${character} takes off the ${layerItem2}`;
+  }
+  if (event.action === "putOn") {
+    return `${character} puts on the ${layerItem2}`;
+  }
+  const note = event.note?.trim() ? `: ${event.note.trim()}` : "";
+  return `${character} adjusts the ${layerItem2}${note}`;
+}
+function setDressingLine(props, locationId, locations) {
+  if (!locationId) return "";
+  const inView = props.filter((prop) => prop.locationId === locationId);
+  if (inView.length === 0) return "";
+  const room = locationName(locations, locationId) ?? locationId;
+  const items = inView.map((prop) => {
+    const holderProp = prop.holder ? props.find((entry) => entry.id === prop.holder) : void 0;
+    const alreadyNamesHolder = holderProp ? prop.placement.toLowerCase().includes(holderProp.name.toLowerCase()) : false;
+    const heldBy = holderProp && !alreadyNamesHolder ? `, on the ${holderProp.name}` : !holderProp && prop.holder ? `, held by ${prop.holder}` : "";
+    return `${prop.name}${prop.placement ? `, ${prop.placement}` : ""}${heldBy}`;
+  });
+  return `Fixed set dressing in the ${room}: ${items.join("; ")}.`;
+}
+function wardrobePrompt(opts) {
+  const parts = [];
+  const named = /* @__PURE__ */ new Set();
+  for (const event of opts.eventsThisShot) {
+    const runtime = pickCharacter(opts.runtimes, event);
+    const item = runtime?.wardrobe ? layerById2(runtime.wardrobe.layers, event.layer)?.item ?? event.layer : event.layer;
+    const who = runtime?.name ?? event.character ?? "the character";
+    parts.push(describeChange(event, who, item) + ".");
+    named.add(who.toLowerCase());
+  }
+  for (const checklist of opts.checklists) {
+    const start = opts.startWorn.get(checklist.character.toLowerCase()) ?? [];
+    const now = checklist.worn.map((layer) => layer.id);
+    const changed = !sameWorn(start, now) || checklist.adjustments.length > 0 || named.has(checklist.character.toLowerCase());
+    if (!changed && opts.hasReferencePicture) {
+      continue;
+    }
+    if (!changed && !opts.hasReferencePicture) {
+      parts.push(`${describeWorn(checklist)}.`);
+      continue;
+    }
+    parts.push(`${describeWorn(checklist)}.`);
+    for (const staged of checklist.staged) {
+      const verb = /\b(shoes|pants|trousers|glasses)\b/i.test(staged.item) ? "are" : "is";
+      parts.push(`The ${staged.item} ${verb} ${staged.placement}.`);
+    }
+    for (const adjustment of checklist.adjustments) {
+      if (!adjustment.note) continue;
+      const alreadyNamed = opts.eventsThisShot.some(
+        (event) => event.action === "adjust" && event.layer === adjustment.layerId && event.note === adjustment.note
+      );
+      if (alreadyNamed) continue;
+      parts.push(`${checklist.character} ${adjustment.note}.`);
+    }
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+function replayContinuity(plan) {
+  const runtimes = startCharacters(plan.characters);
+  const props = (plan.props ?? []).map((prop) => ({ ...prop }));
+  const startWorn = new Map(
+    runtimes.map((runtime) => [
+      runtime.name.toLowerCase(),
+      runtime.wardrobe ? defaultWorn(runtime.wardrobe) : []
+    ])
+  );
+  const shots = [];
+  for (let index = 1; index <= plan.shotCount; index += 1) {
+    const warnings = [];
+    const locationId = plan.shotLocations?.[index - 1];
+    const wardrobeEvents = (plan.wardrobeEvents ?? []).filter((event) => event.shot === index);
+    const propEvents = (plan.propEvents ?? []).filter((event) => event.shot === index);
+    for (const event of propEvents) applyPropEvent(props, event, warnings);
+    for (const event of wardrobeEvents) applyWardrobeEvent(runtimes, props, event, locationId, warnings);
+    const checklists = runtimes.map((runtime) => checklistFor(runtime, props, warnings)).filter((entry) => Boolean(entry));
+    const propsInView = locationId ? props.filter((prop) => prop.locationId === locationId).map((prop) => ({ ...prop })) : [];
+    const wardrobeText = wardrobePrompt({
+      checklists,
+      eventsThisShot: wardrobeEvents,
+      runtimes,
+      hasReferencePicture: plan.hasReferencePicture,
+      startWorn
+    });
+    const dressing = setDressingLine(props, locationId, plan.locations);
+    const prompt = [wardrobeText, dressing].filter(Boolean).join(" ").trim();
+    shots.push({
+      shot: index,
+      locationId,
+      checklists,
+      propsInView,
+      prompt,
+      warnings: [...warnings, ...checklists.flatMap((entry) => entry.warnings)].filter(
+        (value, i, all) => all.indexOf(value) === i
+      )
+    });
+  }
+  return shots;
+}
+function annotateAction(action, continuityPrompt) {
+  const extra = continuityPrompt.trim();
+  if (!extra) return action;
+  const body = action.trim();
+  if (!body) return extra;
+  if (body.includes(extra)) return body;
+  return `${body} ${extra}`.replace(/\s+/g, " ").trim();
+}
+var ContinuityAuditFindingSchema = external_exports.object({
+  kind: external_exports.enum(["vanished", "appeared", "moved"]),
+  propId: external_exports.string().min(1),
+  locationId: external_exports.string().min(1),
+  name: external_exports.string().min(1),
+  frameNumber: external_exports.number().int().nonnegative(),
+  note: external_exports.string(),
+  thumbnailPath: external_exports.string().optional()
+});
+function parseWardrobe(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const value = raw;
+  if (!Array.isArray(value.layers)) return void 0;
+  const layers = [];
+  for (const entry of value.layers) {
+    if (!entry || typeof entry !== "object") continue;
+    const layer = entry;
+    if (typeof layer.id !== "string" || !layer.id.trim()) continue;
+    if (typeof layer.item !== "string" || !layer.item.trim()) continue;
+    if (typeof layer.order !== "number" || !Number.isFinite(layer.order)) continue;
+    const inReference = IN_REFERENCE.includes(layer.inReference) ? layer.inReference : "visible";
+    const type = LAYER_TYPES.includes(layer.type) ? layer.type : void 0;
+    const closure = CLOSURE_TYPES.includes(layer.closure) ? layer.closure : void 0;
+    const mustNotHave = Array.isArray(layer.mustNotHave) ? layer.mustNotHave.filter((word) => typeof word === "string" && word.trim().length > 0) : void 0;
+    layers.push({
+      id: layer.id.trim(),
+      item: layer.item.trim(),
+      order: layer.order,
+      inReference,
+      ...type ? { type } : {},
+      ...typeof layer.short === "string" && layer.short.trim() ? { short: layer.short.trim() } : {},
+      ...closure ? { closure } : {},
+      ...mustNotHave && mustNotHave.length > 0 ? { mustNotHave } : {}
+    });
+  }
+  if (layers.length === 0) return void 0;
+  const worn = Array.isArray(value.startState?.worn) ? value.startState.worn.filter((id) => typeof id === "string" && id.trim().length > 0) : layers.map((layer) => layer.id);
+  const stateImages = Array.isArray(value.stateImages) ? value.stateImages.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const wornIds = Array.isArray(entry.worn) ? entry.worn.filter((id) => typeof id === "string" && Boolean(id.trim())) : [];
+    const urls = Array.isArray(entry.referenceImageUrls) ? entry.referenceImageUrls.filter((url2) => typeof url2 === "string") : [];
+    return [{ worn: wornIds, referenceImageUrls: urls }];
+  }) : void 0;
+  return {
+    layers,
+    startState: { worn },
+    ...stateImages && stateImages.length > 0 ? { stateImages } : {}
+  };
+}
+function characterFromRecord(record2) {
+  return {
+    name: record2.name,
+    appearance: record2.appearance,
+    description: record2.description,
+    wardrobe: record2.wardrobe
+  };
+}
+
+// mcp/characters.ts
+var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join6(homedir3(), ".theshow", "characters");
 function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
 function shortHash(value) {
-  return createHash3("sha1").update(value).digest("hex").slice(0, 8);
+  return createHash4("sha1").update(value).digest("hex").slice(0, 8);
 }
 function slugFor(name) {
   const slug = name.trim().toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/g, "");
@@ -43413,10 +44756,10 @@ function sameName(a, b) {
 }
 function candidateFolders(root, name) {
   const slug = slugFor(name);
-  return [join5(root, slug), join5(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
+  return [join6(root, slug), join6(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
 }
 function parseRecord(folder, raw) {
-  const file2 = join5(folder, "character.json");
+  const file2 = join6(folder, "character.json");
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.name !== "string" || !parsed.name.trim()) {
@@ -43427,6 +44770,8 @@ function parseRecord(folder, raw) {
       name: parsed.name.trim(),
       role: typeof parsed.role === "string" ? parsed.role : void 0,
       description: typeof parsed.description === "string" ? parsed.description : void 0,
+      appearance: typeof parsed.appearance === "string" ? parsed.appearance : void 0,
+      wardrobe: parseWardrobe(parsed.wardrobe),
       referenceImageUrls: Array.isArray(parsed.referenceImageUrls) ? parsed.referenceImageUrls.filter((ref) => typeof ref === "string") : [],
       createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : "",
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
@@ -43438,9 +44783,9 @@ function parseRecord(folder, raw) {
   }
 }
 async function readRecord(folder, options = {}) {
-  const file2 = join5(folder, "character.json");
+  const file2 = join6(folder, "character.json");
   try {
-    return parseRecord(folder, await readFile3(file2, "utf8"));
+    return parseRecord(folder, await readFile5(file2, "utf8"));
   } catch (err) {
     if (!options.quiet) {
       console.error(`theShow: skipping character folder ${folder}:`, err);
@@ -43454,14 +44799,242 @@ async function folderForWrite(root, name) {
   const record2 = await readRecord(plain, { quiet: true });
   return record2 && sameName(record2.name, name) ? plain : hashed;
 }
+var CHARACTER_LOCK_WAIT_MS = 1e4;
+var CHARACTER_LOCK_STALE_MS = 3e4;
+var CHARACTER_LOCK_REFRESH_MS = 1e4;
+var CHARACTER_LOCK_EMPTY_GRACE_MS = 1e3;
+function characterLockRefreshMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_REFRESH_MS);
+  if (Number.isFinite(raw) && raw >= 10) return raw;
+  return CHARACTER_LOCK_REFRESH_MS;
+}
+function characterLockWaitMs() {
+  const raw = Number(process.env.THESHOW_CHARACTER_LOCK_WAIT_MS);
+  if (Number.isFinite(raw) && raw >= 50) return raw;
+  return CHARACTER_LOCK_WAIT_MS;
+}
+async function readCharacterLock(lockPath) {
+  try {
+    const parsed = JSON.parse(await readFile5(lockPath, "utf8"));
+    if (typeof parsed.pid !== "number" || typeof parsed.at !== "number") return void 0;
+    return {
+      pid: parsed.pid,
+      token: typeof parsed.token === "string" ? parsed.token : "",
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: parsed.at
+    };
+  } catch {
+    return void 0;
+  }
+}
+async function lockFileAge(lockPath) {
+  try {
+    const info = await stat3(lockPath);
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function characterLockIsStale(info, ageMs, now = Date.now()) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (info.at > now + 5e3) return true;
+  if (now - info.at > CHARACTER_LOCK_STALE_MS) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return false;
+}
+function characterLockBody(token, at = Date.now()) {
+  return JSON.stringify({ pid: process.pid, token, host: processHost, at });
+}
+async function refreshCharacterLock(lockPath, token) {
+  let handle;
+  try {
+    handle = await open3(lockPath, "r+");
+    const raw = await handle.readFile("utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed.token !== token) return;
+    const body = Buffer.from(characterLockBody(token));
+    await handle.write(body, 0, body.length, 0);
+    await handle.truncate(body.length);
+    await handle.sync();
+  } catch {
+  } finally {
+    await handle?.close();
+  }
+}
+async function releaseCharacterLock(lockPath, token) {
+  const tomb = `${lockPath}.unlock.${randomUUID2()}`;
+  try {
+    await rename2(lockPath, tomb);
+  } catch {
+    return;
+  }
+  const moved = await readCharacterLock(tomb);
+  if (moved?.token === token) {
+    await unlink2(tomb).catch(() => void 0);
+    return;
+  }
+  await restoreIfAbsent(tomb, lockPath);
+}
+var activeLockTurns = /* @__PURE__ */ new Set();
+function lockTurnPath(lockPath) {
+  return `${lockPath}.turn`;
+}
+async function readLockTurn(path) {
+  try {
+    const raw = await readFile5(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
+  }
+}
+function lockTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CHARACTER_LOCK_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CHARACTER_LOCK_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeLockTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function acquireLockTurn(lockPath) {
+  const token = randomUUID2();
+  const dest = lockTurnPath(lockPath);
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  if (await publishExclusive(dest, body)) {
+    activeLockTurns.add(token);
+    return token;
+  }
+  const age = await lockFileAge(dest);
+  const current = await readLockTurn(dest);
+  if (age === void 0 || !lockTurnIsStale(current, age)) return void 0;
+  let raw = "";
+  try {
+    raw = await readFile5(dest, "utf8");
+  } catch {
+    return void 0;
+  }
+  const tomb = `${dest}.steal.${randomUUID2()}`;
+  try {
+    await rename2(dest, tomb);
+    const moved = await readFile5(tomb, "utf8").catch(() => "");
+    if (moved !== raw) {
+      await restoreIfAbsent(tomb, dest);
+      return void 0;
+    }
+  } catch (err) {
+    if (err.code === "ENOENT") return void 0;
+    throw err;
+  } finally {
+    await unlink2(tomb).catch(() => void 0);
+  }
+  if (!await publishExclusive(dest, body)) return void 0;
+  const confirmed = await readLockTurn(dest);
+  if (confirmed?.token !== token) return void 0;
+  activeLockTurns.add(token);
+  return token;
+}
+async function releaseLockTurn(lockPath, token) {
+  activeLockTurns.delete(token);
+  const dest = lockTurnPath(lockPath);
+  const current = await readLockTurn(dest);
+  if (current?.token !== token) return;
+  await unlink2(dest).catch(() => void 0);
+}
+async function stealStaleLock(lockPath) {
+  const turn = await acquireLockTurn(lockPath);
+  if (!turn) return;
+  let tomb;
+  let drop = false;
+  try {
+    const age = await lockFileAge(lockPath);
+    const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
+    if (age === void 0 || !characterLockIsStale(info, age)) return;
+    const stillHeld = await readLockTurn(lockTurnPath(lockPath));
+    if (stillHeld?.token !== turn) return;
+    let raw = "";
+    try {
+      raw = await readFile5(lockPath, "utf8");
+    } catch {
+      return;
+    }
+    tomb = `${lockPath}.steal.${randomUUID2()}`;
+    try {
+      await rename2(lockPath, tomb);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        tomb = void 0;
+        return;
+      }
+      throw err;
+    }
+    let tombRaw = "";
+    try {
+      tombRaw = await readFile5(tomb, "utf8");
+    } catch {
+      tombRaw = "";
+    }
+    const tombAge = await lockFileAge(tomb);
+    const tombInfo = await readCharacterLock(tomb);
+    if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    const heldAfterMove = await readLockTurn(lockTurnPath(lockPath));
+    if (heldAfterMove?.token !== turn) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    drop = true;
+  } finally {
+    if (tomb && !drop) await restoreIfAbsent(tomb, lockPath).catch(() => void 0);
+    if (tomb) await unlink2(tomb).catch(() => void 0);
+    await releaseLockTurn(lockPath, turn);
+  }
+}
+async function withFolderLock(folder, body) {
+  await mkdir4(folder, { recursive: true });
+  const lockPath = join6(folder, ".write.lock");
+  const deadline = Date.now() + characterLockWaitMs();
+  let delay = 20;
+  const token = randomUUID2();
+  while (true) {
+    const published = await publishExclusive(lockPath, characterLockBody(token));
+    if (published) {
+      const refresh = setInterval(() => {
+        void refreshCharacterLock(lockPath, token);
+      }, characterLockRefreshMs());
+      refresh.unref?.();
+      try {
+        return await body();
+      } finally {
+        clearInterval(refresh);
+        await releaseCharacterLock(lockPath, token);
+      }
+    }
+    if (characterLockIsStale(await readCharacterLock(lockPath), await lockFileAge(lockPath))) {
+      await stealStaleLock(lockPath);
+      continue;
+    }
+    if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
+    await new Promise((resolve2) => setTimeout(resolve2, delay));
+    delay = Math.min(delay * 2, 250);
+  }
+}
 function copyNameFor(source) {
-  const file2 = basename(source);
+  const file2 = basename2(source);
   const extension = file2.match(/(\.[a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? "";
   const stem = slugFor(file2.replace(/\.[^.]*$/, "")).slice(0, 40) || "ref";
   return `${stem}-${shortHash(source)}${extension}`;
 }
 async function keepReferences(input2) {
-  const refsDir = join5(input2.folder, "refs");
+  const refsDir = join6(input2.folder, "refs");
   const kept = [];
   const seen = /* @__PURE__ */ new Set();
   for (const ref of input2.refs) {
@@ -43473,15 +45046,15 @@ async function keepReferences(input2) {
       continue;
     }
     const source = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-    if (source === refsDir || source.startsWith(refsDir + sep)) {
+    if (source === refsDir || source.startsWith(refsDir + sep2)) {
       kept.push(source);
       continue;
     }
-    const target = join5(refsDir, copyNameFor(source));
+    const target = join6(refsDir, copyNameFor(source));
     try {
-      const bytes = await readFile3(source);
-      await mkdir3(refsDir, { recursive: true });
-      await writeFile3(target, bytes);
+      const bytes = await readFile5(source);
+      await mkdir4(refsDir, { recursive: true });
+      await writeFile4(target, bytes);
       kept.push(target);
     } catch (err) {
       input2.warnings.push(
@@ -43491,55 +45064,82 @@ async function keepReferences(input2) {
   }
   return kept;
 }
+async function keepWardrobeReferences(input2) {
+  const stateImages = input2.wardrobe.stateImages ?? [];
+  if (stateImages.length === 0) return input2.wardrobe;
+  const kept = [];
+  for (const entry of stateImages) {
+    const referenceImageUrls = await keepReferences({
+      folder: input2.folder,
+      refs: entry.referenceImageUrls,
+      warnings: input2.warnings
+    });
+    kept.push({ worn: entry.worn, referenceImageUrls });
+  }
+  return { ...input2.wardrobe, stateImages: kept };
+}
 async function saveCharacter(input2) {
   const name = input2.name.trim();
   if (!name) throw new Error("A character needs a name.");
   const root = charactersRoot();
   const folder = await folderForWrite(root, name);
-  const existing = await readRecord(folder, { quiet: true });
-  const warnings = [];
-  const referenceImageUrls = await keepReferences({
-    folder,
-    refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
-    warnings
+  return withFolderLock(folder, async () => {
+    const warnings = [];
+    const existing = await readRecord(folder, { quiet: true });
+    const referenceImageUrls = await keepReferences({
+      folder,
+      refs: input2.referenceImageUrls ?? existing?.referenceImageUrls ?? [],
+      warnings
+    });
+    const wardrobeInput = input2.wardrobe ?? existing?.wardrobe;
+    const wardrobe = wardrobeInput ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings }) : void 0;
+    const latest = await readRecord(folder, { quiet: true });
+    const base = latest ?? existing;
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const record2 = {
+      id: base?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
+      name,
+      role: input2.role ?? base?.role,
+      description: input2.description ?? base?.description,
+      appearance: input2.appearance ?? base?.appearance,
+      wardrobe: input2.wardrobe ? wardrobe : base?.wardrobe ?? wardrobe,
+      referenceImageUrls: input2.referenceImageUrls ? referenceImageUrls : base?.referenceImageUrls ?? referenceImageUrls,
+      createdAt: base?.createdAt || now,
+      updatedAt: now,
+      folder
+    };
+    const onDisk = {
+      id: record2.id,
+      name: record2.name,
+      role: record2.role,
+      description: record2.description,
+      appearance: record2.appearance,
+      wardrobe: record2.wardrobe,
+      referenceImageUrls: record2.referenceImageUrls,
+      createdAt: record2.createdAt,
+      updatedAt: record2.updatedAt
+    };
+    for (const key of Object.keys(onDisk)) {
+      if (onDisk[key] === void 0) delete onDisk[key];
+    }
+    try {
+      await mkdir4(folder, { recursive: true });
+      await atomicWriteFile(join6(folder, "character.json"), JSON.stringify(onDisk, null, 2));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Could not write ${join6(folder, "character.json")}: ${message}`);
+      console.error(`theShow: could not save character ${name}:`, err);
+    }
+    if (warnings.length > 0) record2.warnings = warnings;
+    return record2;
   });
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const record2 = {
-    id: existing?.id ?? `char_${Date.now().toString(36)}_${shortHash(name)}`,
-    name,
-    role: input2.role ?? existing?.role,
-    description: input2.description ?? existing?.description,
-    referenceImageUrls,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    folder
-  };
-  const onDisk = {
-    id: record2.id,
-    name: record2.name,
-    role: record2.role,
-    description: record2.description,
-    referenceImageUrls: record2.referenceImageUrls,
-    createdAt: record2.createdAt,
-    updatedAt: record2.updatedAt
-  };
-  try {
-    await mkdir3(folder, { recursive: true });
-    await writeFile3(join5(folder, "character.json"), JSON.stringify(onDisk, null, 2), "utf8");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    warnings.push(`Could not write ${join5(folder, "character.json")}: ${message}`);
-    console.error(`theShow: could not save character ${name}:`, err);
-  }
-  if (warnings.length > 0) record2.warnings = warnings;
-  return record2;
 }
 function loadCharacterSync(name) {
   const root = charactersRoot();
   for (const folder of candidateFolders(root, name)) {
     let raw;
     try {
-      raw = readFileSync2(join5(folder, "character.json"), "utf8");
+      raw = readFileSync2(join6(folder, "character.json"), "utf8");
     } catch {
       continue;
     }
@@ -43558,7 +45158,7 @@ async function loadAllCharacters() {
   }
   const newest = /* @__PURE__ */ new Map();
   for (const entry of folders) {
-    const record2 = await readRecord(join5(root, entry));
+    const record2 = await readRecord(join6(root, entry));
     if (!record2) continue;
     const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
     const previous = newest.get(key);
@@ -43567,14 +45167,799 @@ async function loadAllCharacters() {
   return [...newest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// mcp/weighted.ts
+var TIER1_PASS_SCORE = 0.8;
+var TIER1_WEIGHTS = {
+  freezeRun: 0.4,
+  speechCoverage: 0.3,
+  joinSsim: 0.2,
+  motionNatural: 0.1
+};
+function violation(code, shot, message) {
+  return { code, shot, message };
+}
+function layerItem(layer) {
+  return layer.item.trim();
+}
+function scoreTier1(plan) {
+  const metrics = plan.tier1;
+  if (!metrics) return void 0;
+  const score = metrics.freezeRun * TIER1_WEIGHTS.freezeRun + metrics.speechCoverage * TIER1_WEIGHTS.speechCoverage + metrics.joinSsim * TIER1_WEIGHTS.joinSsim + metrics.motionNatural * TIER1_WEIGHTS.motionNatural;
+  return { score, pass: score >= TIER1_PASS_SCORE };
+}
+function closureWords(layer) {
+  const words = [...layer.mustNotHave ?? []];
+  if (layer.closure === "zip") words.push("button", "buttons", "buttoned");
+  if (layer.closure === "buttons") words.push("zip", "zipped", "zipper");
+  return words;
+}
+function evaluateWeighted(plan) {
+  const violations = [];
+  const warnings = [];
+  const shots = replayContinuity(plan);
+  const initialProps = (plan.props ?? []).map((prop) => ({ ...prop }));
+  const pendingVision = [];
+  for (const shot of shots) {
+    const names = /* @__PURE__ */ new Map();
+    const holders = /* @__PURE__ */ new Map();
+    for (const prop of shot.propsInView) {
+      const key = `${prop.locationId}::${prop.name.trim().toLowerCase()}`;
+      const ids = names.get(key) ?? [];
+      ids.push(prop.id);
+      names.set(key, ids);
+      if (!prop.holder) continue;
+      const held = holders.get(prop.holder) ?? [];
+      held.push(prop);
+      holders.set(prop.holder, held);
+    }
+    for (const [key, ids] of names) {
+      if (ids.length < 2) continue;
+      const name = key.split("::")[1] ?? key;
+      violations.push(violation(
+        "count",
+        shot.shot,
+        `Shot ${shot.shot} has ${ids.length} of "${name}" in the same room (${ids.join(", ")}).`
+      ));
+    }
+    for (const [holder, held] of holders) {
+      const exclusive = /hanger/i.test(holder) || held.some((prop) => prop.contact === "hanging" || prop.contact === "held");
+      if (exclusive && held.length > 1) {
+        violations.push(violation(
+          "contact",
+          shot.shot,
+          `Shot ${shot.shot} puts ${held.map((prop) => prop.name).join(" and ")} on one holder (${holder}).`
+        ));
+      }
+      const holderIsCharacter = plan.characters.some(
+        (character) => character.name.toLowerCase() === holder.toLowerCase()
+      );
+      for (const prop of held) {
+        if (holderIsCharacter && prop.contact === "hanging") {
+          violations.push(violation(
+            "contact",
+            shot.shot,
+            `Shot ${shot.shot} has ${prop.name} hanging and held by ${holder}.`
+          ));
+        }
+      }
+    }
+  }
+  for (const prop of initialProps) {
+    if (!prop.fixed) continue;
+    for (const shot of shots) {
+      if (shot.locationId && shot.locationId !== prop.locationId) continue;
+      const found = shot.propsInView.find((entry) => entry.id === prop.id);
+      if (!found) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} is missing in shot ${shot.shot}.`
+        ));
+        continue;
+      }
+      if (found.placement !== prop.placement) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} changed place in shot ${shot.shot}.`
+        ));
+      }
+      if (prop.bbox && found.bbox && prop.bbox.some((value, index) => value !== found.bbox?.[index])) {
+        violations.push(violation(
+          "set-geometry",
+          shot.shot,
+          `Fixed set piece ${prop.name} changed size in shot ${shot.shot}.`
+        ));
+      }
+    }
+  }
+  for (const prop of initialProps) {
+    if (prop.bbox) pendingVision.push(`set-geometry:${prop.id}`);
+    if (prop.solid) pendingVision.push(`contact:${prop.id}`);
+  }
+  for (const event of plan.propEvents ?? []) {
+    if (event.action !== "move") continue;
+    const prop = initialProps.find((entry) => entry.id === event.propId);
+    if (!prop?.solid) continue;
+    const clearance = (plan.bodyClearance ?? []).find(
+      (entry) => entry.shot === event.shot && entry.solidId === prop.id
+    );
+    if (clearance && clearance.clear === false) {
+      violations.push(violation(
+        "contact",
+        event.shot,
+        `Shot ${event.shot} moves ${prop.name} while the body is still in its path.`
+      ));
+    }
+  }
+  for (const mark of plan.scaleMarks ?? []) {
+    if (mark.measuredBodyH === void 0) {
+      pendingVision.push(`scale:${mark.shot}`);
+      continue;
+    }
+    const tol = Math.abs(mark.tolPct) / 100;
+    const delta = mark.bodyH === 0 ? Infinity : Math.abs(mark.measuredBodyH - mark.bodyH) / mark.bodyH;
+    if (delta > tol) {
+      violations.push(violation(
+        "scale",
+        mark.shot,
+        `Shot ${mark.shot} body height ${mark.measuredBodyH}px is outside ${mark.bodyH}px \xB1${mark.tolPct}%.`
+      ));
+    }
+  }
+  for (const spoken of plan.spokenLines ?? []) {
+    if (!spoken.line.trim()) continue;
+    const prompt = (plan.shotPrompts ?? []).find((entry) => entry.shot === spoken.shot)?.prompt;
+    if (!prompt || !prompt.includes(spoken.line)) {
+      violations.push(violation(
+        "speech-verbatim",
+        spoken.shot,
+        `Shot ${spoken.shot} must speak this exact line: ${spoken.line}`
+      ));
+    }
+  }
+  const hasSpeech = (plan.spokenLines ?? []).some((spoken) => spoken.line.trim().length > 0);
+  if (hasSpeech && !plan.voiceId?.trim()) {
+    violations.push(violation(
+      "voice",
+      plan.spokenLines?.[0]?.shot ?? 1,
+      "A spoken line needs a voice id, such as rex."
+    ));
+  }
+  if (plan.voiceId?.trim()) {
+    const spokenShots = new Set(
+      (plan.spokenLines ?? []).filter((spoken) => spoken.line.trim().length > 0).map((spoken) => spoken.shot)
+    );
+    for (const entry of plan.shotPrompts ?? []) {
+      if (entry.prompt.includes("<AUDIO_0>")) continue;
+      const speaks = spokenShots.has(entry.shot);
+      if (plan.promptStyle === "sections-v2" && !speaks) continue;
+      const message = speaks ? `Shot ${entry.shot} speaks a line but the prompt has no <AUDIO_0> tag.` : `Shot ${entry.shot} is voiced as ${plan.voiceId.trim()} but the prompt has no <AUDIO_0> tag.`;
+      if (plan.promptStyle === "sections-v2") {
+        violations.push(violation("voice", entry.shot, message));
+      } else {
+        warnings.push(message);
+      }
+    }
+  }
+  for (const character of plan.characters) {
+    for (const layer of character.wardrobe?.layers ?? []) {
+      const banned = closureWords(layer);
+      if (banned.length === 0) continue;
+      const names = [layerItem(layer), layer.short, layer.id.replace(/-/g, " ")].filter(
+        (name) => Boolean(name && name.trim())
+      );
+      for (const prompt of plan.shotPrompts ?? []) {
+        const hay = prompt.prompt.toLowerCase();
+        for (const name of names) {
+          const at = hay.indexOf(name.toLowerCase());
+          if (at < 0) continue;
+          const window = hay.slice(Math.max(0, at - 48), at + name.length + 48);
+          for (const word of banned) {
+            if (!window.includes(word.toLowerCase())) continue;
+            violations.push(violation(
+              "closure",
+              prompt.shot,
+              `Shot ${prompt.shot} uses "${word}" next to ${layerItem(layer)}.`
+            ));
+          }
+        }
+      }
+    }
+  }
+  for (const prompt of plan.shotPrompts ?? []) {
+    if (/shrugs?/i.test(prompt.prompt) && /off (?:his|her|their) shoulders/i.test(prompt.prompt)) {
+      violations.push(violation(
+        "garment-integrity",
+        prompt.shot,
+        `Shot ${prompt.shot} shrugs a garment off both shoulders, which splits it into two pieces.`
+      ));
+    }
+  }
+  const hasLayers = plan.characters.some((character) => (character.wardrobe?.layers.length ?? 0) > 0);
+  const hasPicture = Boolean(plan.hasReferencePicture || plan.hasPortrait);
+  if (hasLayers && !hasPicture) {
+    violations.push(violation(
+      "wardrobe-unchecked",
+      1,
+      "Wardrobe is in play and neither a portrait nor a base picture is attached."
+    ));
+  }
+  let vision = "not-required";
+  if (pendingVision.length > 0) {
+    if (plan.humanVisionSignOff) {
+      vision = "human-signed-off";
+    } else {
+      vision = "fail-closed";
+      violations.push(violation(
+        "vision-unchecked",
+        1,
+        `Vision checking is still a stub, so this take is blocked until a person signs off. Pending: ${pendingVision.join(", ")}.`
+      ));
+    }
+  }
+  const tier1 = scoreTier1(plan);
+  if (tier1 && !tier1.pass) {
+    violations.push(violation(
+      "tier1-score",
+      1,
+      `Tier 1 score ${tier1.score.toFixed(2)} is under ${TIER1_PASS_SCORE.toFixed(2)}.`
+    ));
+  }
+  return { violations, vision, warnings, ...tier1 ? { tier1 } : {} };
+}
+
+// mcp/contracts.ts
+var MAX_STEPS_PER_SHOT = 3;
+var RENDER_BLOCKED_BY_CONTRACT = "render_sequence refused to start because the shot contracts failed validation. Pass overrideValidation: true to proceed anyway.";
+var RENDER_UNCHECKED = "render_sequence refused to start because no continuity ledger or shot contracts were provided. A plan with nothing to check is unchecked, and unchecked does not spend.";
+function messageForBoard(message) {
+  const text = message?.trim() ? message : "board_film refused to start because the shot contracts failed validation. Pass overrideValidation: true to board anyway. confirm alone does not unblock it.";
+  return text.replaceAll("render_sequence refused to start", "board_film refused to start").replaceAll("rendering may proceed", "boarding may proceed");
+}
+function layerType2(layer) {
+  return layer.type ?? "clothing";
+}
+function allLayers(plan) {
+  return plan.characters.flatMap((character) => character.wardrobe?.layers ?? []);
+}
+function findLayer(plan, id) {
+  const key = id.trim().toLowerCase();
+  return allLayers(plan).find((layer) => layer.id.toLowerCase() === key);
+}
+function sortIds(ids) {
+  return [...ids].map((id) => id.trim()).filter(Boolean).sort();
+}
+function sameIds(a, b) {
+  const left = sortIds(a);
+  const right = sortIds(b);
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+function sameRecord(a, b) {
+  const keys = /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a[key] ?? "") !== (b[key] ?? "")) return false;
+  }
+  return true;
+}
+function sameCounts(a, b) {
+  const left = a ?? {};
+  const right = b ?? {};
+  const keys = /* @__PURE__ */ new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] ?? 0) !== (right[key] ?? 0)) return false;
+  }
+  return true;
+}
+function sameShotState(a, b) {
+  return sameIds(a.worn, b.worn) && sameRecord(a.holders, b.holders) && sameCounts(a.counts, b.counts);
+}
+function sameTextList(a, b) {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+function isHangerDest(to, plan) {
+  if (!to?.trim()) return false;
+  if (/hanger/i.test(to)) return true;
+  const prop = resolveProp(plan.props ?? [], to);
+  return Boolean(prop && /hanger/i.test(`${prop.id} ${prop.name}`));
+}
+function hangerLike(prop) {
+  return /hanger/i.test(`${prop.id} ${prop.name}`);
+}
+function nounFor(layer) {
+  return layer.id.replace(/-/g, " ");
+}
+function singularNoun(layer) {
+  return nounFor(layer).replace(/shoes$/i, "shoe");
+}
+function expandWardrobeEventToSteps(event, plan) {
+  const layer = findLayer(plan, event.layer);
+  if (!layer) return [`${event.action} ${event.layer}`];
+  const item = layer.item;
+  const type = layerType2(layer);
+  if (event.action === "adjust") {
+    return [event.note?.trim() || `adjusts ${item}`];
+  }
+  if (event.action === "putOn") {
+    return [type === "footwear" ? `puts on both ${item}` : `puts on ${item}`];
+  }
+  if (type === "footwear") {
+    return [`removes both ${item}`];
+  }
+  const steps = [];
+  const alreadyOpen = layer.closure === "open" || layer.closure === "slip-on" || layer.closure === "none";
+  if (!alreadyOpen && /\b(coat|jacket|blazer)\b/i.test(`${layer.id} ${item}`)) {
+    steps.push(`unbuttons ${item}`);
+  }
+  steps.push(`removes ${item}`);
+  if (isHangerDest(event.to, plan)) {
+    steps.push(`hangs ${item} on the empty hanger; the hanger stays on the rail`);
+  }
+  return steps;
+}
+function expandPropEventToSteps(event, props) {
+  const current = props.find((prop) => prop.id === event.propId);
+  const name = event.name ?? current?.name ?? event.propId;
+  const holder = event.holder ?? "";
+  if (event.action === "move" && /hanger/i.test(`${holder} ${event.placement ?? ""}`)) {
+    return [`hangs ${name} on the empty hanger; the hanger stays on the rail`];
+  }
+  if (event.action === "move") return [`moves ${name}`];
+  if (event.action === "add") return [`adds ${name}`];
+  if (event.action === "remove") return [`removes ${name} from the set`];
+  return [];
+}
+function stepsForShot(plan, shot) {
+  const named = (plan.shotSteps ?? []).find((entry) => entry.shot === shot);
+  if (named) return [...named.steps];
+  const wardrobe = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
+  const props = (plan.propEvents ?? []).filter((event) => event.shot === shot);
+  return [
+    ...wardrobe.flatMap((event) => expandWardrobeEventToSteps(event, plan)),
+    ...props.flatMap((event) => expandPropEventToSteps(event, plan.props ?? []))
+  ];
+}
+function holdersFromProps(props) {
+  const holders = {};
+  for (const prop of props) {
+    const held = props.filter((other) => other.holder === prop.id);
+    if (held.length === 0 && !hangerLike(prop)) continue;
+    holders[prop.id] = held.length === 0 ? `empty, ${prop.placement}` : `${prop.placement}, holding ${held.map((entry) => entry.name).join(" and ")}`;
+  }
+  return holders;
+}
+function wornFrom(snapshot) {
+  const worn = (snapshot?.checklists ?? []).flatMap((list) => list.worn);
+  const clothing = worn.filter((layer) => layerType2(layer) === "clothing").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const shoes = worn.filter((layer) => layerType2(layer) === "footwear").sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  return [...clothing, ...shoes].map((layer) => layer.id);
+}
+function stagedLayerIds(snapshot) {
+  return (snapshot?.checklists ?? []).flatMap((list) => list.staged.map((item) => item.layerId));
+}
+function countsFor(plan, snapshot, worn) {
+  const counts = {};
+  const staged = new Set(stagedLayerIds(snapshot));
+  const props = snapshot?.propsInView ?? [];
+  for (const layer of allLayers(plan)) {
+    const unit = layerType2(layer) === "footwear" ? 2 : 1;
+    const isWorn = worn.includes(layer.id);
+    const isStaged = staged.has(layer.id);
+    const matchingProps = props.filter((prop) => {
+      if (prop.id.startsWith("garment-")) return false;
+      return prop.id === layer.id || prop.name.trim().toLowerCase() === layer.item.trim().toLowerCase();
+    });
+    counts[layer.id] = (isWorn ? unit : 0) + (isStaged ? unit : 0) + (matchingProps.length > 0 && !isWorn && !isStaged ? unit : 0);
+  }
+  return counts;
+}
+function stateFromSnapshot(plan, snapshot) {
+  const worn = wornFrom(snapshot);
+  return {
+    worn,
+    holders: holdersFromProps(snapshot?.propsInView ?? []),
+    counts: countsFor(plan, snapshot, worn)
+  };
+}
+function initialSnapshot(plan) {
+  const [opening] = replayContinuity({
+    ...plan,
+    shotCount: Math.max(1, plan.shotCount),
+    wardrobeEvents: [],
+    propEvents: []
+  });
+  return opening;
+}
+function itemsInPlay(requires, ensures, layers) {
+  const ids = /* @__PURE__ */ new Set([...requires.worn, ...ensures.worn]);
+  for (const layer of layers) {
+    if ((requires.counts[layer.id] ?? 0) > 0 || (ensures.counts[layer.id] ?? 0) > 0) {
+      ids.add(layer.id);
+    }
+  }
+  return layers.filter((layer) => ids.has(layer.id));
+}
+function deriveInvariants(plan, requires, ensures) {
+  const layers = allLayers(plan);
+  const unchanged = requires.worn.filter((id) => ensures.worn.includes(id));
+  const invariants = [];
+  for (const id of unchanged) {
+    const layer = findLayer(plan, id);
+    if (!layer) continue;
+    invariants.push(`${layer.item} worn the whole shot`);
+    if (layerType2(layer) === "footwear") {
+      invariants.push(`exactly 2 ${layer.item}, on feet`);
+    }
+  }
+  for (const layer of itemsInPlay(requires, ensures, layers)) {
+    if (layerType2(layer) === "footwear") {
+      if (!unchanged.includes(layer.id)) {
+        invariants.push(`exactly 2 ${layer.item} in frame`);
+      }
+    } else {
+      invariants.push(`exactly one ${layer.item} in frame`);
+    }
+  }
+  return invariants;
+}
+function deriveForbidden(plan, requires, ensures) {
+  const layers = allLayers(plan);
+  const worn = /* @__PURE__ */ new Set([...requires.worn, ...ensures.worn]);
+  const forbidden = [];
+  const hangerPresent = Object.keys(requires.holders).concat(Object.keys(ensures.holders)).some((id) => /hanger/i.test(id));
+  for (const layer of itemsInPlay(requires, ensures, layers)) {
+    if (layerType2(layer) === "footwear") {
+      forbidden.push(`a third ${singularNoun(layer)}`);
+      forbidden.push(`only one ${singularNoun(layer)}`);
+    } else {
+      forbidden.push(`second ${nounFor(layer)}`);
+      if (hangerPresent && worn.has(layer.id)) {
+        forbidden.push(`${nounFor(layer)} on hanger`);
+      }
+    }
+  }
+  return forbidden;
+}
+function deriveContracts(plan) {
+  const start = initialSnapshot(plan);
+  const ends = replayContinuity(plan);
+  const footwear = allLayers(plan).filter((layer) => layerType2(layer) === "footwear").map((layer) => layer.id);
+  return ends.map((snapshot, index) => {
+    const requires = stateFromSnapshot(plan, index === 0 ? start : ends[index - 1]);
+    const ensures = stateFromSnapshot(plan, snapshot);
+    return {
+      shot: snapshot.shot,
+      requires,
+      steps: stepsForShot(plan, snapshot.shot),
+      ensures,
+      invariants: deriveInvariants(plan, requires, ensures),
+      forbidden: deriveForbidden(plan, requires, ensures),
+      ...footwear.length > 0 ? { footwear } : {}
+    };
+  });
+}
+function heldNames(holders) {
+  const names = [];
+  for (const value of Object.values(holders)) {
+    const match = value.match(/holding (.+)$/i);
+    if (!match) continue;
+    names.push(...match[1].split(/ and /i).map((part) => part.trim().toLowerCase()));
+  }
+  return names;
+}
+function wornOnHolder(state) {
+  const held = heldNames(state.holders);
+  if (held.length === 0) return [];
+  return state.worn.filter((id) => {
+    const needle = id.replace(/-/g, " ").toLowerCase();
+    return held.some((name) => name.includes(needle) || name.includes(id.toLowerCase()));
+  });
+}
+function footwearIdsOf(contract) {
+  if (contract.footwear && contract.footwear.length > 0) return contract.footwear;
+  return [.../* @__PURE__ */ new Set([...contract.requires.worn, ...contract.ensures.worn])].filter((id) => /shoe/i.test(id));
+}
+function countViolations(contract) {
+  const found = [];
+  const footwear = footwearIdsOf(contract);
+  const unitFor = (id) => footwear.includes(id) ? 2 : 1;
+  for (const state of [contract.requires, contract.ensures]) {
+    const held = wornOnHolder(state);
+    if (held.length > 0) {
+      found.push({
+        code: "worn-and-held",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} has ${held.join(", ")} both worn and on a holder.`
+      });
+    }
+    for (const id of /* @__PURE__ */ new Set([...Object.keys(state.counts ?? {}), ...state.worn])) {
+      const count = state.counts?.[id] ?? 0;
+      const unit = unitFor(id);
+      if (count > unit) {
+        found.push({
+          code: "duplicate-garment",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} of ${id}, which is more than the ${unit} that should exist.`
+        });
+        continue;
+      }
+      if (count !== 0 && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} of ${id}. A garment is ${unit} or it is absent.`
+        });
+        continue;
+      }
+      if (state.worn.includes(id) && count !== unit) {
+        found.push({
+          code: "count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} wears ${id} but counts ${count}, not ${unit}.`
+        });
+      }
+    }
+  }
+  for (const id of footwear) {
+    for (const state of [contract.requires, contract.ensures]) {
+      const count = state.counts?.[id];
+      if (count === void 0) continue;
+      if (count !== 0 && count !== 2) {
+        found.push({
+          code: "footwear-count",
+          shot: contract.shot,
+          message: `Shot ${contract.shot} counts ${count} ${id}, but footwear is a pair and must be 0 or 2.`
+        });
+      }
+    }
+  }
+  for (const invariant of contract.invariants) {
+    const match = invariant.match(/exactly\s+(\d+|one|two|three|four|a|an)\s+(.+?)(?:,|$)/i);
+    if (!match) continue;
+    const words = { one: 1, two: 2, three: 3, four: 4, a: 1, an: 1 };
+    const raw = match[1].toLowerCase();
+    const count = words[raw] ?? Number(raw);
+    const label = match[2].toLowerCase();
+    if (/shoe/i.test(label) && count !== 2) {
+      found.push({
+        code: "footwear-count",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariant "${invariant}" uses a footwear count that is not a pair.`
+      });
+      continue;
+    }
+    if (!/shoe/i.test(label) && count !== 1) {
+      found.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariant "${invariant}" counts a garment as ${count}. A garment stays one whole piece.`
+      });
+    }
+  }
+  return found;
+}
+function validateContracts(contracts) {
+  const violations = [];
+  for (const contract of contracts) {
+    if (contract.steps.length > MAX_STEPS_PER_SHOT) {
+      violations.push({
+        code: "too-many-steps",
+        shot: contract.shot,
+        suggestSplit: true,
+        message: `Shot ${contract.shot} has ${contract.steps.length} steps, which is more than ${MAX_STEPS_PER_SHOT}. Split it so no shot has more than ${MAX_STEPS_PER_SHOT} steps. Suggested split after step ${MAX_STEPS_PER_SHOT}.`
+      });
+    }
+    violations.push(...countViolations(contract));
+  }
+  const ordered = [...contracts].sort((a, b) => a.shot - b.shot);
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1];
+    const current = ordered[index];
+    if (sameShotState(current.requires, previous.ensures)) continue;
+    const appeared = current.requires.worn.filter((id) => !previous.ensures.worn.includes(id));
+    const missing = previous.ensures.worn.filter((id) => !current.requires.worn.includes(id));
+    const extras = [
+      appeared.length > 0 ? `Reappeared or newly required: ${appeared.join(", ")}.` : "",
+      missing.length > 0 ? `Missing from this start: ${missing.join(", ")}.` : ""
+    ].filter(Boolean).join(" ");
+    violations.push({
+      code: "requires-mismatch",
+      shot: current.shot,
+      message: `Shot ${current.shot} requires does not match shot ${previous.shot} ensures.` + (extras ? ` ${extras}` : "")
+    });
+  }
+  return { ok: violations.length === 0, violations };
+}
+function validateContractsAgainstPlan(plan, contracts) {
+  const derived2 = deriveContracts(plan);
+  const authored = contracts ?? derived2;
+  const result = validateContracts(authored);
+  for (const contract of contracts ?? []) {
+    const expected = derived2.find((entry) => entry.shot === contract.shot);
+    if (!expected) continue;
+    const stateMatches = sameShotState(contract.requires, expected.requires) && sameShotState(contract.ensures, expected.ensures);
+    const textMatches = sameTextList(contract.steps, expected.steps) && sameTextList(contract.invariants, expected.invariants) && sameTextList(contract.forbidden, expected.forbidden);
+    if (!stateMatches || !textMatches) {
+      result.violations.push({
+        code: "ledger-mismatch",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} does not match the state derived by replaying the continuity ledger (worn, holders, counts, steps, invariants, or forbidden).`
+      });
+    }
+    for (const layer of allLayers(plan)) {
+      const inPlay = contract.requires.worn.includes(layer.id) || contract.ensures.worn.includes(layer.id) || (contract.requires.counts?.[layer.id] ?? 0) > 0 || (contract.ensures.counts?.[layer.id] ?? 0) > 0;
+      if (!inPlay) continue;
+      if (contract.invariants.some((line) => line.includes(layer.item))) continue;
+      result.violations.push({
+        code: "garment-integrity",
+        shot: contract.shot,
+        message: `Shot ${contract.shot} invariants do not name "${layer.item}" verbatim.`
+      });
+    }
+  }
+  const weighted = evaluateWeighted(plan);
+  result.violations.push(...weighted.violations);
+  return { ok: result.violations.length === 0, violations: result.violations };
+}
+function promptFromContract(contract) {
+  const parts = [];
+  if (contract.invariants.length > 0) {
+    parts.push(contract.invariants.join(" "));
+  }
+  if (contract.steps.length > 0) {
+    parts.push(`Steps in order: ${contract.steps.join("; ")}.`);
+  }
+  if (contract.forbidden.length > 0) {
+    parts.push(`Do not show: ${contract.forbidden.join("; ")}.`);
+  } else {
+    parts.push(
+      "Do not show anything that contradicts this shot's required start state, end state, or invariants."
+    );
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+function gateShell(partial2) {
+  return {
+    ok: partial2.ok,
+    blocked: partial2.blocked,
+    status: partial2.status,
+    violations: partial2.violations,
+    ...partial2.message ? { message: partial2.message } : {},
+    tier0: partial2.status === "pass" ? "pass" : "fail",
+    ...partial2.tier1 ? { tier1: partial2.tier1 } : {},
+    tier2: "style-only",
+    vision: partial2.vision ?? "not-required",
+    ...partial2.warnings && partial2.warnings.length > 0 ? { warnings: partial2.warnings } : {}
+  };
+}
+function decideSpend(confirm, gate) {
+  if (!confirm) return "estimate";
+  if (gate.blocked || gate.status === "unchecked" || gate.status === "fail") return "refused";
+  if (gate.status === "pass" || gate.status === "override") return "spend";
+  const unreachable = gate.status;
+  return unreachable;
+}
+function gateRenderSequence(input2) {
+  if (!input2.plan && !input2.contracts) {
+    const unchecked = {
+      code: "unchecked",
+      shot: 0,
+      message: RENDER_UNCHECKED
+    };
+    if (input2.overrideValidation) {
+      return gateShell({
+        ok: false,
+        blocked: false,
+        status: "override",
+        violations: [unchecked],
+        message: "No ledger or contracts were provided; overrideValidation is set, so rendering may proceed."
+      });
+    }
+    return gateShell({
+      ok: false,
+      blocked: true,
+      status: "unchecked",
+      violations: [unchecked],
+      message: RENDER_UNCHECKED
+    });
+  }
+  const result = input2.plan ? validateContractsAgainstPlan(input2.plan, input2.contracts) : validateContracts(input2.contracts ?? []);
+  const weighted = input2.plan ? evaluateWeighted(input2.plan) : void 0;
+  const tier1 = weighted?.tier1;
+  const vision = weighted?.vision ?? "not-required";
+  const warnings = weighted?.warnings ?? [];
+  if (result.ok) {
+    return gateShell({
+      ok: true,
+      blocked: false,
+      status: "pass",
+      violations: [],
+      tier1,
+      vision,
+      warnings
+    });
+  }
+  if (input2.overrideValidation) {
+    return gateShell({
+      ok: false,
+      blocked: false,
+      status: "override",
+      violations: result.violations,
+      message: "Shot contracts failed validation; overrideValidation is set, so rendering may proceed.",
+      tier1,
+      vision,
+      warnings
+    });
+  }
+  return gateShell({
+    ok: false,
+    blocked: true,
+    status: "fail",
+    violations: result.violations,
+    message: RENDER_BLOCKED_BY_CONTRACT,
+    tier1,
+    vision,
+    warnings
+  });
+}
+function runPreVideoGate(input2) {
+  return gateRenderSequence(input2);
+}
+
 // mcp/server.ts
-import { mkdir as mkdir4, readFile as readFile4, readdir as readdir2, writeFile as writeFile4 } from "node:fs/promises";
-import { join as join6 } from "node:path";
-import { createHash as createHash4 } from "node:crypto";
+import { mkdir as mkdir5, readFile as readFile6, readdir as readdir2, rename as rename3, stat as stat4, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+
+// mcp/resume-claim-probe.ts
+var probe;
+async function runResumeClaimProbe() {
+  if (probe) await probe();
+}
+
+// mcp/server.ts
+var server = new McpServer({
+  name: "theshow",
+  version: "0.1.0"
+});
+var recordedTools = [];
+var registerRecordedTool = server.registerTool.bind(server);
+server.registerTool = ((name, config2, handler) => {
+  recordedTools.push({ name, config: config2, handler });
+  return registerRecordedTool(name, config2, handler);
+});
 var CharacterSchema = external_exports.object({
   name: external_exports.string(),
   role: external_exports.string().optional(),
   description: external_exports.string().optional(),
+  appearance: external_exports.string().optional().describe(
+    "Identity only: face, hair, skin, build. Clothing belongs in wardrobe.layers."
+  ),
+  wardrobe: external_exports.object({
+    layers: external_exports.array(external_exports.object({
+      id: external_exports.string(),
+      item: external_exports.string(),
+      order: external_exports.number().describe("Inner to outer within this layer type."),
+      inReference: external_exports.enum(["visible", "partial", "hidden"]),
+      type: external_exports.enum(["clothing", "footwear"]).optional().describe(
+        "Clothing and footwear stack separately. Defaults to clothing."
+      ),
+      closure: external_exports.enum(["zip", "buttons", "open", "laced", "slip-on", "none"]).optional(),
+      mustNotHave: external_exports.array(external_exports.string()).optional(),
+      short: external_exports.string().optional()
+    })).min(1),
+    startState: external_exports.object({
+      worn: external_exports.array(external_exports.string()).describe("Layer ids worn at the start of the film.")
+    }).optional(),
+    stateImages: external_exports.array(external_exports.object({
+      worn: external_exports.array(external_exports.string()),
+      referenceImageUrls: external_exports.array(external_exports.string())
+    })).optional().describe(
+      "Optional photos of a later wardrobe state, such as the coat off."
+    )
+  }).optional(),
   // Deliberately not z.string().url(): a local path or a chat attachment has to
   // reach toApiImageRef, which inlines it as a data URI. Zod's .url() rejects
   // "/workspace/photo.png", so the same reference worked on
@@ -43583,40 +45968,124 @@ var CharacterSchema = external_exports.object({
     "Portrait reference images: public https URLs, data URIs, or local file paths. Each is inlined for the API, so a path from a chat attachment or extract_last_frame works."
   )
 });
+var WardrobeEventSchema = external_exports.object({
+  shot: external_exports.number().int().min(1).optional().describe("1-based shot number. Implied when the event sits on a beat."),
+  character: external_exports.string().optional(),
+  action: external_exports.enum(["remove", "putOn", "adjust"]),
+  layer: external_exports.string().describe("Layer id from the character's wardrobe."),
+  to: external_exports.string().optional().describe(
+    "For a removal, the destination prop id, or its name inside this shot's location."
+  ),
+  note: external_exports.string().optional()
+});
+var PropRecordSchema = external_exports.object({
+  id: external_exports.string(),
+  locationId: external_exports.string(),
+  name: external_exports.string(),
+  placement: external_exports.string(),
+  holder: external_exports.string().optional(),
+  fixed: external_exports.boolean().optional(),
+  count: external_exports.number().int().min(0).optional(),
+  bbox: external_exports.tuple([external_exports.number(), external_exports.number(), external_exports.number(), external_exports.number()]).optional(),
+  solid: external_exports.boolean().optional(),
+  contact: external_exports.enum(["hanging", "resting", "held"]).optional()
+});
+var PropEventSchema = external_exports.object({
+  shot: external_exports.number().int().min(1).optional(),
+  action: external_exports.enum(["add", "move", "remove"]),
+  propId: external_exports.string(),
+  locationId: external_exports.string().optional(),
+  name: external_exports.string().optional(),
+  placement: external_exports.string().optional(),
+  holder: external_exports.string().optional()
+});
+var LocationSchema = external_exports.object({
+  id: external_exports.string(),
+  name: external_exports.string()
+});
+var ShotStateSchema = external_exports.object({
+  worn: external_exports.array(external_exports.string()),
+  holders: external_exports.record(external_exports.string(), external_exports.string()),
+  counts: external_exports.record(external_exports.string(), external_exports.number())
+});
+var ShotContractSchema = external_exports.object({
+  shot: external_exports.number().int().min(1),
+  requires: ShotStateSchema,
+  steps: external_exports.array(external_exports.string()),
+  ensures: ShotStateSchema,
+  invariants: external_exports.array(external_exports.string()),
+  forbidden: external_exports.array(external_exports.string()),
+  footwear: external_exports.array(external_exports.string()).optional()
+});
 var characterStore = /* @__PURE__ */ new Map();
 async function rememberCharacter(args) {
   const key = args.name.trim().toLowerCase();
-  const existing = characterStore.get(key) ?? loadCharacterSync(args.name.trim());
   const saved = await saveCharacter({
     name: args.name,
-    role: args.role ?? existing?.role,
-    description: args.description ?? existing?.description,
-    referenceImageUrls: args.referenceImageUrls ?? existing?.referenceImageUrls
+    role: args.role,
+    description: args.description,
+    appearance: args.appearance,
+    wardrobe: args.wardrobe,
+    referenceImageUrls: args.referenceImageUrls
   });
   const entry = {
     id: saved.id,
     name: saved.name,
     role: saved.role,
     description: saved.description,
-    referenceImageUrls: saved.referenceImageUrls
+    appearance: saved.appearance,
+    wardrobe: saved.wardrobe,
+    referenceImageUrls: saved.referenceImageUrls,
+    updatedAt: saved.updatedAt
   };
   characterStore.set(key, entry);
   return { entry, folder: saved.folder, warnings: saved.warnings };
 }
+function storedFrom(record2) {
+  return {
+    id: record2.id,
+    name: record2.name,
+    role: record2.role,
+    description: record2.description,
+    appearance: record2.appearance,
+    wardrobe: record2.wardrobe,
+    referenceImageUrls: record2.referenceImageUrls,
+    updatedAt: record2.updatedAt
+  };
+}
 function lookupCharacter(name) {
   const key = name.trim().toLowerCase();
-  const cached2 = characterStore.get(key);
-  if (cached2) return cached2;
   const fromDisk = loadCharacterSync(name);
-  if (!fromDisk) return void 0;
-  characterStore.set(key, {
-    id: fromDisk.id,
-    name: fromDisk.name,
-    role: fromDisk.role,
-    description: fromDisk.description,
-    referenceImageUrls: fromDisk.referenceImageUrls
-  });
+  if (!fromDisk) {
+    characterStore.delete(key);
+    return void 0;
+  }
+  const cached2 = characterStore.get(key);
+  if (!cached2 || cached2.updatedAt !== fromDisk.updatedAt) {
+    characterStore.set(key, storedFrom(fromDisk));
+  }
   return characterStore.get(key);
+}
+var LOCATION_ROLE = /\b(location|place|set|environment|interior|exterior)\b/i;
+async function withPersonCutouts(names, urls) {
+  const portraits = /* @__PURE__ */ new Set();
+  for (const name of names ?? []) {
+    const known = lookupCharacter(name);
+    if (!known) continue;
+    if (LOCATION_ROLE.test(known.role ?? "")) continue;
+    for (const url2 of known.referenceImageUrls ?? []) portraits.add(url2);
+  }
+  const prepared = [];
+  for (const url2 of urls) {
+    const localPortrait = portraits.has(url2) && !/^https?:/i.test(url2) && !url2.startsWith("data:");
+    if (!localPortrait) {
+      prepared.push(url2);
+      continue;
+    }
+    const cutout = await featheredSubjectCutout(url2);
+    prepared.push(cutout.ok ? cutout.path : url2);
+  }
+  return prepared;
 }
 async function loadCharactersFromDisk() {
   try {
@@ -43626,7 +46095,10 @@ async function loadCharactersFromDisk() {
         name: character.name,
         role: character.role,
         description: character.description,
-        referenceImageUrls: character.referenceImageUrls
+        appearance: character.appearance,
+        wardrobe: character.wardrobe,
+        referenceImageUrls: character.referenceImageUrls,
+        updatedAt: character.updatedAt
       });
     }
   } catch (err) {
@@ -43646,6 +46118,15 @@ function mergeCharacterReferences(characters, referenceImageUrls) {
   }
   const merged = [...referenceImageUrls ?? [], ...fromCharacters];
   return { urls: Array.from(new Set(merged)), missing };
+}
+function locationScene(characters) {
+  for (const name of characters ?? []) {
+    const known = lookupCharacter(name);
+    if (!known?.description?.trim()) continue;
+    if (!/\b(location|place|set|environment|interior|exterior)\b/i.test(known.role ?? "")) continue;
+    return known.description.trim();
+  }
+  return void 0;
 }
 function findLocationBase(characters) {
   for (const name of characters ?? []) {
@@ -43716,9 +46197,10 @@ function planShots(opts) {
     return beats.map((beat, i) => ({
       shotNumber: i + 1,
       title: beat.title,
-      shotType: i === 0 ? "wide" : "medium",
-      durationSeconds: per,
+      shotType: resolveBeatShotType(beat, i),
+      durationSeconds: resolveBeatDuration(beat, per),
       action: beat.action.replace(/\{scene\}/g, scene2).replace(/\{character\}/g, cast2[0]),
+      ...beat.faceAnchor ? { faceAnchor: beat.faceAnchor } : {},
       continuityNotes: beat.note ?? "",
       characters: cast2.filter(() => true),
       focusCharacter: cast2[0],
@@ -43758,6 +46240,8 @@ function planShots(opts) {
         name: c.name,
         role: c.role,
         description: c.description,
+        appearance: c.appearance,
+        wardrobe: c.wardrobe,
         referenceImageUrls: c.referenceImageUrls ?? []
       }));
     }
@@ -43773,13 +46257,18 @@ function buildContinuityBlock(v) {
   const style = String(v.style ?? "").trim();
   const characters = String(v.characters ?? "").trim();
   const audio = String(v.audio ?? "").trim();
-  const never2 = String(v.neverShow ?? "").trim();
   parts.push(`Maintain exactly across every shot: ${style ? `${style} look` : "the same look"}.`);
   if (characters) parts.push(`Cast, unchanged in every shot: ${characters}.`);
-  if (audio) parts.push(`Audio: ${audio.toLowerCase()}. No music unless asked for.`);
-  if (never2) parts.push(`Never show: ${never2}.`);
+  if (audio) parts.push(`Audio: ${audio.toLowerCase()}.`);
   parts.push("Keep the same light source, palette and set dressing as the previous shot.");
   return parts.join(" ");
+}
+function storedNegativeFromBrief(v) {
+  const negatives = [];
+  const never2 = String(v.neverShow ?? "").trim();
+  if (never2) negatives.push(never2);
+  negatives.push("no music");
+  return negatives.join("\n");
 }
 var FILM_FORM_SCHEMA = {
   type: "object",
@@ -43789,7 +46278,8 @@ var FILM_FORM_SCHEMA = {
       title: "Scene",
       description: "Location, time of day, weather, mood. One or two sentences.",
       minLength: 1,
-      maxLength: 600
+      maxLength: 600,
+      default: void 0
     },
     characters: {
       type: "string",
@@ -43860,7 +46350,7 @@ var FILM_FORM_SCHEMA = {
     audioTrack: {
       type: "string",
       title: "Music or voiceover path (optional)",
-      description: "Attach the track in chat and paste its path here, or use an https link. It is mixed under the film, looped if short and faded out at the end. Leave blank for no music.",
+      description: "Attach the track in chat and paste its path here, or use an https link. A track shorter than the film is refused. A long enough track is faded out at the end. Leave blank for none.",
       maxLength: 500
     },
     referenceImage: {
@@ -43874,196 +46364,476 @@ var FILM_FORM_SCHEMA = {
   },
   required: ["scene"]
 };
-function registerConfigureFilm(server) {
-  server.registerTool(
-    "configure_film",
-    {
-      description: "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
-      inputSchema: external_exports.object({
-        scene: external_exports.string().optional().describe("Pre-fill the scene if the user already said it."),
-        prompt: external_exports.string().optional().describe("Card heading shown to the user.")
-      })
-    },
-    async (args) => {
-      const title = args.prompt ?? "Configure the film";
-      const caps = server.server.getClientCapabilities();
-      const canElicit = Boolean(caps?.elicitation);
-      if (!canElicit) {
+server.registerTool(
+  "configure_film",
+  {
+    description: "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
+    inputSchema: external_exports.object({
+      scene: external_exports.string().optional().describe("Pre-fill the scene if the user already said it."),
+      prompt: external_exports.string().optional().describe("Card heading shown to the user.")
+    })
+  },
+  async (args, extra) => {
+    const title = args.prompt ?? "Configure the film";
+    const mcp = currentMcpServer(server);
+    const caps = mcp.server.getClientCapabilities();
+    const scope = requestScope();
+    const streamMissing = scope?.kind === "http" && !scope.sseConnected;
+    const canElicit = Boolean(caps?.elicitation) && !streamMissing;
+    const fields = Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
+      key,
+      title: v2.title ?? key,
+      description: v2.description ?? ""
+    }));
+    if (!canElicit) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            elicitationSupported: false,
+            needsInput: true,
+            message: streamMissing ? "This HTTP client has no server-to-client stream, so the form cannot be shown. Ask for these fields conversationally in one message rather than one at a time." : "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
+            fields
+          }, null, 2)
+        }]
+      };
+    }
+    const schema = structuredClone(FILM_FORM_SCHEMA);
+    if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
+    let result;
+    let timeout;
+    try {
+      const elicitation = mcp.server.elicitInput({
+        message: title,
+        requestedSchema: schema
+      });
+      if (scope?.kind !== "http") {
+        result = await elicitation;
+      } else {
+        const timer = new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("elicitation timed out")), elicitTimeoutMs());
+          extra?.signal?.addEventListener("abort", () => {
+            reject(new Error("elicitation aborted"));
+          }, { once: true });
+        });
+        result = await Promise.race([elicitation, timer]);
+      }
+    } catch (err) {
+      const timedOut = err instanceof Error && err.message === "elicitation timed out";
+      if (timedOut) {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
               elicitationSupported: false,
-              message: "This client cannot show an interactive form, so ask for these fields conversationally in one message rather than one at a time.",
-              fields: Object.entries(FILM_FORM_SCHEMA.properties).map(([key, v2]) => ({
-                key,
-                title: v2.title ?? key,
-                description: v2.description ?? ""
-              }))
+              needsInput: true,
+              message: "The form was not answered in time. Ask for these fields conversationally in one message rather than one at a time.",
+              fields
             }, null, 2)
           }]
         };
       }
-      const schema = structuredClone(FILM_FORM_SCHEMA);
-      if (args.scene) schema.properties.scene = { ...schema.properties.scene, default: args.scene };
-      let result;
-      try {
-        result = await server.server.elicitInput({
-          message: title,
-          requestedSchema: schema
-        });
-      } catch (err) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              elicitationSupported: true,
-              formFailed: true,
-              error: err instanceof Error ? err.message : String(err),
-              message: "The form was shown but the response was rejected. Ask for the same fields conversationally."
-            }, null, 2)
-          }]
-        };
-      }
-      if (result.action !== "accept") {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              action: result.action,
-              message: result.action === "decline" ? "The user dismissed the form. Do not render. Ask what they would like to change." : "The user cancelled. Do not render."
-            }, null, 2)
-          }]
-        };
-      }
-      const v = result.content ?? {};
-      const shotCount = Number(v.shotCount ?? 2);
-      const shotSeconds = Number(v.shotSeconds ?? 8);
-      const resolution = resolutionFromLabel(v.resolution) ?? "720p";
-      const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
-      const total = Math.round(perShot * shotCount * 100) / 100;
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            action: "accept",
-            config: {
-              scene: v.scene ?? "",
-              characters: v.characters ?? "",
-              style: v.style ?? "Photoreal cinematic",
-              shotCount,
-              shotSeconds,
-              resolution,
-              aspectRatio: v.aspectRatio ?? "16:9",
-              audio: v.audio ?? "Diegetic only",
-              neverShow: v.neverShow ?? "",
-              referenceImage: v.referenceImage || void 0,
-              audioTrack: v.audioTrack || void 0
-            },
-            estimate: {
+            elicitationSupported: true,
+            formFailed: true,
+            error: err instanceof Error ? err.message : String(err),
+            message: "The form was shown but the response was rejected. Ask for the same fields conversationally."
+          }, null, 2)
+        }]
+      };
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+    if (result.action !== "accept") {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: result.action,
+            message: result.action === "decline" ? "The user dismissed the form. Do not render. Ask what they would like to change." : "The user cancelled. Do not render."
+          }, null, 2)
+        }]
+      };
+    }
+    const v = result.content ?? {};
+    const shotCount = Number(v.shotCount ?? 2);
+    const shotSeconds = Number(v.shotSeconds ?? 8);
+    const resolution = resolutionFromLabel(v.resolution) ?? "720p";
+    const perShot = Math.round(shotSeconds * ratePerSecond(resolution) * 100) / 100;
+    const total = Math.round(perShot * shotCount * 100) / 100;
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          action: "accept",
+          config: {
+            scene: v.scene ?? "",
+            characters: v.characters ?? "",
+            style: v.style ?? "Photoreal cinematic",
+            shotCount,
+            shotSeconds,
+            resolution,
+            aspectRatio: v.aspectRatio ?? "16:9",
+            audio: v.audio ?? "Diegetic only",
+            neverShow: v.neverShow ?? "",
+            referenceImage: v.referenceImage || void 0,
+            audioTrack: v.audioTrack || void 0
+          },
+          estimate: {
+            perShotUsd: perShot,
+            totalUsd: total,
+            basis: `${shotCount} renders x ${shotSeconds}s at $${ratePerSecond(resolution).toFixed(2)}/s for ${resolution} = $${total.toFixed(2)}.`,
+            isEstimate: true
+          },
+          continuityBlock: buildContinuityBlock(v),
+          negative: storedNegativeFromBrief(v),
+          contract: {
+            sentContinuity: buildContinuityBlock(v),
+            negativeStored: storedNegativeFromBrief(v),
+            lintHits: lintSentPrompt(buildContinuityBlock(v), storedNegativeFromBrief(v)),
+            resolution,
+            shotSeconds,
+            quote: {
               perShotUsd: perShot,
               totalUsd: total,
-              basis: `${shotCount} renders x ${shotSeconds}s at about $0.14/s, the 720p rate. 480p runs near $0.08/s and 1080p near $0.25/s.`,
-              isEstimate: true
-            },
-            continuityBlock: buildContinuityBlock(v),
-            next: "Show this back for a yes, then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` so every shot carries the same set, wardrobe and constraints, and audioTrack as `audioTrackUrl`. Never invent a character detail the user left blank."
-          }, null, 2)
-        }]
-      };
-    }
-  );
-}
-function registerCreateCharacter(server) {
-  server.registerTool(
-    "create_character",
-    {
-      description: "Create or update a character with optional reference images for continuity.",
-      inputSchema: CharacterSchema
-    },
-    async (args) => {
-      let stored;
-      try {
-        stored = await rememberCharacter(args);
-      } catch (err) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: err instanceof Error ? err.message : "Could not save the character."
-            }, null, 2)
-          }],
-          isError: true
-        };
-      }
-      const { entry, folder, warnings } = stored;
+              ratePerSecond: ratePerSecond(resolution)
+            }
+          },
+          next: "Show the sent continuity, the stored negative, any lint hits, and the quote. Then call plan_storyboard, and create_character with referenceImageUrls if a reference image was given. Pass continuityBlock as render_sequence's `continuity` and negative as the stored constraints. Pass audioTrack as `audioTrackUrl`. Never invent a character detail the user left blank."
+        }, null, 2)
+      }]
+    };
+  }
+);
+server.registerTool(
+  "create_character",
+  {
+    description: "Create or update a character with optional reference images for continuity.",
+    inputSchema: CharacterSchema
+  },
+  async (args) => {
+    let stored;
+    try {
+      stored = await rememberCharacter(args);
+    } catch (err) {
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            ...entry,
-            storage: folder,
-            referenceImages: entry.referenceImageUrls.length,
-            ...warnings ? { warnings } : {},
-            message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
+            error: err instanceof Error ? err.message : "Could not save the character."
           }, null, 2)
-        }]
+        }],
+        isError: true
       };
     }
-  );
+    const { entry, folder, warnings } = stored;
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          ...entry,
+          storage: folder,
+          referenceImages: (entry.referenceImageUrls ?? []).length,
+          ...warnings ? { warnings } : {},
+          message: `Character saved on disk in ${folder}. It survives a restart, so you can reuse it by name in any later session without supplying the reference images again. plan_storyboard can now use it for continuity.` + (warnings ? " Some reference images could not be kept; see warnings." : "")
+        }, null, 2)
+      }]
+    };
+  }
+);
+function stampShotNumbers(events, shot) {
+  return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? shot }));
 }
-function registerPlanStoryboard(server) {
-  server.registerTool(
-    "plan_storyboard",
-    {
-      description: "Plan multi-shot storyboard for a scene.",
-      inputSchema: external_exports.object({
-        sceneDescription: external_exports.string(),
-        beats: external_exports.array(external_exports.object({
-          title: external_exports.string(),
-          action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
-          note: external_exports.string().optional().describe("Continuity requirement carried into the prompt.")
-        })).optional().describe(
-          "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
-        ),
-        characters: external_exports.array(external_exports.string()),
-        targetDurationSeconds: external_exports.number().optional(),
-        shotCount: external_exports.number().optional()
-      })
-    },
-    async (args) => {
-      const requested = args.shotCount ?? Math.max(1, Math.round((args.targetDurationSeconds ?? 16) / 8));
-      const shotCount = Math.min(12, Math.max(1, Math.round(requested)));
-      const totalDurationSeconds = Math.min(
-        180,
-        Math.max(shotCount, Math.round(args.targetDurationSeconds ?? shotCount * 8))
-      );
-      const shots = planShots({
-        sceneDescription: args.sceneDescription,
-        characterNames: args.characters ?? [],
-        shotCount,
-        totalDurationSeconds,
-        beats: args.beats
+function eventsWithShot(events) {
+  return (events ?? []).map((event) => ({ ...event, shot: event.shot ?? 1 }));
+}
+function buildContinuityLedger(input2) {
+  const characters = input2.characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
+  const hasReferencePicture = input2.characterNames.some((name) => {
+    const known = lookupCharacter(name);
+    return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+  });
+  const plan = {
+    characters,
+    locations: input2.locations,
+    props: input2.props,
+    wardrobeEvents: input2.wardrobeEvents,
+    propEvents: input2.propEvents,
+    shotLocations: input2.shotLocations,
+    shotCount: input2.shotCount,
+    hasReferencePicture,
+    ...input2.shotSteps && input2.shotSteps.length > 0 ? { shotSteps: input2.shotSteps } : {}
+  };
+  const snapshots = replayContinuity(plan);
+  const contracts = deriveContracts(plan);
+  return {
+    characters,
+    hasReferencePicture,
+    snapshots: snapshots.map((shot, index) => ({
+      ...shot,
+      contractPrompt: contracts[index] ? promptFromContract(contracts[index]) : void 0
+    })),
+    contracts,
+    plan
+  };
+}
+function continuityPlanFromRenderArgs(args) {
+  if (!args.ledger) return void 0;
+  const characterNames = args.characters ?? [];
+  const characters = characterNames.map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry));
+  const hasReferencePicture = characterNames.some((name) => {
+    const known = lookupCharacter(name);
+    return Boolean(known?.referenceImageUrls && known.referenceImageUrls.length > 0);
+  });
+  const shotPrompts = args.ledger.shotPrompts ?? args.shots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? "" })).filter((entry) => entry.prompt.trim().length > 0);
+  return {
+    characters,
+    locations: args.ledger.locations,
+    props: args.ledger.props,
+    wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+    propEvents: eventsWithShot(args.ledger.propEvents),
+    shotLocations: args.shots.map((shot) => shot.locationId),
+    shotCount: args.shots.length,
+    shotSteps: args.ledger.shotSteps,
+    hasReferencePicture: hasReferencePicture || Boolean(args.ledger.hasPortrait),
+    hasPortrait: args.ledger.hasPortrait ?? hasReferencePicture,
+    ...args.ledger.voiceId ? { voiceId: args.ledger.voiceId } : {},
+    ...args.promptStyle ?? args.ledger.promptStyle ? { promptStyle: args.promptStyle ?? args.ledger.promptStyle } : {},
+    ...args.ledger.spokenLines ? { spokenLines: args.ledger.spokenLines } : {},
+    ...shotPrompts.length > 0 ? { shotPrompts } : {},
+    ...args.ledger.scaleMarks ? { scaleMarks: args.ledger.scaleMarks } : {},
+    ...args.ledger.bodyClearance ? { bodyClearance: args.ledger.bodyClearance } : {},
+    ...args.ledger.humanVisionSignOff ? { humanVisionSignOff: true } : {},
+    ...args.ledger.tier1 ? { tier1: args.ledger.tier1 } : {}
+  };
+}
+function refusal(payload) {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+}
+async function refuseIfSessionWillNotLast(estimatedJobMs) {
+  const session = await ensureCredentialForJob(estimatedJobMs);
+  if (session.ok) return void 0;
+  return refusal({
+    action: "refused",
+    error: session.reason,
+    code: session.code === "expired" ? "session-too-short" : session.code
+  });
+}
+function applyShotContinuity(shot, snapshot, wardrobeChanged, appendProse = true) {
+  if (!snapshot) return shot;
+  shot.locationId = snapshot.locationId;
+  shot.wardrobeChecklist = snapshot.checklists;
+  shot.propsInView = snapshot.propsInView;
+  shot.continuityPrompt = snapshot.prompt;
+  shot.wardrobeChanged = wardrobeChanged;
+  if (!appendProse) {
+    if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
+    return shot;
+  }
+  const extras = [snapshot.prompt, snapshot.contractPrompt].filter(
+    (part) => Boolean(part && part.trim())
+  );
+  if (extras.length > 0) {
+    const extra = extras.join(" ");
+    if (typeof shot.action === "string") {
+      shot.action = annotateAction(shot.action, extra);
+    }
+    if (typeof shot.prompt === "string") {
+      shot.prompt = annotateAction(shot.prompt, extra);
+    }
+    const notes = typeof shot.continuityNotes === "string" ? shot.continuityNotes : "";
+    shot.continuityNotes = [notes, extra].filter((part) => part.trim()).join(" ");
+  }
+  if (snapshot.warnings.length > 0) shot.continuityWarnings = snapshot.warnings;
+  return shot;
+}
+server.registerTool(
+  "plan_storyboard",
+  {
+    description: "Plan multi-shot storyboard for a scene. Accepts optional wardrobe events and a per-location prop ledger so each shot's prompt describes only what is worn and the props that belong in that room.",
+    inputSchema: external_exports.object({
+      sceneDescription: external_exports.string(),
+      promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional().describe(
+        "Omit it, or pass legacy, for today's paragraph. sections-v2 writes a sectioned prompt on each shot and does not append the ledger paragraph."
+      ),
+      voiceId: external_exports.string().optional().describe(
+        "Built-in voice, such as rex. In sections-v2 the spoken line is tagged <AUDIO_0>."
+      ),
+      fixedSet: external_exports.string().optional().describe(
+        "One sentence naming the fixed pieces and their sizes, used by sections-v2."
+      ),
+      marks: external_exports.record(external_exports.string(), external_exports.string()).optional().describe(
+        "Named standing positions. A beat's start.mark or end.mark looks up the sentence here."
+      ),
+      beats: external_exports.array(external_exports.object({
+        title: external_exports.string(),
+        action: external_exports.string().describe("What happens in this shot. {scene} and {character} are substituted."),
+        note: external_exports.string().optional().describe("Continuity requirement carried into the prompt."),
+        locationId: external_exports.string().optional().describe("Room this shot takes place in. Props are scoped to it."),
+        wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        framing: external_exports.enum(["wide", "medium", "close", "feet-close"]).optional(),
+        shotType: external_exports.string().optional(),
+        camera: external_exports.enum(["locked"]).optional(),
+        durationSeconds: external_exports.number().min(1).max(15).optional(),
+        faceAnchor: external_exports.enum(["auto", "off"]).optional(),
+        steps: external_exports.array(external_exports.string()).optional(),
+        line: external_exports.object({
+          text: external_exports.string(),
+          delivery: external_exports.enum(["spoken", "sung"]).optional(),
+          voiceTag: external_exports.string().optional()
+        }).optional(),
+        contact: external_exports.string().optional(),
+        avoid: external_exports.array(external_exports.string()).optional(),
+        audio: external_exports.string().optional(),
+        start: external_exports.object({
+          worn: external_exports.array(external_exports.string()).optional(),
+          mark: external_exports.string().optional(),
+          text: external_exports.string().optional(),
+          door: external_exports.string().optional(),
+          slots: external_exports.record(external_exports.string(), external_exports.string().nullable()).optional(),
+          floorAt: external_exports.array(external_exports.object({
+            item: external_exports.string().optional(),
+            n: external_exports.number().optional(),
+            text: external_exports.string()
+          })).optional()
+        }).optional(),
+        end: external_exports.object({
+          worn: external_exports.array(external_exports.string()).optional(),
+          mark: external_exports.string().optional(),
+          text: external_exports.string().optional(),
+          held: external_exports.string().optional(),
+          door: external_exports.string().optional(),
+          slots: external_exports.record(external_exports.string(), external_exports.string().nullable()).optional()
+        }).optional()
+      })).optional().describe(
+        "Your own story beats, one per shot. Overrides the built-in six-beat ladder, which is only a default shape and must not be imposed on a story the user already described."
+      ),
+      characters: external_exports.array(external_exports.string()),
+      targetDurationSeconds: external_exports.number().optional(),
+      shotCount: external_exports.number().optional(),
+      locations: external_exports.array(LocationSchema).optional().describe(
+        "Named rooms. Two props with the same name in different rooms stay two props."
+      ),
+      props: external_exports.array(PropRecordSchema).optional().describe(
+        "Starting prop ledger. Each prop belongs to one locationId."
+      ),
+      wardrobeEvents: external_exports.array(WardrobeEventSchema).optional().describe(
+        "Named clothing changes, keyed by 1-based shot number: remove, putOn, adjust."
+      ),
+      propEvents: external_exports.array(PropEventSchema).optional().describe(
+        "Named prop changes, keyed by 1-based shot number: add, move, remove. A prop without an id is left where it is."
+      )
+    })
+  },
+  async (args) => {
+    const requested = args.shotCount ?? Math.max(1, Math.round((args.targetDurationSeconds ?? 16) / 8));
+    const shotCount = Math.min(12, Math.max(1, Math.round(requested)));
+    const totalDurationSeconds = Math.min(
+      180,
+      Math.max(shotCount, Math.round(args.targetDurationSeconds ?? shotCount * 8))
+    );
+    const shots = planShots({
+      sceneDescription: args.sceneDescription,
+      characterNames: args.characters ?? [],
+      shotCount,
+      totalDurationSeconds,
+      beats: args.beats
+    });
+    if (args.promptStyle === "sections-v2") {
+      const layers = (args.characters ?? []).flatMap((name) => {
+        const known = lookupCharacter(name);
+        return known?.wardrobe?.layers ?? [];
       });
-      const unknown2 = (args.characters ?? []).filter((name) => !lookupCharacter(name));
-      const payload = {
-        scene: args.sceneDescription,
-        shotCount: shots.length,
-        totalDurationSeconds: shots.reduce((sum, shot) => sum + shot.durationSeconds, 0),
-        shots
-      };
-      if (unknown2.length > 0) {
-        payload.note = `No stored character record for: ${unknown2.join(", ")}. Call create_character first so continuity notes can carry wardrobe and reference images.`;
+      for (let index = 0; index < shots.length; index += 1) {
+        const beat = args.beats?.[index];
+        if (!beat) continue;
+        const shot = shots[index];
+        shot.prompt = renderSectionsV2(beat, {
+          layers,
+          marks: args.marks,
+          fixedSet: args.fixedSet,
+          voiceId: args.voiceId
+        });
+        if (beat.faceAnchor) shot.faceAnchor = beat.faceAnchor;
       }
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
-      };
     }
-  );
-}
-var PERSON_IN_SHOT = /\b(he|she|they|him|her|them|his|hers|their|theirs|man|woman|figure|person|child|boy|girl|guy|lady|face|head|eyes?|beard|hair|hands?|arms?|shoulders?|expression|smiles?|nods?|turns?|walks?|sits?|stands?|strides?|gestures?)\b/i;
-function mentionsPerson(text) {
-  return PERSON_IN_SHOT.test(text);
+    const shotLocations = (args.beats ?? []).map((beat) => beat.locationId);
+    const beatWardrobe = (args.beats ?? []).flatMap(
+      (beat, index) => stampShotNumbers(beat.wardrobeEvents, index + 1)
+    );
+    const beatProps = (args.beats ?? []).flatMap(
+      (beat, index) => stampShotNumbers(beat.propEvents, index + 1)
+    );
+    const wardrobeEvents = [
+      ...stampShotNumbers(args.wardrobeEvents, 1).map((event, index) => ({
+        ...event,
+        shot: args.wardrobeEvents?.[index]?.shot ?? event.shot
+      })),
+      ...beatWardrobe
+    ].filter((event) => typeof event.shot === "number");
+    const propEvents = [
+      ...stampShotNumbers(args.propEvents, 1).map((event, index) => ({
+        ...event,
+        shot: args.propEvents?.[index]?.shot ?? event.shot
+      })),
+      ...beatProps
+    ].filter((event) => typeof event.shot === "number");
+    const { snapshots } = buildContinuityLedger({
+      characterNames: args.characters ?? [],
+      shotCount: shots.length,
+      shotLocations: shotLocations.length === shots.length ? shotLocations : shotLocations.concat(
+        Array.from({ length: Math.max(0, shots.length - shotLocations.length) }, () => void 0)
+      ),
+      locations: args.locations,
+      props: args.props,
+      wardrobeEvents,
+      propEvents,
+      shotSteps: (args.beats ?? []).flatMap(
+        (beat, index) => beat.steps && beat.steps.length > 0 ? [{ shot: index + 1, steps: beat.steps }] : []
+      )
+    });
+    const annotated = shots.map(
+      (shot, index) => applyShotContinuity(
+        { ...shot },
+        snapshots[index],
+        wardrobeEvents.some((event) => event.shot === index + 1),
+        // A sectioned beat already carries the wardrobe. A sections-v2 call with
+        // no beat for this shot still needs the ledger paragraph.
+        args.promptStyle !== "sections-v2" || !args.beats?.[index]
+      )
+    );
+    const continuityWarnings = snapshots.flatMap((snapshot) => snapshot.warnings);
+    const unknown2 = (args.characters ?? []).filter((name) => !lookupCharacter(name));
+    const payload = {
+      scene: args.sceneDescription,
+      shotCount: annotated.length,
+      totalDurationSeconds: annotated.reduce((sum, shot) => sum + shot.durationSeconds, 0),
+      shots: annotated,
+      continuity: {
+        locations: args.locations ?? [],
+        props: args.props ?? [],
+        wardrobeEvents,
+        propEvents,
+        shots: snapshots,
+        ...args.promptStyle ? { promptStyle: args.promptStyle } : {},
+        ...args.voiceId ? { voiceId: args.voiceId } : {}
+      }
+    };
+    if (continuityWarnings.length > 0) payload.continuityWarnings = continuityWarnings;
+    if (unknown2.length > 0) {
+      payload.note = `No stored character record for: ${unknown2.join(", ")}. Call create_character first so continuity notes can carry wardrobe and reference images.`;
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
+    };
+  }
+);
+function mentionsPerson(prompt) {
+  return shouldAnchorFace(prompt);
 }
 function composeShotPrompt(continuity, prompt) {
   const anchor2 = continuity?.trim();
@@ -44073,166 +46843,322 @@ function composeShotPrompt(continuity, prompt) {
 
 Shot: ${shot}`;
 }
+function sentShotPrompt(continuity, shot) {
+  const prompt = composeShotPrompt(continuity, shot.prompt ?? "");
+  return mentionsPerson(prompt) && shouldAnchorFace(prompt, {
+    faceAnchor: shot.faceAnchor,
+    shotType: shot.shotType
+  }) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
+}
+function sequenceContractShots(input2) {
+  return input2.shots.map((shot, index) => {
+    const sentPrompt = sentShotPrompt(input2.continuity, shot);
+    const lintHits = lintSentPrompt(sentPrompt, shot.negative);
+    const seconds = Number(shot.durationSeconds) || 8;
+    const rate = ratePerSecond(input2.resolution);
+    const totalUsd = Math.round(seconds * rate * 100) / 100;
+    const startFrame = shot.firstFrameUrl ? shot.firstFrameUrl : index > 0 ? "previous shot's last frame, pinned after that shot renders" : null;
+    return {
+      index: index + 1,
+      title: shot.title ?? `Shot ${index + 1}`,
+      sentPrompt,
+      lintHits,
+      resolution: input2.resolution,
+      durationSeconds: seconds,
+      pin: input2.pin,
+      startFrame,
+      closingFrameSent: input2.pin === "both" && Boolean(shot.lastFrameUrl),
+      referenceImageUrls: shot.referenceImageUrls ?? [],
+      voiceId: input2.voiceId ?? null,
+      negativeStored: shot.negative ?? "",
+      quote: {
+        totalUsd,
+        ratePerSecond: rate,
+        basis: `${seconds}s at $${rate.toFixed(2)}/s for ${input2.resolution} = $${totalUsd.toFixed(2)}.`
+      }
+    };
+  });
+}
 function localImagePath(ref) {
   if (!ref) return void 0;
   const trimmed = ref.trim();
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
-var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-function registerGenerateControlledClip(server) {
-  server.registerTool(
-    "generate_controlled_clip",
-    {
-      description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription.",
-      inputSchema: external_exports.object({
-        prompt: external_exports.string(),
-        characters: external_exports.array(external_exports.string()).optional().describe(
-          "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand."
-        ),
-        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-          "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`."
-        ),
-        firstFrameUrl: external_exports.string().optional().describe(
-          "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
-        ),
-        lastFrameUrl: external_exports.string().optional().describe(
-          "Image to pin as the last rendered frame: public https URL, a data URI, or a local path from extract_last_frame. Together with firstFrameUrl it bookends the shot, so a cut to the next shot lands on identical pixels instead of two near-misses. Use the next shot's firstFrameUrl as this frame and the join is the same picture."
-        ),
-        durationSeconds: external_exports.number().min(1).max(15).default(8),
-        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-        resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
-          "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default."
-        ),
-        model: external_exports.string().default("grok-imagine-video-1.5"),
-        waitForCompletion: external_exports.boolean().default(true),
-        timeoutSeconds: external_exports.number().min(10).max(600).default(240)
-      })
-    },
-    async (args) => {
-      const { waitForCompletion, timeoutSeconds, characters, ...rest } = args;
-      const job = { ...rest };
-      const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
-      job.referenceImageUrls = urls.length > 0 ? urls : void 0;
-      const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
+var sleep2 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+function cancelledBeforeSpend(extra) {
+  if (!extra?.signal?.aborted) return void 0;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ action: "cancelled", willRender: false })
+    }]
+  };
+}
+server.registerTool(
+  "generate_controlled_clip",
+  {
+    description: "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription. Spends only after confirm, and only when the continuity gate passes. Pin defaults to the start frame: an end-frame pin holds the pose and has to be asked for.",
+    inputSchema: external_exports.object({
+      prompt: external_exports.string(),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically, so you never have to copy paths by hand."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Portrait or scene reference images: public https URLs, data URIs, or local paths. Combined with any images registered on `characters`."
+      ),
+      firstFrameUrl: external_exports.string().optional().describe(
+        "Image to pin as the first frame: public https URL, data URI, or a local path from extract_last_frame. This is what carries continuity across a cut."
+      ),
+      lastFrameUrl: external_exports.string().optional().describe(
+        'Image to pin as the last rendered frame. Ignored unless pin is "both". An end pin makes the model reach the pose early and then hold.'
+      ),
+      pin: external_exports.enum(["start", "both"]).default("start").describe(
+        "start pins the first frame only. both also pins lastFrameUrl."
+      ),
+      voiceId: external_exports.string().optional().describe(
+        "Built-in voice id, such as rex. Sent as reference_audios voice_id. A spoken line uses the literal token <AUDIO_0>. Time the clip to a rex track written first."
+      ),
+      negative: external_exports.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent."
+      ),
+      admission: TakeAdmissionSchema.optional(),
+      ledger: external_exports.object({
+        locations: external_exports.array(LocationSchema).optional(),
+        props: external_exports.array(PropRecordSchema).optional(),
+        wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        shotSteps: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          steps: external_exports.array(external_exports.string())
+        })).optional(),
+        voiceId: external_exports.string().optional(),
+        spokenLines: external_exports.array(external_exports.object({ shot: external_exports.number().int(), line: external_exports.string() })).optional(),
+        humanVisionSignOff: external_exports.boolean().optional(),
+        hasPortrait: external_exports.boolean().optional()
+      }).optional().describe(
+        "Continuity ledger for this clip. Without a ledger or contracts the gate is unchecked and confirm cannot spend."
+      ),
+      contracts: external_exports.array(ShotContractSchema).optional(),
+      overrideValidation: external_exports.boolean().default(false),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to spend. Call once without it for the estimate."
+      ),
+      durationSeconds: external_exports.number().min(1).max(15).default(8),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+        "Output resolution. Costs more at higher settings: at 1s, 720p billed 0.14 and 1080p 0.25. Left unset the API returns a soft 848x480, so 720p is the sensible default."
+      ),
+      model: external_exports.string().default("grok-imagine-video-1.5"),
+      waitForCompletion: external_exports.boolean().default(true),
+      timeoutSeconds: external_exports.number().min(10).max(600).default(240)
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    const {
+      waitForCompletion,
+      timeoutSeconds,
+      characters,
+      ledger,
+      contracts,
+      overrideValidation,
+      confirm,
+      pin,
+      voiceId,
+      ...rest
+    } = args;
+    const gate = gateRenderSequence({
+      plan: continuityPlanFromRenderArgs({
+        shots: [{ prompt: args.prompt, locationId: void 0 }],
+        characters,
+        ledger: ledger ? { ...ledger, voiceId: voiceId ?? ledger.voiceId } : void 0
+      }),
+      contracts,
+      overrideValidation
+    });
+    const decision = decideSpend(confirm, gate);
+    const clipLint = lintSentPrompt(args.prompt, args.negative);
+    const clipRate = ratePerSecond(args.resolution);
+    const clipEstimate = Math.round(args.durationSeconds * clipRate * 100) / 100;
+    const clipContract = {
+      sentPrompt: args.prompt,
+      lintHits: clipLint,
+      resolution: args.resolution,
+      durationSeconds: args.durationSeconds,
+      pin: pin ?? "start",
+      startFrame: rest.firstFrameUrl ?? null,
+      closingFrameSent: (pin ?? "start") !== "start" && Boolean(rest.lastFrameUrl),
+      referenceImageUrls: rest.referenceImageUrls ?? [],
+      voiceId: voiceId ?? null,
+      negativeStored: args.negative ?? "",
+      quote: {
+        totalUsd: clipEstimate,
+        ratePerSecond: clipRate,
+        basis: `${args.durationSeconds}s at $${clipRate.toFixed(2)}/s for ${args.resolution} = $${clipEstimate.toFixed(2)}.`
+      }
+    };
+    if (clipLint.length > 0) {
+      return refusal({
+        action: "refused",
+        willRender: false,
+        contract: clipContract,
+        contractValidation: gate,
+        message: "The prompt fails the check. Show the failures and the prompt. Edit it before another try. Nothing was spent."
+      });
+    }
+    if (decision !== "spend") {
+      return refusal({
+        action: decision === "estimate" ? "estimate-only" : "refused",
+        willRender: false,
+        estimate: { totalUsd: clipEstimate, resolution: args.resolution, isEstimate: true },
+        contract: clipContract,
+        contractValidation: gate,
+        message: decision === "estimate" ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves." : gate.message ?? RENDER_BLOCKED_BY_CONTRACT
+      });
+    }
+    const sessionRefusal = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
+    if (sessionRefusal) return sessionRefusal;
+    const job = {
+      ...rest,
+      pin,
+      voiceId: voiceId ?? ledger?.voiceId
+    };
+    const { urls, missing } = mergeCharacterReferences(characters, rest.referenceImageUrls);
+    const prepared = await withPersonCutouts(characters, urls);
+    job.referenceImageUrls = prepared.length > 0 ? prepared : void 0;
+    const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          ...result,
+          message: result.videoUrl ? "Clip generated. Use extract_last_frame on it to carry continuity into the next shot." : result.requestId ? "Generation submitted. Poll statusUrl for the finished clip." : "Stub response: no credential available, so nothing was generated.",
+          referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
+          unknownCharacters: missing.length > 0 ? missing : void 0,
+          args
+        }, null, 2)
+      }]
+    };
+  }
+);
+server.registerTool(
+  "extend_clip",
+  {
+    description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing. There is no continuity ledger on an extension, so confirm spends only when overrideValidation is set. Otherwise the gate is unchecked and nothing is bought.",
+    inputSchema: external_exports.object({
+      videoUrl: external_exports.string().describe("Public https URL of the source clip (2-15 seconds)."),
+      prompt: external_exports.string(),
+      durationSeconds: external_exports.number().min(2).max(10).default(6),
+      model: external_exports.string().default("grok-imagine-video"),
+      waitForCompletion: external_exports.boolean().default(true),
+      timeoutSeconds: external_exports.number().min(10).max(600).default(240),
+      confirm: external_exports.boolean().default(false),
+      overrideValidation: external_exports.boolean().default(false)
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
+    if (decideSpend(args.confirm, extensionGate) !== "spend") {
+      return refusal({
+        action: args.confirm ? "refused" : "estimate-only",
+        willRender: false,
+        contractValidation: extensionGate,
+        message: args.confirm ? extensionGate.message ?? RENDER_UNCHECKED : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation."
+      });
+    }
+    const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
+    if (extensionSession) return extensionSession;
+    const resolved = resolveVideoCredential();
+    if (resolved.ok === false) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
+    }
+    const credential = resolved.credential;
+    if (credential.kind === "session") {
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            ...result,
-            message: result.videoUrl ? "Clip generated. Use extract_last_frame on it to carry continuity into the next shot." : result.requestId ? "Generation submitted. Poll statusUrl for the finished clip." : "Stub response: no credential available, so nothing was generated.",
-            referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
-            unknownCharacters: missing.length > 0 ? missing : void 0,
-            args
+            error: "Extension not available on the subscription session",
+            detail: "The Grok CLI inference proxy answers POST /v1/videos/extensions with HTTP 405. Extension needs an XAI_API_KEY pointed at api.x.ai.",
+            workaround: "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame (from extract_last_frame). That produces a new shot continuing from the same image and works on the subscription session.",
+            auth: toolAuth(credential.source)
           }, null, 2)
         }]
       };
     }
-  );
-}
-function registerExtendClip(server) {
-  server.registerTool(
-    "extend_clip",
-    {
-      description: "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing.",
-      inputSchema: external_exports.object({
-        videoUrl: external_exports.string().describe("Public https URL of the source clip (2-15 seconds)."),
-        prompt: external_exports.string(),
-        durationSeconds: external_exports.number().min(2).max(10).default(6),
-        model: external_exports.string().default("grok-imagine-video"),
-        waitForCompletion: external_exports.boolean().default(true),
-        timeoutSeconds: external_exports.number().min(10).max(600).default(240)
+    const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
+    const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: args.model,
+        prompt: args.prompt,
+        duration: args.durationSeconds,
+        video: { url: args.videoUrl }
       })
-    },
-    async (args) => {
-      const resolved = resolveVideoCredential();
-      if (resolved.ok === false) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
-      }
-      const credential = resolved.credential;
-      if (credential.kind === "session") {
+    });
+    if (!submitRes.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: toolAuth(credential.source) }, null, 2)
+        }]
+      };
+    }
+    const submitted = await submitRes.json();
+    const requestId = submitted.request_id;
+    if (!requestId) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
+    }
+    if (!args.waitForCompletion) {
+      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+    }
+    const deadline = Date.now() + args.timeoutSeconds * 1e3;
+    while (Date.now() < deadline) {
+      await sleep2(5e3);
+      const statusRes = await fetch(`${credential.baseUrl}/v1/videos/${requestId}`, { headers });
+      if (!statusRes.ok) continue;
+      const poll = await statusRes.json();
+      if (poll.status === "done" || poll.status === "completed") {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              error: "Extension not available on the subscription session",
-              detail: "The Grok CLI inference proxy answers POST /v1/videos/extensions with HTTP 405. Extension needs an XAI_API_KEY pointed at api.x.ai.",
-              workaround: "Use generate_controlled_clip with firstFrameUrl set to the previous clip's last frame (from extract_last_frame). That produces a new shot continuing from the same image and works on the subscription session.",
-              auth: credential.source
+              requestId,
+              status: "completed",
+              videoUrl: poll.video?.url,
+              durationSeconds: poll.video?.duration,
+              extendedBy: args.durationSeconds,
+              auth: toolAuth(credential.source)
             }, null, 2)
           }]
         };
       }
-      const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
-      const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: args.model,
-          prompt: args.prompt,
-          duration: args.durationSeconds,
-          video: { url: args.videoUrl }
-        })
-      });
-      if (!submitRes.ok) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({ error: `API error ${submitRes.status}`, detail: await submitRes.text(), auth: credential.source }, null, 2)
-          }]
-        };
+      if (poll.status === "failed" || poll.status === "expired") {
+        return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
-      const submitted = await submitRes.json();
-      const requestId = submitted.request_id;
-      if (!requestId) {
-        return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
-      }
-      if (!args.waitForCompletion) {
-        return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
-      }
-      const deadline = Date.now() + args.timeoutSeconds * 1e3;
-      while (Date.now() < deadline) {
-        await sleep2(5e3);
-        const statusRes = await fetch(`${credential.baseUrl}/v1/videos/${requestId}`, { headers });
-        if (!statusRes.ok) continue;
-        const poll = await statusRes.json();
-        if (poll.status === "done" || poll.status === "completed") {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                requestId,
-                status: "completed",
-                videoUrl: poll.video?.url,
-                durationSeconds: poll.video?.duration,
-                extendedBy: args.durationSeconds,
-                auth: credential.source
-              }, null, 2)
-            }]
-          };
-        }
-        if (poll.status === "failed" || poll.status === "expired") {
-          return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
-        }
-      }
-      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
     }
-  );
-}
+    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+  }
+);
 var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
-    await mkdir4(DOWNLOAD_DIR, { recursive: true });
-    const digest = createHash4("sha1").update(input2).digest("hex").slice(0, 16);
+    await mkdir5(DOWNLOAD_DIR, { recursive: true });
+    const digest = createHash5("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
-    const target = join6(DOWNLOAD_DIR, `src-${digest}.${ext}`);
+    const target = join7(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
     if (existing !== void 0) return target;
     const res = await fetch(input2, { redirect: "follow" });
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} for ${input2}`);
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.byteLength === 0) throw new Error(`Download produced no data for ${input2}`);
-    await writeFile4(target, bytes);
+    await writeFile5(target, bytes);
     return target;
   }
   const path = input2.startsWith("file://") ? new URL(input2).pathname : input2;
@@ -44240,164 +47166,245 @@ async function resolveToLocalFile(input2) {
   if (exists === void 0) throw new Error(`Not a readable media file: ${path}`);
   return path;
 }
-function registerExtractLastFrame(server) {
-  server.registerTool(
-    "extract_last_frame",
-    {
-      description: "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
-      inputSchema: external_exports.object({
-        videoUrl: external_exports.string().describe("Public https URL, file:// path, or a local path from a previous run."),
-        includeDataUri: external_exports.boolean().default(true)
-      })
-    },
-    async (args) => {
-      const localPath = await resolveToLocalFile(args.videoUrl);
-      const frame = await extractLastFrame({ file: localPath });
-      const durationSeconds = await probeDuration(localPath);
-      const payload = {
-        status: "ok",
-        framePath: frame.path,
-        frameBytes: frame.bytes,
-        sourceVideo: args.videoUrl,
-        sourceDurationSeconds: durationSeconds,
-        ffmpeg: frame.ffmpeg,
-        message: "Use framePath or dataUri as firstFrameUrl on the next shot to carry continuity. The data URI is self-contained, so it survives a copy into another machine."
-      };
-      if (args.includeDataUri) {
-        payload.dataUri = await pathToDataUrl(frame.path);
-      }
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+server.registerTool(
+  "extract_last_frame",
+  {
+    description: "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
+    inputSchema: external_exports.object({
+      videoUrl: external_exports.string().describe("Public https URL, file:// path, or a local path from a previous run."),
+      includeDataUri: external_exports.boolean().default(true)
+    })
+  },
+  async (args) => {
+    const localPath = await resolveToLocalFile(args.videoUrl);
+    const frame = await extractLastFrame({ file: localPath });
+    const durationSeconds = await probeDuration(localPath);
+    const payload = {
+      status: "ok",
+      framePath: frame.path,
+      frameBytes: frame.bytes,
+      sourceVideo: args.videoUrl,
+      sourceDurationSeconds: durationSeconds,
+      ffmpeg: frame.ffmpeg,
+      message: "Use framePath or dataUri as firstFrameUrl on the next shot to carry continuity. The data URI is self-contained, so it survives a copy into another machine."
+    };
+    if (args.includeDataUri) {
+      payload.dataUri = await pathToDataUrl(frame.path);
     }
-  );
-}
-function registerGenerateStill(server) {
-  server.registerTool(
-    "generate_still",
-    {
-      description: "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
-      inputSchema: external_exports.object({
-        prompt: external_exports.string().describe(
-          "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
-        ),
-        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
-          "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked."
-        ),
-        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-          "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
-        ),
-        characters: external_exports.array(external_exports.string()).optional().describe(
-          "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
-        )
-      })
-    },
-    async (args) => {
-      const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
-      const result = await generateGrokStill(
-        {
-          prompt: args.prompt,
-          aspectRatio: args.aspectRatio,
-          referenceImageUrls: urls.length > 0 ? urls : void 0
-        },
-        { outputDir: OUTPUT_DIR }
-      );
-      if (!result.localPath) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: result.error ?? "Still generation failed",
-              detail: result.detail,
-              hint: result.hint,
-              costUsd: result.costUsd,
-              referenceImagesUsed: urls.length,
-              unknownCharacters: missing.length > 0 ? missing : void 0
-            }, null, 2)
-          }]
-        };
-      }
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+);
+server.registerTool(
+  "generate_still",
+  {
+    description: "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
+    inputSchema: external_exports.object({
+      prompt: external_exports.string().describe(
+        "What the still shows. Describe the frame, not the motion: subject, framing, light, mood."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9").describe(
+        "Shape of the still. Sent as aspect_ratio, which is what the video route takes; if the image route rejects it the call falls back automatically and reports which key worked."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Portrait or location references: public https URLs, data URIs, or local paths. Inlined for the API, and shrunk harder as the list grows so the request body stays within limits."
+      ),
+      baseImageUrl: external_exports.string().optional().describe(
+        "Edit this picture instead of generating a new one. The prompt is sent word for word. Omit it and the still is a fresh generation, as before. A local path must be inside the output folder or a character folder."
+      ),
+      imageOrder: external_exports.enum(["portrait-first", "plate-first"]).optional().describe(
+        "Default portrait-first sends the character reference first and the room last. plate-first sends the room first, for placing a person into a set. Opening a door in that same two-image call was unreliable: edit the plate alone first, then place the character."
+      ),
+      negative: external_exports.string().optional().describe(
+        "Known limits and hallucinations. Used by lint and the checklist. Never sent."
+      ),
+      admission: TakeAdmissionSchema.optional(),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to spend about $0.02. Call without it for the estimate. The prompt is sent word for word either way."
+      ),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Names of characters created with create_character. Their reference images are merged into referenceImageUrls automatically."
+      )
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const imageRefs = [args.baseImageUrl, ...args.referenceImageUrls ?? [], ...urls].filter((ref) => Boolean(ref && ref.trim()));
+    const roots = [OUTPUT_DIR, charactersRoot()];
+    const rejected = imageRefs.find((ref) => !localImageRefAllowed(ref, roots));
+    if (rejected) {
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            status: "ok",
-            imageUrl: result.imageUrl,
-            imagePath: result.localPath,
-            fileUrl: `file://${result.localPath}`,
-            mimeType: result.mimeType,
-            aspectRatio: args.aspectRatio,
-            aspectRatioParam: result.aspectRatioParam,
-            costUsd: result.costUsd,
-            usage: result.usage,
-            billedTo: result.billedTo,
-            auth: result.auth,
-            referenceImagesUsed: urls.length,
-            unknownCharacters: missing.length > 0 ? missing : void 0,
-            message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
+            action: "refused",
+            willSpend: false,
+            error: "A local image has to be inside the output folder or a character folder. https URLs and data images are still accepted."
           }, null, 2)
         }]
       };
     }
-  );
-}
-function registerAssembleFilm(server) {
-  server.registerTool(
-    "assemble_film",
-    {
-      description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
-      inputSchema: external_exports.object({
-        clips: external_exports.array(external_exports.object({
-          url: external_exports.string(),
-          title: external_exports.string().optional(),
-          trimStart: external_exports.number().min(0).optional(),
-          trimEnd: external_exports.number().min(0).optional()
-        })).min(1),
-        fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-          "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
-        ),
-        audioTrackUrl: external_exports.string().optional().describe(
-          "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. Looped if shorter than the film, trimmed to its length, and faded out at the end. Mixed under the clips' own audio, never replacing it."
-        ),
-        audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25).describe(
-          "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video."
-        ),
-        audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5)
-      })
-    },
-    async (args) => {
-      const localFiles = [];
-      for (const clip of args.clips) {
-        const file2 = await resolveToLocalFile(clip.url);
-        localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
-      }
-      const result = await assembleClips({
-        clips: localFiles,
-        fadeDuration: args.fadeDuration,
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
-        audioTrackVolume: args.audioTrackVolume,
-        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
-      });
-      const durationSeconds = await probeDuration(result.path);
-      const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
-      const payload = {
-        status: "ok",
-        filmPath: result.path,
-        fileUrl: `file://${result.path}`,
-        clipCount: args.clips.length,
-        durationSeconds,
-        fileBytes: await bytes,
-        crossFades: result.mode === "xfade",
-        mode: result.mode,
-        fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
-        audioBed: result.audioBed ? {
-          source: args.audioTrackUrl,
-          volume: args.audioTrackVolume,
-          note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio."
-        } : void 0,
-        message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
+    if (args.confirm !== true) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willSpend: false,
+            estimate: {
+              estimatedUsd: STILL_USD,
+              perStillUsd: STILL_USD,
+              isEstimate: true,
+              basis: "One still at $0.02. Nothing is generated until confirm is true."
+            },
+            next: "Show the estimate. Call again with confirm: true only after the user approves."
+          }, null, 2)
+        }]
       };
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
     }
-  );
+    const prepared = await withPersonCutouts(args.characters, urls);
+    const result = await generateGrokStill(
+      {
+        prompt: args.prompt,
+        aspectRatio: args.aspectRatio,
+        referenceImageUrls: prepared.length > 0 ? prepared : void 0,
+        baseImageUrl: args.baseImageUrl,
+        imageOrder: args.imageOrder,
+        negative: args.negative,
+        admission: args.admission
+      },
+      { outputDir: OUTPUT_DIR }
+    );
+    if (!result.localPath) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: result.error ?? "Still generation failed",
+            detail: result.detail,
+            hint: result.hint,
+            costUsd: result.costUsd,
+            referenceImagesUsed: urls.length,
+            unknownCharacters: missing.length > 0 ? missing : void 0
+          }, null, 2)
+        }]
+      };
+    }
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          imageUrl: result.imageUrl,
+          imagePath: result.localPath,
+          fileUrl: `file://${result.localPath}`,
+          mimeType: result.mimeType,
+          aspectRatio: args.aspectRatio,
+          aspectRatioParam: result.aspectRatioParam,
+          costUsd: result.costUsd,
+          usage: result.usage,
+          billedTo: result.billedTo,
+          auth: toolAuth(result.auth),
+          referenceImagesUsed: urls.length,
+          unknownCharacters: missing.length > 0 ? missing : void 0,
+          message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
+        }, null, 2)
+      }]
+    };
+  }
+);
+server.registerTool(
+  "assemble_film",
+  {
+    description: "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
+    inputSchema: external_exports.object({
+      clips: external_exports.array(external_exports.object({
+        url: external_exports.string(),
+        title: external_exports.string().optional(),
+        trimStart: external_exports.number().min(0).optional(),
+        trimEnd: external_exports.number().min(0).optional()
+      })).min(1),
+      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+        "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
+      ),
+      audioTrackUrl: external_exports.string().optional().describe(
+        "Optional music, narration or ambience for the whole film: an https URL, a file:// URL, or a local path such as a chat attachment. It must cover the whole film. A shorter bed is refused. Volume 0 omits it."
+      ),
+      audioTrackVolume: external_exports.number().min(0).max(4).default(0.25).describe(
+        "Bed level. 0.25 sits under dialogue; 1.0 is a full-volume music video; 0 omits the bed."
+      ),
+      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
+      clipAudio: external_exports.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes each clip's own audio. mute drops it and keeps the bed or silence. replace drops it so the bed is the soundtrack."
+      )
+    })
+  },
+  async (args) => {
+    const localFiles = [];
+    for (const clip of args.clips) {
+      const file2 = await resolveToLocalFile(clip.url);
+      localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
+    }
+    const result = await assembleClips({
+      clips: localFiles,
+      fadeDuration: args.fadeDuration,
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+      audioTrackVolume: args.audioTrackVolume,
+      audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+      clipAudio: args.clipAudio
+    });
+    const durationSeconds = await probeDuration(result.path);
+    const bytes = (await import("node:fs/promises")).stat(result.path).then((s) => s.size);
+    const payload = {
+      status: "ok",
+      filmPath: result.path,
+      fileUrl: `file://${result.path}`,
+      clipCount: args.clips.length,
+      durationSeconds,
+      fileBytes: await bytes,
+      crossFades: result.mode === "xfade",
+      mode: result.mode,
+      fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
+      audioBed: result.audioBed ? {
+        source: args.audioTrackUrl,
+        volume: args.audioTrackVolume,
+        note: "Looped or trimmed to the film, faded out at the end, mixed under the clips' audio."
+      } : void 0,
+      message: result.mode === "xfade" ? "Film assembled with cross-fades." : "Film assembled with hard cuts."
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+);
+function startOwnedJobHeartbeat() {
+  return startJobHeartbeat(() => {
+    const now = Date.now();
+    for (const job of sequenceJobs.values()) {
+      const ownsRun = job.state === "running" && job.owner?.token === processToken;
+      const ownsClaim = job.claim?.token === processToken;
+      if (!ownsRun && !ownsClaim) continue;
+      if (ownsRun && job.owner) job.owner.heartbeatAt = now;
+      if (ownsClaim && job.claim) job.claim.heartbeatAt = now;
+      void persistJob(job);
+    }
+  });
+}
+async function startStdioServer() {
+  if (process.env.THESHOW_TRANSPORT === "http") {
+    throw new Error(
+      "THESHOW_TRANSPORT=http is the Streamable HTTP entry, mcp/http-server.ts. This process is the desktop stdio server and does not open a port."
+    );
+  }
+  await loadJobsFromDisk();
+  await loadCharactersFromDisk();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("theShow MCP server running on stdio (enhanced test build)");
+  const stopBeat = startOwnedJobHeartbeat();
+  installShutdown(async () => {
+    stopBeat();
+    await flushJobWrites();
+  });
 }
 var RESOLUTION_RATES = { "480p": 0.08, "720p": 0.14, "1080p": 0.25 };
 function ratePerSecond(resolution) {
@@ -44409,34 +47416,313 @@ function resolutionFromLabel(value) {
   return match?.[1] ?? void 0;
 }
 var sequenceJobs = /* @__PURE__ */ new Map();
+var jobRevision = /* @__PURE__ */ new Map();
+var jobWriteChain = /* @__PURE__ */ new Map();
+function claimPath(jobId) {
+  return join7(JOBS_DIR, `${jobId}.claim`);
+}
+function noteRevision(job) {
+  if (typeof job.revision === "number") {
+    jobRevision.set(job.id, Math.max(jobRevision.get(job.id) ?? 0, job.revision));
+  }
+}
 async function persistJob(job) {
+  const revision = (jobRevision.get(job.id) ?? 0) + 1;
+  job.revision = revision;
+  jobRevision.set(job.id, revision);
+  const snapshot = structuredClone(job);
+  const previous = jobWriteChain.get(job.id) ?? Promise.resolve();
+  const write = previous.then(async () => {
+    if (jobRevision.get(job.id) !== revision) return;
+    try {
+      await atomicWriteFile(join7(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
+      else await unlink3(claimPath(job.id)).catch(() => void 0);
+    } catch (err) {
+      console.error(`theShow: could not persist job ${job.id}:`, err);
+    }
+  });
+  jobWriteChain.set(job.id, write);
+  trackWrite(write);
+  await write;
+}
+async function reapIfOwnerGone(job) {
+  if (job.state !== "running" || !jobShouldStop(job.owner)) return;
+  const filmPath = job.filmPath;
+  const fileUrl = job.fileUrl;
+  job.state = "stopped";
+  job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
+  job.finishedAt = job.finishedAt ?? Date.now();
+  if (filmPath) job.filmPath = filmPath;
+  if (fileUrl) job.fileUrl = fileUrl;
+  await persistJob(job);
+}
+function otherProcessHolds(owner) {
+  if (!owner) return false;
+  if (owner.token === processToken && owner.pid === process.pid) return false;
+  return !jobShouldStop(owner);
+}
+var ALREADY_RUNNING = "already running in another process";
+var ALREADY_RUNNING_HERE = "already running in this process";
+var TAKING_OVER = "another process is taking over this film; try again in a few seconds";
+var CLAIM_EMPTY_GRACE_MS = 1e3;
+function claimBusyMessage(owner) {
+  if (owner && owner.token === processToken && owner.pid === process.pid) return ALREADY_RUNNING_HERE;
+  return ALREADY_RUNNING;
+}
+function mergeFromDisk(memory, disk) {
+  if (!memory) return disk;
+  const memRev = memory.revision ?? 0;
+  const diskRev = disk.revision ?? 0;
+  if (memRev > diskRev) return memory;
+  if (memory.state !== "running" && disk.state === "running") return memory;
+  if (memory.filmPath && !disk.filmPath) {
+    return { ...disk, filmPath: memory.filmPath, fileUrl: disk.fileUrl ?? memory.fileUrl };
+  }
+  return disk;
+}
+async function refreshJobsFromDisk() {
+  let names;
   try {
-    await mkdir4(JOBS_DIR, { recursive: true });
-    await writeFile4(join6(JOBS_DIR, `${job.id}.json`), JSON.stringify(job, null, 2), "utf8");
-  } catch (err) {
-    console.error(`theShow: could not persist job ${job.id}:`, err);
+    names = await readdir2(JOBS_DIR);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const raw = await readFile6(join7(JOBS_DIR, name), "utf8");
+      const job = JSON.parse(raw);
+      if (!job?.id) continue;
+      const memory = sequenceJobs.get(job.id);
+      if (memory?.owner?.token === processToken && memory.state === "running") continue;
+      const chosen = mergeFromDisk(memory, job);
+      if (chosen === job) await reapIfOwnerGone(chosen);
+      noteRevision(chosen);
+      sequenceJobs.set(chosen.id, chosen);
+    } catch {
+    }
   }
 }
 async function loadJobsFromDisk() {
+  await refreshJobsFromDisk();
+}
+async function readClaimFile(path) {
   try {
-    const files = await readdir2(JOBS_DIR);
-    for (const name of files) {
-      if (!name.endsWith(".json")) continue;
-      try {
-        const raw = await readFile4(join6(JOBS_DIR, name), "utf8");
-        const job = JSON.parse(raw);
-        if (!job?.id) continue;
-        if (job.state === "running") {
-          job.state = "stopped";
-          job.error = "The server stopped while this film was rendering. Shots already finished are kept; the rest were never rendered.";
-          job.finishedAt = job.finishedAt ?? Date.now();
-          void persistJob(job);
-        }
-        sequenceJobs.set(job.id, job);
-      } catch {
-      }
-    }
+    const raw = await readFile6(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return parsed;
   } catch {
+    return void 0;
+  }
+}
+async function readClaim(jobId) {
+  return readClaimFile(claimPath(jobId));
+}
+async function claimFileAge(jobId) {
+  try {
+    const info = await stat4(claimPath(jobId));
+    return Date.now() - info.mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+function claimIsStale(owner, ageMs) {
+  if (!owner) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  return jobShouldStop(owner);
+}
+async function placeClaim(jobId, owner) {
+  return publishExclusive(claimPath(jobId), JSON.stringify(owner));
+}
+function claimTurnPath(jobId) {
+  return `${claimPath(jobId)}.turn`;
+}
+async function readClaimTurn(path) {
+  try {
+    const raw = await readFile6(path, "utf8");
+    if (!raw.trim()) return void 0;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
+    return {
+      pid: parsed.pid,
+      token: parsed.token,
+      host: typeof parsed.host === "string" ? parsed.host : "",
+      at: typeof parsed.at === "number" ? parsed.at : 0
+    };
+  } catch {
+    return void 0;
+  }
+}
+var activeClaimTurns = /* @__PURE__ */ new Set();
+function claimTurnIsStale(info, ageMs) {
+  if (!info) return ageMs === void 0 || ageMs > CLAIM_EMPTY_GRACE_MS;
+  if (ageMs !== void 0 && ageMs <= CLAIM_EMPTY_GRACE_MS) return false;
+  if (info.host === processHost && info.pid === process.pid && activeClaimTurns.has(info.token)) return false;
+  if (info.host === processHost && info.pid === process.pid) return true;
+  if (info.host === processHost && !pidAlive(info.pid)) return true;
+  return ageMs !== void 0 && ageMs > 15e3;
+}
+async function discardIfUnchanged(path, expected) {
+  const tomb = `${path}.tomb.${randomUUID3()}`;
+  try {
+    await rename3(path, tomb);
+  } catch (err) {
+    if (err.code === "ENOENT") return false;
+    throw err;
+  }
+  let tombRaw = "";
+  try {
+    tombRaw = await readFile6(tomb, "utf8");
+  } catch {
+    tombRaw = "";
+  }
+  if (tombRaw !== expected) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  let tombAge;
+  try {
+    tombAge = Date.now() - (await stat4(tomb)).mtimeMs;
+  } catch {
+    tombAge = void 0;
+  }
+  if (!tombRaw.trim() && !(tombAge !== void 0 && tombAge > CLAIM_EMPTY_GRACE_MS)) {
+    await restoreIfAbsent(tomb, path);
+    return false;
+  }
+  await unlink3(tomb).catch(() => void 0);
+  return true;
+}
+async function acquireClaimTurn(jobId) {
+  const token = randomUUID3();
+  const body = JSON.stringify({ pid: process.pid, token, host: processHost, at: Date.now() });
+  const dest = claimTurnPath(jobId);
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return void 0;
+  }
+  const current = await readClaimTurn(dest);
+  if (!claimTurnIsStale(current, turnAge)) return void 0;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return void 0;
+  }
+  if (!await discardIfUnchanged(dest, raw)) return void 0;
+  if (await publishExclusive(dest, body)) {
+    activeClaimTurns.add(token);
+    return token;
+  }
+  return void 0;
+}
+async function releaseClaimTurn(jobId, token) {
+  activeClaimTurns.delete(token);
+  const dest = claimTurnPath(jobId);
+  const current = await readClaimTurn(dest);
+  if (current?.token !== token) return;
+  let raw = "";
+  try {
+    raw = await readFile6(dest, "utf8");
+  } catch {
+    return;
+  }
+  if (!raw.includes(token)) return;
+  await discardIfUnchanged(dest, raw);
+}
+async function claimFilm(jobId) {
+  await refreshJobsFromDisk();
+  const job = sequenceJobs.get(jobId);
+  if (!job) return { ok: false, message: "Unknown job" };
+  if (job.state === "running" && otherProcessHolds(job.owner)) {
+    return { ok: false, message: ALREADY_RUNNING };
+  }
+  if (job.claim && !jobShouldStop(job.claim)) {
+    return { ok: false, message: claimBusyMessage(job.claim) };
+  }
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const age = await claimFileAge(jobId);
+    const existing = age === void 0 ? void 0 : await readClaim(jobId);
+    if (age !== void 0 && !claimIsStale(existing, age)) {
+      return { ok: false, message: claimBusyMessage(existing) };
+    }
+    const turn = await acquireClaimTurn(jobId);
+    if (!turn) {
+      await sleep2(10 + attempt);
+      continue;
+    }
+    try {
+      const heldAge = await claimFileAge(jobId);
+      const held = heldAge === void 0 ? void 0 : await readClaim(jobId);
+      if (heldAge !== void 0 && !claimIsStale(held, heldAge)) {
+        return { ok: false, message: claimBusyMessage(held) };
+      }
+      const owner = thisOwner();
+      if (heldAge === void 0) {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = await readFile6(claimPath(jobId), "utf8");
+      } catch {
+        if (await placeClaim(jobId, owner)) {
+          job.claim = owner;
+          sequenceJobs.set(job.id, job);
+          await persistJob(job);
+          return { ok: true };
+        }
+        continue;
+      }
+      if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
+      if (!await placeClaim(jobId, owner)) continue;
+      job.claim = owner;
+      sequenceJobs.set(job.id, job);
+      await persistJob(job);
+      return { ok: true };
+    } finally {
+      await releaseClaimTurn(jobId, turn);
+    }
+  }
+  if (await liveTurnWithoutClaim(jobId)) {
+    return { ok: false, message: TAKING_OVER };
+  }
+  return { ok: false, message: ALREADY_RUNNING };
+}
+async function liveTurnWithoutClaim(jobId) {
+  const dest = claimTurnPath(jobId);
+  let turnAge;
+  try {
+    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+  } catch {
+    return false;
+  }
+  const turn = await readClaimTurn(dest);
+  if (!turn || claimTurnIsStale(turn, turnAge)) return false;
+  const age = await claimFileAge(jobId);
+  const existing = age === void 0 ? void 0 : await readClaim(jobId);
+  return age === void 0 || claimIsStale(existing, age);
+}
+async function releaseFilmClaim(jobId) {
+  const job = sequenceJobs.get(jobId);
+  if (job?.claim?.token === processToken) {
+    job.claim = void 0;
+    await persistJob(job);
+  } else {
+    await unlink3(claimPath(jobId)).catch(() => void 0);
   }
 }
 function sequenceJobId() {
@@ -44475,7 +47761,8 @@ function jobPayload(job) {
       lastFramePath: job.lastFramePath,
       unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : void 0,
       warnings: job.warnings?.length ? job.warnings : void 0,
-      error: job.error
+      error: job.error,
+      ledger: job.ledger
     } : {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId."
@@ -44493,6 +47780,7 @@ async function runSequenceJob(job, args) {
     }
     characterRefs.push(...known.referenceImageUrls ?? []);
   }
+  const portraitRefs = await withPersonCutouts(args.characters, Array.from(new Set(characterRefs)));
   const carried = args.carriedShots ?? [];
   const trailing = args.trailingShots ?? [];
   job.shots.push(...carried);
@@ -44505,7 +47793,10 @@ async function runSequenceJob(job, args) {
       const shot = args.shots[i];
       const shotFirstFrame = shot.firstFrameUrl ?? previousFrame;
       const prompt = composeShotPrompt(args.continuity, shot.prompt);
-      const anchored = mentionsPerson(prompt) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
+      const anchored = mentionsPerson(prompt) && shouldAnchorFace(prompt, {
+        faceAnchor: shot.faceAnchor,
+        shotType: shot.shotType
+      }) ? `${prompt} Keep the face exactly as the first frame shows it.` : prompt;
       const renderShot = () => generateGrokClip({
         prompt: anchored,
         durationSeconds: shot.durationSeconds,
@@ -44514,13 +47805,17 @@ async function runSequenceJob(job, args) {
         model: args.model,
         firstFrameUrl: shotFirstFrame,
         lastFrameUrl: shot.lastFrameUrl,
-        referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+        pin: args.pin ?? "start",
+        voiceId: args.voiceId,
+        negative: shot.negative,
+        admission: shot.admission,
+        referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : void 0
       }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
       let result = await renderShot();
       let retries = 0;
       while (result.status === "failed" && result.retryable && retries < 3) {
         retries += 1;
-        await new Promise((resolve) => setTimeout(resolve, 2500 * retries));
+        await new Promise((resolve2) => setTimeout(resolve2, 2500 * retries));
         result = await renderShot();
       }
       if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
@@ -44531,7 +47826,11 @@ async function runSequenceJob(job, args) {
           resolution: args.resolution,
           model: args.model,
           firstFrameUrl: shotFirstFrame,
-          referenceImageUrls: characterRefs.length > 0 ? Array.from(new Set(characterRefs)) : void 0
+          pin: "start",
+          voiceId: args.voiceId,
+          negative: shot.negative,
+          admission: shot.admission,
+          referenceImageUrls: portraitRefs.length > 0 ? portraitRefs : void 0
         }, { waitForCompletion: true, timeoutSeconds: args.timeoutSecondsPerShot });
         if (result.status === "completed") {
           degradations.push(
@@ -44551,7 +47850,9 @@ async function runSequenceJob(job, args) {
         framePath: void 0,
         lastFrameUrl: shot.lastFrameUrl,
         lastFramePath: localImagePath(shot.lastFrameUrl),
+        closingFrameAgreement: void 0,
         prompt: shot.prompt,
+        sentPrompt: anchored,
         durationSeconds: shot.durationSeconds
       };
       job.spentUsd += result.costUsd ?? 0;
@@ -44585,6 +47886,19 @@ async function runSequenceJob(job, args) {
         void persistJob(job);
         return;
       }
+      const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
+      if (!accepted.ok) {
+        await acceptRenderedTake(clipPath, shot.admission, shot.negative);
+        entry.localPath = void 0;
+        entry.framePath = void 0;
+        entry.status = "failed";
+        entry.error = `Admission failed: ${accepted.failures.join("; ")}. The take was discarded and is not the next start frame.`;
+        job.state = "stopped";
+        job.error = entry.error;
+        job.finishedAt = Date.now();
+        void persistJob(job);
+        return;
+      }
       previousFrame = frame.path;
       entry.framePath = frame.path;
       job.lastFramePath = frame.path;
@@ -44603,7 +47917,8 @@ async function runSequenceJob(job, args) {
         fadeDuration: args.fadeDuration,
         audioTrackFile: args.audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
-        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds
+        audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio
       });
       job.filmPath = assembled.path;
       job.fileUrl = `file://${assembled.path}`;
@@ -44623,161 +47938,333 @@ async function runSequenceJob(job, args) {
     void persistJob(job);
   }
 }
-function registerRenderSequence(server) {
-  server.registerTool(
-    "render_sequence",
-    {
-      description: "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
-      inputSchema: external_exports.object({
-        shots: external_exports.array(external_exports.object({
-          prompt: external_exports.string().describe(
-            "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
-          ),
-          durationSeconds: external_exports.number().min(1).max(15).default(8),
-          title: external_exports.string().optional(),
-          firstFrameUrl: external_exports.string().optional().describe(
-            "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
-          ),
-          lastFrameUrl: external_exports.string().optional().describe(
-            "Pinned closing frame for this shot. With firstFrameUrl the shot is bookended, and if it equals the next shot's firstFrameUrl the cut between them lands on identical pixels. board_film fills this in for a whole film."
-          )
-        })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
-        characters: external_exports.array(external_exports.string()).optional().describe(
-          "Character names from create_character. Their reference images go on every shot."
+server.registerTool(
+  "render_sequence",
+  {
+    description: "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
+    inputSchema: external_exports.object({
+      shots: external_exports.array(external_exports.object({
+        prompt: external_exports.string().describe(
+          "Everything the model must show in this shot. It has no memory between shots, so repeat wardrobe, lighting, and set details in every entry."
         ),
-        continuity: external_exports.string().optional().describe(
-          "Everything that must stay identical across the film, written once: set, wardrobe, light source, palette, and the negative constraints. It is prepended to every shot prompt, so you never have to repeat it and the model cannot forget it. configure_film returns a ready-made block for this."
-        ),
+        durationSeconds: external_exports.number().min(1).max(15).default(8),
+        title: external_exports.string().optional(),
         firstFrameUrl: external_exports.string().optional().describe(
-          "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
+          "Explicit opening frame for this shot: an https URL, a data URI, or a local path such as a still from board_film. Overrides chaining from the previous shot, so a boarded shot renders from the frame the user actually approved."
         ),
-        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-        resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
-          "Output resolution. 1080p costs roughly twice 720p per second of video."
+        lastFrameUrl: external_exports.string().optional().describe(
+          'Pinned closing frame for this shot. Used only when pin is "both". The default pin is the start frame, because an end pin makes the model hold.'
         ),
-        model: external_exports.string().default("grok-imagine-video-1.5"),
-        assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
-        audioTrackUrl: external_exports.string().optional().describe(
-          "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
-        ),
-        audioTrackVolume: external_exports.number().min(0.01).max(4).default(0.25),
-        audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
-        fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
-          "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
-        ),
-        resumeFromJobId: external_exports.string().optional().describe(
-          "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
-        ),
-        confirm: external_exports.boolean().default(false).describe(
-          "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
-        ),
-        timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
-      })
-    },
-    async (args) => {
-      const shotCount = args.shots.length;
-      const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
-      let resumeJob;
-      if (args.resumeFromJobId) {
-        resumeJob = sequenceJobs.get(args.resumeFromJobId);
-        if (!resumeJob) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                error: "Unknown resumeFromJobId",
-                detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-                known: Array.from(sequenceJobs.keys()).slice(-5)
-              }, null, 2)
-            }]
-          };
-        }
-        if (resumeJob.state === "running") {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                error: "That job is still running",
-                detail: "Wait for it to finish and poll check_sequence. Continuing a running job renders it twice.",
-                jobId: resumeJob.id
-              }, null, 2)
-            }]
-          };
-        }
-        if (resumeJob.shots.length === 0) {
-          return {
-            content: [{
-              type: "text",
-              text: JSON.stringify({
-                error: "That job rendered no shots to continue from",
-                jobId: resumeJob.id,
-                state: resumeJob.state,
-                detail: resumeJob.error ?? "Start a new film with firstFrameUrl instead."
-              }, null, 2)
-            }]
-          };
-        }
-      }
-      const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
-      const resumeFramePath = carried.at(-1)?.framePath;
-      const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
-      const estimate = Math.round(
-        args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
-      ) / 100;
-      const resumeWarnings = [];
-      if (resumeJob && continuationStartFrame) {
-        const oldEnd = carried.at(-1)?.framePath;
-        if (oldEnd && continuationStartFrame !== oldEnd) {
-          resumeWarnings.push(
-            `The new shot does not start on the frame the earlier film ends on. It will join the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut between them is an unpinned join and the cast may change across it. Either pass firstFrameUrl identical to the old film's last frame, or start a new film.`
-          );
-        }
-      }
-      const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
-      const sharedBoundaries = args.shots.reduce((count, shot, i) => {
-        const next = args.shots[i + 1];
-        return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
-      }, 0);
-      if (!args.confirm) {
+        locationId: external_exports.string().optional(),
+        shotType: external_exports.string().optional(),
+        faceAnchor: external_exports.enum(["auto", "off"]).optional(),
+        negative: external_exports.string().optional(),
+        admission: TakeAdmissionSchema.optional()
+      })).min(1).max(12).describe("Shots in order, 1 to 12. More than that is usually two films."),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Character names from create_character. Their reference images go on every shot."
+      ),
+      continuity: external_exports.string().optional().describe(
+        "Set, wardrobe, light, and palette, written once and prepended to every shot."
+      ),
+      ledger: external_exports.object({
+        locations: external_exports.array(LocationSchema).optional(),
+        props: external_exports.array(PropRecordSchema).optional(),
+        wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        shots: external_exports.array(external_exports.any()).optional(),
+        shotSteps: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          steps: external_exports.array(external_exports.string())
+        })).optional(),
+        voiceId: external_exports.string().optional(),
+        promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional(),
+        spokenLines: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          line: external_exports.string()
+        })).optional(),
+        humanVisionSignOff: external_exports.boolean().optional(),
+        hasPortrait: external_exports.boolean().optional(),
+        scaleMarks: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          bodyH: external_exports.number(),
+          tolPct: external_exports.number(),
+          measuredBodyH: external_exports.number().optional()
+        })).optional(),
+        bodyClearance: external_exports.array(external_exports.object({
+          shot: external_exports.number().int().min(1),
+          solidId: external_exports.string(),
+          clear: external_exports.boolean()
+        })).optional(),
+        tier1: external_exports.object({
+          freezeRun: external_exports.number(),
+          speechCoverage: external_exports.number(),
+          joinSsim: external_exports.number(),
+          motionNatural: external_exports.number()
+        }).optional()
+      }).optional().describe(
+        "Prop ledger and wardrobe events from plan_storyboard. Stored on the job so a resumed film keeps the same rooms and props. Does not by itself spend money or call vision."
+      ),
+      contracts: external_exports.array(ShotContractSchema).optional().describe(
+        "Optional per-shot state-file contracts. When omitted they are derived from ledger."
+      ),
+      overrideValidation: external_exports.boolean().default(false).describe(
+        "When true, start the render even if the shot contracts fail validation. The default is to refuse rather than spend on a plan the ledger already knows is inconsistent."
+      ),
+      firstFrameUrl: external_exports.string().optional().describe(
+        "Optional anchor for shot one: a portrait or location still, or a previous film's last frame."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      resolution: external_exports.enum(["480p", "720p", "1080p"]).default("720p").describe(
+        "Output resolution. 1080p costs roughly twice 720p per second of video."
+      ),
+      model: external_exports.string().default("grok-imagine-video-1.5"),
+      assemble: external_exports.boolean().default(true).describe("Also assemble the clips into one film."),
+      audioTrackUrl: external_exports.string().optional().describe(
+        "Optional music, narration or ambience for the finished film, mixed under the clips' own audio. https URL, file:// URL, or a local path such as a chat attachment."
+      ),
+      audioTrackVolume: external_exports.number().min(0).max(4).default(0.25),
+      clipAudio: external_exports.enum(["keep", "mute", "replace"]).default("keep").describe(
+        "keep mixes clip audio. mute drops it. replace uses only the bed."
+      ),
+      pin: external_exports.enum(["start", "both"]).default("start").describe(
+        "start pins each shot's first frame only. both also sends lastFrameUrl."
+      ),
+      voiceId: external_exports.string().optional().describe("Built-in voice id, such as rex."),
+      promptStyle: external_exports.enum(["legacy", "sections-v2"]).optional().describe(
+        "sections-v2 refuses a voiced shot whose prompt has no <AUDIO_0>. The default only warns."
+      ),
+      audioTrackFadeOutSeconds: external_exports.number().min(0).max(30).default(1.5),
+      fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
+        "Seconds of cross-fade at each join. 0 (the default) is a hard cut, which is right whenever the shot changes framing: sharp, and it reads as an edit. Raise it to 0.15-0.3 only when consecutive shots continue one camera move with the same framing, where a cut would pop. A dissolve between drifted textures double-exposes and softens the image for its length."
+      ),
+      resumeFromJobId: external_exports.string().optional().describe(
+        "Continue an earlier render_sequence job instead of starting a new film. Shots it already rendered are kept, cost nothing more, and go into the final assembly; the shots you pass here are appended after them and chain from the last rendered frame. This is how a film goes past 12 shots."
+      ),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to render. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+      ),
+      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    const shotCount = args.shots.length;
+    const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
+    let resumeJob;
+    if (args.resumeFromJobId) {
+      await refreshJobsFromDisk();
+      resumeJob = sequenceJobs.get(args.resumeFromJobId);
+      if (!resumeJob) {
         return {
           content: [{
             type: "text",
             text: JSON.stringify({
-              action: "estimate-only",
-              willRender: false,
-              plan: {
-                shots: shotCount,
-                totalSeconds,
-                aspectRatio: args.aspectRatio,
-                resolution: args.resolution,
-                fadeSeconds: args.fadeDuration,
-                continuity: bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots are bookended with explicit first and last frames; the rest chain from the previous shot's last frame.` : "Each shot starts from the previous shot's last frame.",
-                bookendedShots,
-                sharedBoundaryFrames: sharedBoundaries,
-                rendersAsOneJob: true,
-                ...resumeJob ? {
-                  continuingJob: resumeJob.id,
-                  alreadyRenderedShots: carried.length,
-                  assembledFilmShots: carried.length + shotCount,
-                  note: `Shots 1-${carried.length} are already rendered and cost nothing more; they go into the final assembly. This estimate covers only the ${shotCount} new shots.`
-                } : {}
-              },
-              estimate: {
-                totalUsd: estimate,
-                resolution: args.resolution,
-                basis: `${shotCount} renders totalling ${totalSeconds}s at about $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution}, from measured 8s runs`,
-                isEstimate: true
-              },
-              ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
-              next: "Show this to the user. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes."
+              error: "Unknown resumeFromJobId",
+              detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+              known: Array.from(sequenceJobs.keys()).slice(-5)
             }, null, 2)
           }]
         };
       }
+      if (otherProcessHolds(resumeJob.owner) || otherProcessHolds(resumeJob.claim)) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: ALREADY_RUNNING,
+              detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+      if (resumeJob.state === "running") {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "That job is still running",
+              detail: "Wait for it to finish and poll check_sequence. Continuing a running job renders it twice.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+      if (resumeJob.shots.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: "That job rendered no shots to continue from",
+              jobId: resumeJob.id,
+              state: resumeJob.state,
+              detail: resumeJob.error ?? "Start a new film with firstFrameUrl instead."
+            }, null, 2)
+          }]
+        };
+      }
+    }
+    const carried = resumeJob ? resumeJob.shots.filter((s) => s.localPath) : [];
+    const resumeFramePath = carried.at(-1)?.framePath;
+    const continuationStartFrame = args.shots[0]?.firstFrameUrl ?? resumeFramePath;
+    const estimate = Math.round(
+      args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100
+    ) / 100;
+    const resumeWarnings = [];
+    if (resumeJob && continuationStartFrame) {
+      const oldEnd = carried.at(-1)?.framePath;
+      if (oldEnd && continuationStartFrame !== oldEnd) {
+        resumeWarnings.push(
+          `The new shot does not start on the frame the earlier film ends on. It will join the old film at ${oldEnd} but render from ${continuationStartFrame}, so the cut between them is an unpinned join and the cast may change across it. Either pass firstFrameUrl identical to the old film's last frame, or start a new film.`
+        );
+      }
+    }
+    const bookendedShots = args.shots.filter((s) => s.lastFrameUrl).length;
+    const sharedBoundaries = args.shots.reduce((count, shot, i) => {
+      const next = args.shots[i + 1];
+      return next && shot.lastFrameUrl && shot.lastFrameUrl === next.firstFrameUrl ? count + 1 : count;
+    }, 0);
+    const storedLedger = resumeJob?.ledger;
+    const carriedStyle = args.promptStyle ?? args.ledger?.promptStyle ?? storedLedger?.promptStyle;
+    const carriedVoice = args.voiceId ?? args.ledger?.voiceId ?? storedLedger?.voiceId;
+    const ledgerForGate = args.ledger ? {
+      ...args.ledger,
+      ...carriedStyle ? { promptStyle: carriedStyle } : {},
+      ...carriedVoice ? { voiceId: carriedVoice } : {}
+    } : storedLedger ? {
+      locations: storedLedger.locations,
+      props: storedLedger.props,
+      wardrobeEvents: storedLedger.wardrobeEvents,
+      propEvents: storedLedger.propEvents,
+      shotSteps: storedLedger.shotSteps,
+      voiceId: carriedVoice,
+      promptStyle: carriedStyle,
+      spokenLines: storedLedger.spokenLines,
+      humanVisionSignOff: storedLedger.humanVisionSignOff,
+      hasPortrait: storedLedger.hasPortrait,
+      scaleMarks: storedLedger.scaleMarks,
+      bodyClearance: storedLedger.bodyClearance,
+      tier1: storedLedger.tier1
+    } : void 0;
+    const continuityPlan = continuityPlanFromRenderArgs({
+      shots: args.shots,
+      characters: args.characters,
+      promptStyle: carriedStyle,
+      ledger: ledgerForGate ? {
+        ...ledgerForGate,
+        ...carriedVoice ? { voiceId: carriedVoice } : {},
+        ...carriedStyle ? { promptStyle: carriedStyle } : {}
+      } : void 0
+    });
+    const contractGate = gateRenderSequence({
+      plan: continuityPlan,
+      contracts: args.contracts,
+      overrideValidation: args.overrideValidation
+    });
+    if (args.confirm && contractGate.blocked) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            error: RENDER_BLOCKED_BY_CONTRACT,
+            message: contractGate.message,
+            violations: contractGate.violations,
+            contractValidation: contractGate
+          }, null, 2)
+        }]
+      };
+    }
+    const outgoing = sequenceContractShots({
+      shots: args.shots,
+      continuity: args.continuity,
+      resolution: args.resolution,
+      pin: args.pin ?? "start",
+      voiceId: carriedVoice
+    });
+    const lintBlocked = outgoing.some((shot) => shot.lintHits.length > 0);
+    if (!args.confirm) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willRender: false,
+            plan: {
+              shots: shotCount,
+              totalSeconds,
+              aspectRatio: args.aspectRatio,
+              resolution: args.resolution,
+              fadeSeconds: args.fadeDuration,
+              continuity: (args.pin ?? "start") === "both" && bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots pin both the opening frame and the closing frame.` : bookendedShots > 0 ? `${bookendedShots} of ${shotCount} shots include a closing frame, but pin is "start", so those closing frames are not sent and the cuts are not pixel-pinned. Pass pin: "both" to send them. The default stays start.` : "Each shot starts from the previous shot's last frame. Closing frames are not pinned.",
+              bookendedShots,
+              sharedBoundaryFrames: sharedBoundaries,
+              rendersAsOneJob: true,
+              ...resumeJob ? {
+                continuingJob: resumeJob.id,
+                alreadyRenderedShots: carried.length,
+                assembledFilmShots: carried.length + shotCount,
+                note: `Shots 1-${carried.length} are already rendered and cost nothing more; they go into the final assembly. This estimate covers only the ${shotCount} new shots.`
+              } : {}
+            },
+            estimate: {
+              totalUsd: estimate,
+              resolution: args.resolution,
+              basis: `${shotCount} renders totalling ${totalSeconds}s at $${ratePerSecond(args.resolution).toFixed(2)}/s for ${args.resolution} = $${estimate.toFixed(2)}.`,
+              isEstimate: true
+            },
+            contract: { shots: outgoing },
+            ...resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {},
+            next: lintBlocked ? "The prompts fail the check. Show the sent prompts and the lint hits. Rewrite them before confirm. Nothing was spent, and a retry is an edit of that prompt." : "Show the sent prompt, lint hits, pinned start frame, references, voice, duration, resolution, and the quote. Call again with confirm: true only after they approve. Do not set confirm without an explicit yes.",
+            contractValidation: contractGate
+          }, null, 2)
+        }]
+      };
+    }
+    if (lintBlocked) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            willRender: false,
+            contract: { shots: outgoing },
+            message: "The prompt fails the check. The next take is an edit of the prompt that was shown. Nothing was spent."
+          }, null, 2)
+        }]
+      };
+    }
+    const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
+    if (sessionRefusal) return sessionRefusal;
+    const preparedAudio = {
+      audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0
+    };
+    const audioTrackFile = preparedAudio.audioTrackFile;
+    if (resumeJob) {
+      const claim2 = await claimFilm(resumeJob.id);
+      if (!claim2.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              error: claim2.message,
+              detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+              jobId: resumeJob.id
+            }, null, 2)
+          }]
+        };
+      }
+    }
+    let handedToJob = false;
+    try {
+      if (resumeJob) await runResumeClaimProbe();
       const job = {
         id: sequenceJobId(),
         startedAt: Date.now(),
         state: "running",
+        owner: thisOwner(),
         // Total film length, not just this call's new shots.
         shotCount: carried.length + shotCount,
         completed: 0,
@@ -44791,9 +48278,12 @@ function registerRenderSequence(server) {
           fadeDuration: args.fadeDuration,
           continuity: args.continuity,
           characters: args.characters,
-          audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+          audioTrackFile,
           audioTrackVolume: args.audioTrackVolume,
           audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+          clipAudio: args.clipAudio,
+          pin: args.pin,
+          voiceId: args.voiceId,
           assemble: args.assemble
         },
         ...resumeJob ? {
@@ -44802,13 +48292,48 @@ function registerRenderSequence(server) {
           // A continued film keeps the original start anchor, so repairing shot 1
           // of the whole film still chains from where the film actually began.
           startFramePath: resumeJob.startFramePath,
-          warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0
+          warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
+          ledger: args.ledger ? {
+            locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
+            props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
+            wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents ?? resumeJob.ledger?.wardrobeEvents),
+            propEvents: eventsWithShot(args.ledger.propEvents ?? resumeJob.ledger?.propEvents),
+            shots: args.ledger.shots ?? resumeJob.ledger?.shots,
+            shotSteps: args.ledger.shotSteps ?? resumeJob.ledger?.shotSteps,
+            voiceId: args.voiceId ?? args.ledger.voiceId ?? resumeJob.ledger?.voiceId,
+            promptStyle: args.promptStyle ?? args.ledger.promptStyle ?? resumeJob.ledger?.promptStyle,
+            spokenLines: args.ledger.spokenLines ?? resumeJob.ledger?.spokenLines,
+            humanVisionSignOff: args.ledger.humanVisionSignOff ?? resumeJob.ledger?.humanVisionSignOff,
+            hasPortrait: args.ledger.hasPortrait ?? resumeJob.ledger?.hasPortrait,
+            scaleMarks: args.ledger.scaleMarks ?? resumeJob.ledger?.scaleMarks,
+            bodyClearance: args.ledger.bodyClearance ?? resumeJob.ledger?.bodyClearance,
+            tier1: args.ledger.tier1 ?? resumeJob.ledger?.tier1
+          } : resumeJob.ledger
         } : {
-          startFramePath: resumeFramePath ?? args.firstFrameUrl
+          startFramePath: resumeFramePath ?? args.firstFrameUrl,
+          ...args.ledger ? {
+            ledger: {
+              locations: args.ledger.locations ?? [],
+              props: args.ledger.props ?? [],
+              wardrobeEvents: eventsWithShot(args.ledger.wardrobeEvents),
+              propEvents: eventsWithShot(args.ledger.propEvents),
+              shots: args.ledger.shots,
+              shotSteps: args.ledger.shotSteps,
+              voiceId: args.voiceId ?? args.ledger.voiceId,
+              promptStyle: args.promptStyle ?? args.ledger.promptStyle,
+              spokenLines: args.ledger.spokenLines,
+              humanVisionSignOff: args.ledger.humanVisionSignOff,
+              hasPortrait: args.ledger.hasPortrait,
+              scaleMarks: args.ledger.scaleMarks,
+              bodyClearance: args.ledger.bodyClearance,
+              tier1: args.ledger.tier1
+            }
+          } : {}
         }
       };
       sequenceJobs.set(job.id, job);
       void persistJob(job);
+      const sourceId = resumeJob?.id;
       void runSequenceJob(job, {
         shots: args.shots,
         characters: args.characters,
@@ -44819,14 +48344,19 @@ function registerRenderSequence(server) {
         model: args.model,
         assemble: args.assemble,
         fadeDuration: args.fadeDuration,
-        // Resolved once, up front, so a bad path fails before any shot renders.
-        audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0,
+        audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
+        clipAudio: args.clipAudio,
+        pin: args.pin,
+        voiceId: args.voiceId ?? ledgerForGate?.voiceId,
         timeoutSecondsPerShot: args.timeoutSecondsPerShot,
         carriedShots: carried.length > 0 ? carried : void 0,
         resumeFramePath
+      }).finally(() => {
+        if (sourceId) void releaseFilmClaim(sourceId);
       });
+      handedToJob = true;
       const inlineDeadline = Date.now() + 25e3;
       while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === 0) {
         await sleep2(500);
@@ -44837,188 +48367,423 @@ function registerRenderSequence(server) {
           ...jobPayload(job)
         }, null, 2) }]
       };
+    } finally {
+      if (resumeJob && !handedToJob) await releaseFilmClaim(resumeJob.id);
     }
-  );
-}
-function registerBoardFilm(server) {
-  server.registerTool(
-    "board_film",
-    {
-      description: "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a frame and every cut lands on identical pixels. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
-      inputSchema: external_exports.object({
-        shots: external_exports.array(external_exports.object({
-          prompt: external_exports.string().optional().describe("What happens in the shot."),
-          action: external_exports.string().optional().describe(
-            "Alias for prompt, so plan_storyboard output pastes in unchanged."
-          ),
-          title: external_exports.string().optional(),
-          durationSeconds: external_exports.number().min(1).max(15).default(8)
-        })).min(1).max(12).describe(
-          "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+  }
+);
+server.registerTool(
+  "board_film",
+  {
+    description: 'Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a picture. render_sequence sends that closing frame only when pin is "both"; the default pin is start, so the cut is not pixel-pinned unless you ask. A portrait with no location photo is part of every frame\'s name, so changing it buys every still again. A hero built from a portrait and a room is bought again with every confirmed board, and a new hero buys every shot frame too. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.',
+    inputSchema: external_exports.object({
+      shots: external_exports.array(external_exports.object({
+        prompt: external_exports.string().optional().describe("What happens in the shot."),
+        action: external_exports.string().optional().describe(
+          "Alias for prompt, so plan_storyboard output pastes in unchanged."
         ),
-        look: external_exports.string().optional().describe(
-          "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
-        ),
-        cast: external_exports.string().optional().describe(
-          "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters."
-        ),
-        aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
-        characters: external_exports.array(external_exports.string()).optional().describe(
-          "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
-        ),
-        referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
-          "Extra reference stills for the board: https URLs, data URIs, or local paths."
-        ),
-        baseImageUrl: external_exports.string().optional().describe(
-          "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here."
-        ),
-        maxCostUsd: external_exports.number().min(0).optional().describe(
-          "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
-        ),
-        confirm: external_exports.boolean().default(false).describe(
-          "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve."
+        title: external_exports.string().optional(),
+        durationSeconds: external_exports.number().min(1).max(15).default(8),
+        locationId: external_exports.string().optional(),
+        continuityPrompt: external_exports.string().optional(),
+        wardrobeChanged: external_exports.boolean().optional(),
+        wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+        propEvents: external_exports.array(PropEventSchema).optional(),
+        middleKeyframe: external_exports.boolean().optional().describe(
+          "Plan an extra still at the midpoint of this shot, so the beat is not pinned only at its ends."
         )
-      })
-    },
-    async (args) => {
-      const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
-      const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
-      const board = await boardFilm(
+      })).min(1).max(12).describe(
+        "Shots in order. N shots produce N+1 stills, because the boundary between two shots is one picture shared by both."
+      ),
+      locations: external_exports.array(LocationSchema).optional(),
+      props: external_exports.array(PropRecordSchema).optional(),
+      wardrobeEvents: external_exports.array(WardrobeEventSchema).optional(),
+      propEvents: external_exports.array(PropEventSchema).optional(),
+      look: external_exports.string().optional().describe(
+        "Style and continuity wording folded into every still prompt: configure_film's continuityBlock, or the style line from the confirmed config. Without it the stills are boarded in whatever look each prompt implies."
+      ),
+      cast: external_exports.string().optional().describe(
+        "Who is in the film, in plain words, repeated verbatim into every still prompt. This is the only thing that reliably holds a face across a board: a measured three-shot board chained each still from the previous one and still drifted from a bare-headed man to a flat cap to a top hat, because the stills endpoint treats a reference image as a loose hint. Write it as a physical description, not a name: 'one man, grey beard, dark flat cap, black double-breasted coat, brass-tipped pole'. Derive it from configure_film's characters."
+      ),
+      aspectRatio: external_exports.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+      characters: external_exports.array(external_exports.string()).optional().describe(
+        "Character names from create_character. Their portraits go on every still, so the face is settled before the first video render."
+      ),
+      referenceImageUrls: external_exports.array(external_exports.string()).optional().describe(
+        "Extra reference stills for the board: https URLs, data URIs, or local paths."
+      ),
+      baseImageUrl: external_exports.string().optional().describe(
+        "A location photo every frame is EDITED from, rather than a hint for a fresh picture. This is the one that holds a room and a skyline across a board: on the plain stills route a reference is a loose hint the prompt can overrule, so the city gets redrawn in every frame. Defaults to the first photo of the first character whose role is Location, so a stored office needs nothing passed here."
+      ),
+      maxCostUsd: external_exports.number().min(0).optional().describe(
+        "Hard ceiling for the board. If the estimate is over it, nothing renders and the tool reports the figure. Still costs are small, so this is mostly a guard against a big board."
+      ),
+      confirm: external_exports.boolean().default(false).describe(
+        "Must be true to render stills. Call once without it to get the estimate, show it to the user, and call again with true only after they approve. confirm does not override a failed wardrobe check."
+      ),
+      overrideValidation: external_exports.boolean().default(false).describe(
+        "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. confirm alone does not unblock a refusal."
+      )
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
+    const shotLocations = args.shots.map((shot) => shot.locationId);
+    const fromShotsWardrobe = args.shots.flatMap(
+      (shot, index) => stampShotNumbers(shot.wardrobeEvents, index + 1)
+    );
+    const fromShotsProps = args.shots.flatMap(
+      (shot, index) => stampShotNumbers(shot.propEvents, index + 1)
+    );
+    const wardrobeEvents = [
+      ...args.wardrobeEvents ?? [],
+      ...fromShotsWardrobe
+    ].filter((event) => typeof event.shot === "number");
+    const propEvents = [
+      ...args.propEvents ?? [],
+      ...fromShotsProps
+    ].filter((event) => typeof event.shot === "number");
+    const { snapshots } = buildContinuityLedger({
+      characterNames: args.characters ?? [],
+      shotCount: args.shots.length,
+      shotLocations,
+      locations: args.locations,
+      props: args.props,
+      wardrobeEvents,
+      propEvents
+    });
+    const boardedShots = args.shots.map((shot, index) => {
+      const snapshot = snapshots[index];
+      const extra2 = shot.continuityPrompt ?? snapshot?.prompt ?? "";
+      return {
+        ...shot,
+        continuityPrompt: extra2 || void 0,
+        wardrobeChanged: Boolean(shot.wardrobeChanged) || wardrobeEvents.some((event) => event.shot === index + 1)
+      };
+    });
+    const rawRefs = urls.filter((url2) => url2 !== baseImageUrl);
+    const referenceImageUrls = rawRefs.length > 0 ? rawRefs : void 0;
+    const hasPortrait = Boolean(referenceImageUrls && referenceImageUrls.length > 0);
+    const contractValidation = runPreVideoGate({
+      overrideValidation: args.overrideValidation,
+      plan: {
+        characters: (args.characters ?? []).map((name) => lookupCharacter(name)).filter((entry) => Boolean(entry)).map((entry) => characterFromRecord(entry)),
+        locations: args.locations,
+        props: args.props,
+        wardrobeEvents,
+        propEvents,
+        shotLocations,
+        shotCount: args.shots.length,
+        hasReferencePicture: Boolean(baseImageUrl) || hasPortrait,
+        hasPortrait,
+        shotPrompts: boardedShots.map((shot, index) => ({ shot: index + 1, prompt: shot.prompt ?? shot.action ?? "" })).filter((entry) => entry.prompt.trim().length > 0)
+      }
+    });
+    const framePreview = planBoardFrames({
+      shots: boardedShots,
+      aspectRatio: args.aspectRatio,
+      look: args.look,
+      cast: args.cast,
+      baseImageUrl,
+      referenceImageUrls
+    });
+    if (framePreview.some((frame) => frame.wardrobeUnchecked)) {
+      contractValidation.violations.push({
+        code: "wardrobe-unchecked",
+        shot: framePreview.find((frame) => frame.wardrobeUnchecked)?.shot ?? 1,
+        message: "This board names a cast and has neither a portrait nor a base picture, so wardrobe is unchecked."
+      });
+      if (args.overrideValidation) {
+        contractValidation.ok = false;
+        contractValidation.blocked = false;
+        contractValidation.status = "override";
+        contractValidation.tier0 = "fail";
+        contractValidation.message = "Wardrobe is unchecked; overrideValidation is set, so boarding may proceed.";
+      } else {
+        contractValidation.ok = false;
+        contractValidation.blocked = true;
+        contractValidation.status = "fail";
+        contractValidation.tier0 = "fail";
+        contractValidation.message = "board_film refused to start because this board names a cast and has neither a portrait nor a location picture, so wardrobe is unchecked. Pass overrideValidation: true to board anyway. confirm alone does not unblock it.";
+      }
+    }
+    if (contractValidation.message) {
+      contractValidation.message = messageForBoard(contractValidation.message);
+    }
+    const decision = decideSpend(args.confirm, contractValidation);
+    if (decision === "refused") {
+      const preview = await boardFilm(
         {
-          shots: args.shots,
+          shots: boardedShots,
           aspectRatio: args.aspectRatio,
           look: args.look,
+          scene: locationScene(args.characters),
           cast: args.cast,
           maxCostUsd: args.maxCostUsd,
-          confirm: args.confirm
+          confirm: false,
+          blocked: true
         },
         {
           outputDir: OUTPUT_DIR,
-          // A base image and a reference set compete for the same body, and the
-          // base is worth more: it holds the room. Keep the portraits that are
-          // not the base itself.
-          referenceImageUrls: urls.length > 0 ? urls.filter((url2) => url2 !== baseImageUrl) : void 0,
+          referenceImageUrls,
           baseImageUrl,
-          // Injected so tests can board a whole film without reaching the network.
           generateStill: async (job, opts) => generateGrokStill(job, opts)
         }
       );
-      const payload = {
-        ...board,
-        ...missing.length > 0 ? { unknownCharacters: missing } : {},
-        ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {}
-      };
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+      return refusal({
+        action: "refused",
+        willSpend: false,
+        estimate: preview.estimate,
+        next: preview.next,
+        contractValidation,
+        message: contractValidation.message ?? messageForBoard(void 0)
+      });
     }
-  );
-}
-function registerRetryShot(server) {
-  server.registerTool(
-    "retry_shot",
-    {
-      description: "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
-      inputSchema: external_exports.object({
-        jobId: external_exports.string().describe("The finished job whose shot needs replacing."),
-        shotIndex: external_exports.number().int().min(1).describe("1-based shot number, as reported in the job."),
-        prompt: external_exports.string().optional().describe(
-          "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong."
-        ),
-        durationSeconds: external_exports.number().min(1).max(15).optional(),
-        confirm: external_exports.boolean().default(false),
-        timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
-      })
-    },
-    async (args) => {
-      const original = sequenceJobs.get(args.jobId);
-      if (!original) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: "Unknown jobId",
-              detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-              known: Array.from(sequenceJobs.keys()).slice(-5)
-            }, null, 2)
-          }]
-        };
+    if (decision === "spend") {
+      const sessionRefusal = await refuseIfSessionWillNotLast(6e4);
+      if (sessionRefusal) return sessionRefusal;
+    }
+    const sentRefs = decision === "spend" ? await withPersonCutouts(args.characters, rawRefs) : rawRefs;
+    const board = await boardFilm(
+      {
+        shots: boardedShots,
+        aspectRatio: args.aspectRatio,
+        look: args.look,
+        scene: locationScene(args.characters),
+        cast: args.cast,
+        maxCostUsd: args.maxCostUsd,
+        confirm: decision === "spend"
+      },
+      {
+        outputDir: OUTPUT_DIR,
+        // A base image and a reference set compete for the same body, and the
+        // base is worth more: it holds the room. Keep the portraits that are
+        // not the base itself. A person portrait is a feathered cutout; the
+        // original file is not rewritten.
+        referenceImageUrls: sentRefs.length > 0 ? sentRefs : void 0,
+        baseImageUrl,
+        // Injected so tests can board a whole film without reaching the network.
+        generateStill: async (job, opts) => generateGrokStill(job, opts)
       }
-      if (original.state === "running") {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: "That film is still rendering",
-              detail: "Wait for check_sequence to report done before repairing a shot.",
-              jobId: original.id
-            }, null, 2)
-          }]
-        };
+    );
+    const boardFrames = Array.isArray(board.frames) ? board.frames : [];
+    const payload = {
+      ...board,
+      contract: {
+        frames: boardFrames.map((frame) => ({
+          index: frame.index,
+          sentPrompt: frame.prompt,
+          lintHits: lintSentPrompt(frame.prompt),
+          pinnedStart: frame.path ?? null
+        })),
+        note: "A still prompt names the room, because the still has to generate it. A video prompt with a pinned start frame does not restate the room. Closing frames are not sent unless pin is both."
+      },
+      contractValidation,
+      continuity: {
+        locations: args.locations ?? [],
+        props: args.props ?? [],
+        wardrobeEvents,
+        propEvents,
+        shots: snapshots
+      },
+      ...snapshots.some((snapshot) => snapshot.warnings.length > 0) ? { continuityWarnings: snapshots.flatMap((snapshot) => snapshot.warnings) } : {},
+      ...missing.length > 0 ? { unknownCharacters: missing } : {},
+      ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {}
+    };
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+);
+server.registerTool(
+  "retry_shot",
+  {
+    description: "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
+    inputSchema: external_exports.object({
+      jobId: external_exports.string().describe("The finished job whose shot needs replacing."),
+      shotIndex: external_exports.number().int().min(1).describe("1-based shot number, as reported in the job."),
+      prompt: external_exports.string().optional().describe(
+        "New prompt for the shot. Omit to re-render the same prompt, which is right for a bad roll; give a new one when the prompt itself was wrong."
+      ),
+      durationSeconds: external_exports.number().min(1).max(15).optional(),
+      confirm: external_exports.boolean().default(false),
+      overrideValidation: external_exports.boolean().default(false),
+      timeoutSecondsPerShot: external_exports.number().min(10).max(600).default(240)
+    })
+  },
+  async (args, extra) => {
+    const cancelled = cancelledBeforeSpend(extra);
+    if (cancelled) return cancelled;
+    await refreshJobsFromDisk();
+    const original = sequenceJobs.get(args.jobId);
+    if (!original) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "Unknown jobId",
+            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+            known: Array.from(sequenceJobs.keys()).slice(-5)
+          }, null, 2)
+        }]
+      };
+    }
+    if (otherProcessHolds(original.owner) || otherProcessHolds(original.claim)) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: ALREADY_RUNNING,
+            detail: "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
+    }
+    if (original.state === "running") {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "That film is still rendering",
+            detail: "Wait for check_sequence to report done before repairing a shot.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
+    }
+    const index = args.shotIndex;
+    const target = original.shots.find((shot) => shot.index === index);
+    if (!target) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: `No shot ${index} in that film`,
+            shots: original.shots.map((shot) => ({ index: shot.index, title: shot.title }))
+          }, null, 2)
+        }]
+      };
+    }
+    if (!target.prompt) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: "That shot has no recorded prompt to re-render",
+            detail: "It was rendered before this version, or it was carried in from another film. Pass `prompt` explicitly.",
+            shotIndex: index
+          }, null, 2)
+        }]
+      };
+    }
+    const duration3 = args.durationSeconds ?? target.durationSeconds ?? 8;
+    const prompt = args.prompt ?? target.prompt;
+    const retryResolution = original.settings?.resolution ?? "720p";
+    const retryRate = ratePerSecond(retryResolution);
+    const estimateUsd = Math.round(duration3 * retryRate * 100) / 100;
+    const retrySent = sentShotPrompt(original.settings?.continuity, { prompt: prompt ?? "" });
+    const retryHits = lintSentPrompt(retrySent);
+    const retryContract = {
+      sentPrompt: retrySent,
+      lintHits: retryHits,
+      resolution: retryResolution,
+      durationSeconds: duration3,
+      pin: original.settings?.pin ?? "start",
+      startFrame: original.startFramePath ?? null,
+      voiceId: original.settings?.voiceId ?? null,
+      quote: {
+        totalUsd: estimateUsd,
+        ratePerSecond: retryRate,
+        basis: `1 render of ${duration3}s at $${retryRate.toFixed(2)}/s for ${retryResolution} = $${estimateUsd.toFixed(2)}.`
       }
-      const index = args.shotIndex;
-      const target = original.shots.find((shot) => shot.index === index);
-      if (!target) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: `No shot ${index} in that film`,
-              shots: original.shots.map((shot) => ({ index: shot.index, title: shot.title }))
-            }, null, 2)
-          }]
-        };
-      }
-      if (!target.prompt) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: "That shot has no recorded prompt to re-render",
-              detail: "It was rendered before this version, or it was carried in from another film. Pass `prompt` explicitly.",
-              shotIndex: index
-            }, null, 2)
-          }]
-        };
-      }
-      const duration3 = args.durationSeconds ?? target.durationSeconds ?? 8;
-      const prompt = args.prompt ?? target.prompt;
-      const estimateUsd = Math.round(duration3 * ratePerSecond(original.settings?.resolution ?? "720p") * 100) / 100;
-      const before = original.shots.filter((shot) => shot.index < index);
-      const after = original.shots.filter((shot) => shot.index > index);
-      if (!args.confirm) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              action: "estimate-only",
-              willRender: false,
-              plan: {
-                repairing: original.id,
-                shotIndex: index,
-                shotTitle: target.title,
-                durationSeconds: duration3,
-                prompt,
-                reusedShots: before.length + after.length,
-                reRenderedShots: 1,
-                reassemblesFilm: original.settings?.assemble ?? true,
-                note: `Shot ${index} is re-rendered; the other ${before.length + after.length} are reused at no cost. The film is re-assembled with the original resolution, joins and audio.`
-              },
-              estimate: {
-                totalUsd: estimateUsd,
-                resolution: original.settings?.resolution ?? "720p",
-                basis: `1 render of ${duration3}s at the film's original resolution`,
-                isEstimate: true
-              },
-              caveat: after.length === 0 ? "This is the last shot, so nothing downstream depends on it." : after.length === 1 ? `Shot ${index + 1} was chained from the ORIGINAL shot ${index}'s last frame. It is kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair that shot too.` : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s last frame. They are kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair those shots too.`,
-              next: "Show this and the caveat to the user. Call again with confirm: true only after they approve."
-            }, null, 2)
-          }]
-        };
-      }
+    };
+    const before = original.shots.filter((shot) => shot.index < index);
+    const after = original.shots.filter((shot) => shot.index > index);
+    if (!args.confirm) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "estimate-only",
+            willRender: false,
+            plan: {
+              repairing: original.id,
+              shotIndex: index,
+              shotTitle: target.title,
+              durationSeconds: duration3,
+              prompt,
+              reusedShots: before.length + after.length,
+              reRenderedShots: 1,
+              reassemblesFilm: original.settings?.assemble ?? true,
+              note: `Shot ${index} is re-rendered; the other ${before.length + after.length} are reused at no cost. The film is re-assembled with the original resolution, joins and audio.`
+            },
+            estimate: {
+              totalUsd: estimateUsd,
+              resolution: retryResolution,
+              basis: retryContract.quote.basis,
+              isEstimate: true
+            },
+            contract: retryContract,
+            caveat: after.length === 0 ? "This is the last shot, so nothing downstream depends on it." : after.length === 1 ? `Shot ${index + 1} was chained from the ORIGINAL shot ${index}'s last frame. It is kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair that shot too.` : `Shots ${index + 1} to ${original.shots.length} were chained from the ORIGINAL shot ${index}'s last frame. They are kept as-is, so the join after the repair will be a cut rather than a chained continuation. If that seam matters, repair those shots too.`,
+            next: retryHits.length ? "The prompt fails the check. Show the failures and the prompt that would be sent. Edit it. Nothing was spent." : "Show the sent prompt, the lint hits, the price, and the caveat. Call again with confirm: true only after they approve. Do not spend the retry automatically."
+          }, null, 2)
+        }]
+      };
+    }
+    if (retryHits.length > 0) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            action: "refused",
+            willRender: false,
+            contract: retryContract,
+            message: "The prompt fails the check. The next take is an edit of that prompt. Nothing was spent."
+          }, null, 2)
+        }]
+      };
+    }
+    const repairGate = gateRenderSequence({
+      plan: original.ledger ? continuityPlanFromRenderArgs({
+        shots: original.shots.map((shot) => ({ prompt: shot.prompt })),
+        characters: original.settings?.characters,
+        ledger: original.ledger
+      }) : void 0,
+      overrideValidation: args.overrideValidation
+    });
+    if (decideSpend(true, repairGate) !== "spend") {
+      return refusal({
+        action: "refused",
+        willRender: false,
+        contractValidation: repairGate,
+        message: repairGate.message ?? RENDER_UNCHECKED
+      });
+    }
+    const repairSession = await refuseIfSessionWillNotLast(duration3 * 1e3);
+    if (repairSession) return repairSession;
+    const claim2 = await claimFilm(original.id);
+    if (!claim2.ok) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            error: claim2.message,
+            detail: claim2.message === ALREADY_RUNNING_HERE ? "This process already claimed this film. Wait for that render to finish, then check_sequence or list_films." : "Another process already claimed this film. Wait for it to finish, then check_sequence or list_films.",
+            jobId: original.id
+          }, null, 2)
+        }]
+      };
+    }
+    let handedToJob = false;
+    try {
       const settings = original.settings;
       const job = {
         id: sequenceJobId(),
         startedAt: Date.now(),
         state: "running",
+        owner: thisOwner(),
         shotCount: original.shots.length,
         completed: before.length,
         estimateUsd,
@@ -45028,6 +48793,7 @@ function registerRetryShot(server) {
         startFramePath: original.startFramePath,
         warnings: [...original.warnings ?? []],
         repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
+        ledger: original.ledger,
         // Every reused shot was paid for by the original film. Count it, so the
         // reported film total is the film's real cost rather than this call's.
         carriedOverUsd: Math.round(
@@ -45042,7 +48808,7 @@ function registerRetryShot(server) {
       }
       sequenceJobs.set(job.id, job);
       void persistJob(job);
-      void runSequenceJob(job, {
+      void withoutHttpRenderMemo(() => runSequenceJob(job, {
         shots: [{ prompt, durationSeconds: duration3, title: target.title }],
         characters: settings?.characters,
         continuity: settings?.continuity,
@@ -45061,7 +48827,10 @@ function registerRetryShot(server) {
         // Chain the replacement from the shot that precedes it, exactly as the
         // original film did, so the repaired shot fits the same join.
         resumeFramePath: before.at(-1)?.framePath ?? original.startFramePath
-      });
+      }).finally(() => {
+        void releaseFilmClaim(original.id);
+      }));
+      handedToJob = true;
       const inlineDeadline = Date.now() + 25e3;
       while (Date.now() < inlineDeadline && job.state === "running" && job.shots.length === before.length) {
         await sleep2(500);
@@ -45072,115 +48841,81 @@ function registerRetryShot(server) {
           ...jobPayload(job)
         }, null, 2) }]
       };
+    } finally {
+      if (!handedToJob) await releaseFilmClaim(original.id);
     }
-  );
-}
-function registerListFilms(server) {
-  server.registerTool(
-    "list_films",
-    {
-      description: "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
-      inputSchema: external_exports.object({
-        limit: external_exports.number().int().min(1).max(50).default(10),
-        includeUnfinished: external_exports.boolean().default(false).describe(
-          "Also list films that stopped or failed, which still hold every shot they paid for."
-        )
-      })
-    },
-    async (args) => {
-      const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
-      const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
-        jobId: job.id,
-        state: job.state,
-        startedAt: new Date(job.startedAt).toISOString(),
-        shots: job.shots.length,
-        durationSeconds: job.filmDurationSeconds,
-        spentUsd: Math.round(job.spentUsd * 100) / 100,
-        filmPath: job.filmPath,
-        firstShot: job.shots[0]?.title,
-        repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
-        error: job.error
-      }));
+  }
+);
+server.registerTool(
+  "list_films",
+  {
+    description: "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
+    inputSchema: external_exports.object({
+      limit: external_exports.number().int().min(1).max(50).default(10),
+      includeUnfinished: external_exports.boolean().default(false).describe(
+        "Also list films that stopped or failed, which still hold every shot they paid for."
+      )
+    })
+  },
+  async (args) => {
+    await refreshJobsFromDisk();
+    const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
+    const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
+      jobId: job.id,
+      state: job.state,
+      startedAt: new Date(job.startedAt).toISOString(),
+      shots: job.shots.length,
+      durationSeconds: job.filmDurationSeconds,
+      spentUsd: Math.round(job.spentUsd * 100) / 100,
+      filmPath: job.filmPath,
+      firstShot: job.shots[0]?.title,
+      repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
+      error: job.error
+    }));
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          count: shown.length,
+          films: shown,
+          storage: JOBS_DIR,
+          next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
+        }, null, 2)
+      }]
+    };
+  }
+);
+server.registerTool(
+  "check_sequence",
+  {
+    description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+    inputSchema: external_exports.object({
+      jobId: external_exports.string().describe("The jobId render_sequence returned.")
+    })
+  },
+  async (args) => {
+    await refreshJobsFromDisk();
+    const job = sequenceJobs.get(args.jobId);
+    if (!job) {
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
-            count: shown.length,
-            films: shown,
-            storage: JOBS_DIR,
-            next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
+            error: "Unknown jobId",
+            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+            known: Array.from(sequenceJobs.keys()).slice(-5)
           }, null, 2)
         }]
       };
     }
-  );
-}
-function registerCheckSequence(server) {
-  server.registerTool(
-    "check_sequence",
-    {
-      description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
-      inputSchema: external_exports.object({
-        jobId: external_exports.string().describe("The jobId render_sequence returned.")
-      })
-    },
-    async (args) => {
-      const job = sequenceJobs.get(args.jobId);
-      if (!job) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              error: "Unknown jobId",
-              detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-              known: Array.from(sequenceJobs.keys()).slice(-5)
-            }, null, 2)
-          }]
-        };
-      }
-      return {
-        content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
-      };
-    }
-  );
-}
-function createTheShowServer() {
-  const server = new McpServer({
-    name: "theshow",
-    version: "0.1.0"
-  });
-  registerConfigureFilm(server);
-  registerCreateCharacter(server);
-  registerPlanStoryboard(server);
-  registerGenerateControlledClip(server);
-  registerExtendClip(server);
-  registerExtractLastFrame(server);
-  registerGenerateStill(server);
-  registerAssembleFilm(server);
-  registerRenderSequence(server);
-  registerBoardFilm(server);
-  registerRetryShot(server);
-  registerListFilms(server);
-  registerCheckSequence(server);
-  return server;
-}
-async function startStdioServer() {
-  await loadJobsFromDisk();
-  await loadCharactersFromDisk();
-  const server = createTheShowServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("theShow MCP server running on stdio (enhanced test build)");
-}
-async function main() {
-  await startStdioServer();
-}
-main().catch((err) => {
+    return {
+      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
+    };
+  }
+);
+
+// mcp/stdio-main.ts
+startStdioServer().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-export {
-  createTheShowServer,
-  resolutionFromLabel,
-  startStdioServer
-};

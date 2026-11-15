@@ -28,7 +28,9 @@ const fromSource =
   process.env.THESHOW_MCP_FROM_SOURCE === "1" &&
   existsSync(join(root, "node_modules", "@modelcontextprotocol", "sdk"));
 
-const bundle = join(here, "server.bundle.mjs");
+const http = process.env.THESHOW_TRANSPORT === "http";
+const bundle = join(here, http ? "server-http.bundle.mjs" : "server.bundle.mjs");
+const sourceEntry = join(here, http ? "http-server.ts" : "stdio-main.ts");
 const tsxCli = join(root, "node_modules", "tsx", "dist", "cli.mjs");
 
 const [script, mode] = fromSource
@@ -43,6 +45,17 @@ if (!existsSync(script)) {
   process.exit(1);
 }
 
-const args = mode === "source" ? [script, join(here, "server.ts")] : [script];
+const args = mode === "source" ? [script, sourceEntry] : [script];
 const child = spawn(process.execPath, args, { cwd: root, stdio: "inherit" });
+
+// A client that stops the launcher must reach the server, and the server has
+// to finish the job file it is writing before it exits. Forward the signal and
+// wait. Do not SIGKILL.
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    if (child.killed || !child.pid) return;
+    child.kill(signal);
+  });
+}
+
 child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));

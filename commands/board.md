@@ -9,5 +9,7 @@ If the arguments name a finished or unfinished job id, call `list_films` to find
 from its prompts. Otherwise treat the arguments as a scene and call `board_film` with no `confirm`
 for the estimate first.
 
-Show the estimate, and on approval call `board_film` with `confirm: true`. Reuse frames already on
-disk. Report the frame paths and the board's actual cost. This renders no video.
+Show the contract that applies: each still prompt, its lint hits, and the $0.02 quote. A still
+prompt names the room, because the still has to generate it. Wait for a yes. On approval call
+`board_film` with `confirm: true`. Reuse frames already on disk. Report the frame paths and the
+board's actual cost. This renders no video. Do not skip the estimate.

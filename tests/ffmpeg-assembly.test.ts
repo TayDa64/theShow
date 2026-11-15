@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { FADE_DURATION, assembleFilm, buildAssemblyFilterGraph, extractLastFrame } from '../src/lib/ffmpegComposer';
+import { assertBedCoversFilm, planClipAudioFilters } from '../mcp/media';
 
 describe('ffmpeg composer', () => {
   it('builds a cascaded xfade graph with 0.5 second dissolves', () => {
@@ -49,6 +50,34 @@ describe('ffmpeg composer', () => {
 
     const state = (globalThis as any).__ffmpegState.commands.at(-1);
     expect(state.inputOptions).toEqual(['-sseof', '-0.1']);
+  });
+
+  it('drops clip audio when muted and refuses a bed shorter than the film', () => {
+    const muted = planClipAudioFilters({
+      durations: [4, 5],
+      clipHasAudio: [true, true],
+      clipAudio: 'mute',
+    });
+    expect(muted.join(' ')).not.toMatch(/\[\d+:a\]/);
+    expect(muted.every((line) => line.startsWith('anullsrc='))).toBe(true);
+
+    const replaced = planClipAudioFilters({
+      durations: [4],
+      clipHasAudio: [true],
+      clipAudio: 'replace',
+    });
+    expect(replaced.join(' ')).not.toMatch(/\[\d+:a\]/);
+
+    const kept = planClipAudioFilters({
+      durations: [4],
+      clipHasAudio: [true],
+      clipAudio: 'keep',
+    });
+    expect(kept[0]).toMatch(/^\[0:a\]/);
+
+    expect(() => assertBedCoversFilm(14, 71)).toThrow(/shorter than the film/i);
+    expect(() => assertBedCoversFilm(undefined, 8)).toThrow(/shorter than the film/i);
+    expect(() => assertBedCoversFilm(71, 71)).not.toThrow();
   });
 
   it('assembles film clips into a downloadable mp4 output', async () => {

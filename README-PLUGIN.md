@@ -12,7 +12,7 @@ This turns theShow (StoryForge) into a Grok Build plugin and MCP server for cont
 | `mcp/server.bundle.mjs` | The server, bundled so startup installs nothing |
 | `mcp/server.ts` | Tool definitions — edit here, then rebuild the bundle |
 | `skills/theshow/SKILL.md` | The workflow the model follows |
-| `commands/*.md` | The nine slash commands |
+| `commands/*.md` | The ten slash commands. `/theshow` is the primary start |
 
 ## Install
 
@@ -42,11 +42,12 @@ Ask for a film in plain language:
 
 > Generate a two-shot, 16-second film about a lamplighter in the rain. Keep the same character in both shots.
 
-Or start from a command. `/film` opens the configuration card; the rest begin the workflow partway in.
+Or start from a command. `/theshow` is the primary start. The file is `commands/theshow.md`. Grok lowercases the slash string, so you type `/theshow`. The qualified form is `/theshow:theshow`. A slash command loads instructions. The model then calls `configure_film`. It does not open the form by itself. `/film` follows the same recipe.
 
 | Command | What it does |
 |---|---|
-| `/film <idea>` | Configuration card, then board and render |
+| `/theshow <idea>` | Primary start. configure_film, board, contract, then render |
+| `/film <idea>` | The same recipe as `/theshow` |
 | `/scene <scene> [shots]` | Storyboard only. Free |
 | `/character <name> [look] [photo]` | Create or update a character |
 | `/board <scene or jobId>` | Board as stills, $0.02 a frame |
@@ -89,9 +90,21 @@ Subscription sessions cannot use `extend_clip`; the proxy answers `POST /v1/vide
 
 ## Remote MCP (Grok API / Connectors)
 
-1. Deploy the MCP server, using HTTP Streamable for remote access.
-2. In grok.com/connectors, choose New Connector, then Custom, and paste the public MCP URL.
-3. Alternatively pass `mcp(server_url=...)` in the xAI SDK tools array.
+The desktop plugin stays on stdio. HTTP is a separate process:
+
+```bash
+THESHOW_TRANSPORT=http \
+THESHOW_HTTP_TOKEN="$(openssl rand -hex 32)" \
+THESHOW_HTTP_HOST=127.0.0.1 \
+THESHOW_HTTP_PORT=8787 \
+node mcp/launch.mjs
+```
+
+The process exits if `THESHOW_HTTP_TOKEN` is unset. Clients send `Authorization: Bearer <token>` to `http://127.0.0.1:8787/mcp`. The default bind is loopback. A non-loopback host also needs `THESHOW_HTTP_EXPOSE=1`, and TLS still belongs in front of it. HTTP bills `XAI_API_KEY` unless `THESHOW_HTTP_ALLOW_GROK_SESSION=1`. The [main README](README.md#remote-http) has the curl example, the client config, and the rest of the environment.
+
+1. Expose that `/mcp` URL over HTTPS.
+2. In grok.com/connectors, choose New Connector, then Custom, and paste the public MCP URL. The connector has to send the bearer token.
+3. Alternatively pass `mcp(server_url=...)` in the xAI SDK tools array, with the same bearer header.
 
 ## Cost
 
