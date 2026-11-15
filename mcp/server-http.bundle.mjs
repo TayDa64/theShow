@@ -47077,17 +47077,17 @@ async function acquireLockTurn(lockPath) {
       await restoreIfAbsent(tomb, dest);
       return void 0;
     }
-    await unlink2(tomb).catch(() => void 0);
   } catch (err) {
-    await unlink2(tomb).catch(() => void 0);
     if (err.code === "ENOENT") return void 0;
     throw err;
+  } finally {
+    await unlink2(tomb).catch(() => void 0);
   }
-  if (await publishExclusive(dest, body)) {
-    activeLockTurns.add(token);
-    return token;
-  }
-  return void 0;
+  if (!await publishExclusive(dest, body)) return void 0;
+  const confirmed = await readLockTurn(dest);
+  if (confirmed?.token !== token) return void 0;
+  activeLockTurns.add(token);
+  return token;
 }
 async function releaseLockTurn(lockPath, token) {
   activeLockTurns.delete(token);
@@ -47105,6 +47105,8 @@ async function stealStaleLock(lockPath) {
     const age = await lockFileAge(lockPath);
     const info = age === void 0 ? void 0 : await readCharacterLock(lockPath);
     if (age === void 0 || !characterLockIsStale(info, age)) return;
+    const stillHeld = await readLockTurn(lockTurnPath(lockPath));
+    if (stillHeld?.token !== turn) return;
     let raw = "";
     try {
       raw = await readFile5(lockPath, "utf8");
@@ -47130,6 +47132,11 @@ async function stealStaleLock(lockPath) {
     const tombAge = await lockFileAge(tomb);
     const tombInfo = await readCharacterLock(tomb);
     if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    const heldAfterMove = await readLockTurn(lockTurnPath(lockPath));
+    if (heldAfterMove?.token !== turn) {
       await restoreIfAbsent(tomb, lockPath);
       return;
     }

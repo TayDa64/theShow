@@ -158,6 +158,52 @@ describe("multi-process stale character locks", () => {
       else process.env.THESHOW_CHARACTERS_DIR = previous;
     }
   }, 180_000);
+
+  it("keeps every field when a dead turn file and a stale lock are both left behind", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-cast-turn-"));
+    const env = childEnv({ THESHOW_CHARACTERS_DIR: dir });
+    const previous = process.env.THESHOW_CHARACTERS_DIR;
+    process.env.THESHOW_CHARACTERS_DIR = dir;
+    const past = new Date(Date.now() - 60_000);
+    try {
+      for (let round = 0; round < 40; round++) {
+        const name = `Nia ${round}`;
+        const seeded = await saveCharacter({ name });
+        const lockPath = path.join(seeded.folder, ".write.lock");
+        const turnPath = `${lockPath}.turn`;
+        const crashed = {
+          pid: 2_000_000_000,
+          token: "crashed",
+          host: hostname(),
+          at: Date.now() - 60_000,
+        };
+        await writeFile(lockPath, JSON.stringify(crashed));
+        await writeFile(turnPath, JSON.stringify(crashed));
+        await utimes(lockPath, past, past);
+        await utimes(turnPath, past, past);
+        const results = await Promise.all([
+          runChild(["save", name, "role", "lead"], env),
+          runChild(["save", name, "description", "tall"], env),
+          runChild(["save", name, "appearance", "dark hair"], env),
+          runChild(["save", name, "role", "lead"], env),
+          runChild(["save", name, "description", "tall"], env),
+        ]);
+        const failures = results.filter((result) => result.status !== 0);
+        expect(failures, failures.map((result) => result.stderr).join("\n")).toEqual([]);
+        const saved = await loadCharacter(name);
+        expect(saved, `round ${round}`).toMatchObject({
+          role: "lead",
+          description: "tall",
+          appearance: "dark hair",
+        });
+        const names = await readdir(seeded.folder);
+        expect(names.filter((entry) => entry.includes(".steal.")), `round ${round} ${names.join(",")}`).toEqual([]);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.THESHOW_CHARACTERS_DIR;
+      else process.env.THESHOW_CHARACTERS_DIR = previous;
+    }
+  }, 180_000);
 });
 
 describe("multi-process film claims", () => {

@@ -327,20 +327,22 @@ async function acquireLockTurn(lockPath: string): Promise<string | undefined> {
     await rename(dest, tomb);
     const moved = await readFile(tomb, "utf8").catch(() => "");
     if (moved !== raw) {
+      // Someone else took the slot. Put the file back only if it is empty,
+      // then drop the steal file either way. This process does not hold the turn.
       await restoreIfAbsent(tomb, dest);
       return undefined;
     }
-    await unlink(tomb).catch(() => undefined);
   } catch (err) {
-    await unlink(tomb).catch(() => undefined);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw err;
+  } finally {
+    await unlink(tomb).catch(() => undefined);
   }
-  if (await publishExclusive(dest, body)) {
-    activeLockTurns.add(token);
-    return token;
-  }
-  return undefined;
+  if (!(await publishExclusive(dest, body))) return undefined;
+  const confirmed = await readLockTurn(dest);
+  if (confirmed?.token !== token) return undefined;
+  activeLockTurns.add(token);
+  return token;
 }
 
 async function releaseLockTurn(lockPath: string, token: string): Promise<void> {
@@ -365,6 +367,8 @@ async function stealStaleLock(lockPath: string): Promise<void> {
     const age = await lockFileAge(lockPath);
     const info = age === undefined ? undefined : await readCharacterLock(lockPath);
     if (age === undefined || !characterLockIsStale(info, age)) return;
+    const stillHeld = await readLockTurn(lockTurnPath(lockPath));
+    if (stillHeld?.token !== turn) return;
     let raw = "";
     try {
       raw = await readFile(lockPath, "utf8");
@@ -390,6 +394,11 @@ async function stealStaleLock(lockPath: string): Promise<void> {
     const tombAge = await lockFileAge(tomb);
     const tombInfo = await readCharacterLock(tomb);
     if (tombRaw !== raw || !characterLockIsStale(tombInfo, tombAge)) {
+      await restoreIfAbsent(tomb, lockPath);
+      return;
+    }
+    const heldAfterMove = await readLockTurn(lockTurnPath(lockPath));
+    if (heldAfterMove?.token !== turn) {
       await restoreIfAbsent(tomb, lockPath);
       return;
     }
