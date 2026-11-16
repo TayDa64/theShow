@@ -2829,7 +2829,7 @@
     },
     {
       "name": "propose_repair",
-      "description": "Propose least-cost repairs for one bad shot from the frames that were actually used. Free and advisory: it does not approve and it does not render. Pass an option's costQuote to retry_shot or render_sequence, which are the calls that can spend.",
+      "description": "Propose least-cost repairs for one bad shot from the frames that were actually used. Free and advisory: it does not approve and it does not render. When a job id is given, retry-alone includes the costQuote retry_shot accepts. The other options are advice only.",
       "inputSchema": {
         "type": "object",
         "properties": {

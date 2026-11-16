@@ -190,6 +190,9 @@ export function proposeRepair(input: {
   // A retry keeps an end pin and a board still, so those next shots are not re-rendered.
   const later = downstreamShots(input.graph, input.badShot, ["last-frame-seed"]);
   const pinned = downstreamShots(input.graph, input.badShot, ["board-still", "end-pin"]);
+  const inferred = input.graph.edges.filter(
+    (edge) => edge.kind === "inferred" && edge.verified === false && edge.fromShot === input.badShot && edge.toShot !== input.badShot,
+  );
   const badDuration = bad ? [bad.durationSeconds] : [];
   const laterDurations = later.map((shot) => durationOf(input.graph, shot));
   const boundaryStill = input.graph.edges.find(
@@ -207,7 +210,10 @@ export function proposeRepair(input: {
       ? hardCuts(input.badShot, later)
       : pinned.length > 0
         ? [`Shot ${pinned.join(", ")} keeps the pinned boundary frame, so this retry does not open a new cut.`]
-        : [],
+        : inferred.map((edge) => (
+          `The link from shot ${edge.fromShot} to shot ${edge.toShot} was not recorded, so it is unverified. ` +
+          `retry_shot will treat the join after shot ${input.badShot} as a cut.`
+        )),
     shotsToRender: [input.badShot],
     stillsToBuy: 0,
     requiresApproval: true,

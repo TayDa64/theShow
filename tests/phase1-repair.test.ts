@@ -99,6 +99,10 @@ describe("dependency-aware repair", () => {
     const dependents = proposal.options.find((option) => option.id === "retry-dependents");
     expect(dependents?.costUsd).toBe(1.12);
     expect(dependents?.shotsToRender).toEqual([1]);
+    const alone = proposal.options.find((option) => option.id === "retry-alone");
+    expect(alone?.leavesBroken.join(" ")).toMatch(/unverified/);
+    expect(alone?.leavesBroken.join(" ")).toMatch(/cut/);
+    expect(alone?.costUsd).toBe(1.12);
   });
 
   it("does not execute a strategy without an approval, and a mismatched quote does not run it either", () => {

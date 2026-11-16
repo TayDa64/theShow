@@ -6,7 +6,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir, open, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -161,7 +161,17 @@ export function setBeforeRenameProbe(next: (() => Promise<void>) | undefined): v
   beforeRename = next;
 }
 
-/** Drop temp files whose writer is gone. A live writer's temp file is kept. */
+const TEMP_SAFE_AGE_MS = 15 * 60 * 1000;
+
+function hostSlug(): string {
+  return processHost.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32) || "host";
+}
+
+/**
+ * Delete a temp file only when this machine's writer is gone, or when the file
+ * is old enough that no live writer can still own it. A young file from another
+ * host is left alone.
+ */
 export async function sweepOrphanTemps(dir: string): Promise<void> {
   let names: string[] = [];
   try {
@@ -169,20 +179,34 @@ export async function sweepOrphanTemps(dir: string): Promise<void> {
   } catch {
     return;
   }
+  const ours = hostSlug();
   for (const name of names) {
     if (!name.endsWith(".tmp")) continue;
-    const match = name.match(/\.(\d+)\.[0-9a-f-]+\.tmp$/i);
-    const pid = match ? Number(match[1]) : 0;
-    if (pid === process.pid) continue;
-    if (pid > 0 && pidAlive(pid)) continue;
-    await unlink(join(dir, name)).catch(() => undefined);
+    const full = join(dir, name);
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - (await stat(full)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age >= TEMP_SAFE_AGE_MS) {
+      await unlink(full).catch(() => undefined);
+      continue;
+    }
+    const match = name.match(/\.(\d+)\.([A-Za-z0-9_]+)\.[0-9a-f-]+\.tmp$/i);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const host = match[2];
+    if (host !== ours) continue;
+    if (pid === process.pid || pidAlive(pid)) continue;
+    await unlink(full).catch(() => undefined);
   }
 }
 
 export async function atomicWriteFile(path: string, data: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await sweepOrphanTemps(dirname(path));
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const tmp = `${path}.${process.pid}.${hostSlug()}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
   if (beforeRename) await beforeRename();
   await rename(tmp, path);

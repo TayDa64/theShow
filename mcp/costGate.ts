@@ -99,6 +99,12 @@ export function videoQuote(input: {
   resolution: string;
   pin: "start" | "both";
   durations: number[];
+  prompts?: string[];
+  continuity?: string;
+  model?: string;
+  aspectRatio?: string;
+  firstFrames?: Array<string | undefined>;
+  lastFrames?: Array<string | undefined>;
 }): { usd: number; fingerprint: string } {
   const rate = VIDEO_USD_PER_SECOND[input.resolution as VideoResolution] ?? VIDEO_USD_PER_SECOND["720p"];
   const usd = roundUsd(input.durations.reduce((sum, duration) => sum + duration * rate, 0));
@@ -108,6 +114,12 @@ export function videoQuote(input: {
     pin: input.pin,
     durations: input.durations,
     shotCount: input.durations.length,
+    ...(input.prompts ? { prompts: input.prompts } : {}),
+    ...(input.continuity !== undefined ? { continuity: input.continuity } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.aspectRatio !== undefined ? { aspectRatio: input.aspectRatio } : {}),
+    ...(input.firstFrames ? { firstFrames: input.firstFrames } : {}),
+    ...(input.lastFrames ? { lastFrames: input.lastFrames } : {}),
   });
   return { usd, fingerprint };
 }

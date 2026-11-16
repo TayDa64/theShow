@@ -42648,9 +42648,10 @@ async function hasAudioStream(file2) {
     return false;
   }
 }
-async function extractFirstFrame(file2) {
+async function extractFirstFrame(file2, destDir) {
   const { ffmpeg } = await resolveTools();
-  const dir = await ensureOutputDir();
+  const dir = destDir ?? await ensureOutputDir();
+  if (destDir) await mkdir(destDir, { recursive: true });
   const digest = createHash("sha1").update(`first:${file2}`).digest("hex").slice(0, 16);
   const outPath = join(dir, `frame-first-${digest}.png`);
   try {
@@ -42981,7 +42982,7 @@ import { dirname as dirname3, join as join4 } from "node:path";
 // mcp/runtime.ts
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash as createHash2, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir as mkdir2, open as open2, readdir, readFile as readFile3, rename, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir2, open as open2, readdir, readFile as readFile3, rename, stat as stat2, unlink, writeFile as writeFile2 } from "node:fs/promises";
 import { hostname as hostname3 } from "node:os";
 import { dirname as dirname2, join as join3 } from "node:path";
 var processToken = randomUUID();
@@ -43049,6 +43050,10 @@ function httpAllowsGrokSession() {
   return flag === "1" || flag === "true" || flag === "yes";
 }
 var beforeRename;
+var TEMP_SAFE_AGE_MS = 15 * 60 * 1e3;
+function hostSlug() {
+  return processHost.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32) || "host";
+}
 async function sweepOrphanTemps(dir) {
   let names = [];
   try {
@@ -43056,19 +43061,33 @@ async function sweepOrphanTemps(dir) {
   } catch {
     return;
   }
+  const ours = hostSlug();
   for (const name of names) {
     if (!name.endsWith(".tmp")) continue;
-    const match = name.match(/\.(\d+)\.[0-9a-f-]+\.tmp$/i);
-    const pid = match ? Number(match[1]) : 0;
-    if (pid === process.pid) continue;
-    if (pid > 0 && pidAlive(pid)) continue;
-    await unlink(join3(dir, name)).catch(() => void 0);
+    const full = join3(dir, name);
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - (await stat2(full)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age >= TEMP_SAFE_AGE_MS) {
+      await unlink(full).catch(() => void 0);
+      continue;
+    }
+    const match = name.match(/\.(\d+)\.([A-Za-z0-9_]+)\.[0-9a-f-]+\.tmp$/i);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const host = match[2];
+    if (host !== ours) continue;
+    if (pid === process.pid || pidAlive(pid)) continue;
+    await unlink(full).catch(() => void 0);
   }
 }
 async function atomicWriteFile(path, data) {
   await mkdir2(dirname2(path), { recursive: true });
   await sweepOrphanTemps(dirname2(path));
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const tmp = `${path}.${process.pid}.${hostSlug()}.${randomUUID()}.tmp`;
   await writeFile2(tmp, data, "utf8");
   if (beforeRename) await beforeRename();
   await rename(tmp, path);
@@ -44093,7 +44112,7 @@ function castForPicture(cast) {
 }
 
 // mcp/storyboard.ts
-import { stat as stat2 } from "node:fs/promises";
+import { stat as stat3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var STILL_USD = 0.02;
 var STILL_EXTENSIONS = ["png", "jpg", "webp"];
@@ -44173,7 +44192,7 @@ async function findExistingStill(dir, stem) {
   for (const ext of STILL_EXTENSIONS) {
     const candidate = join6(dir, `${stem}.${ext}`);
     try {
-      const info = await stat2(candidate);
+      const info = await stat3(candidate);
       if (info.size > 0) return candidate;
     } catch {
     }
@@ -44414,7 +44433,13 @@ function videoQuote(input2) {
     resolution: input2.resolution,
     pin: input2.pin,
     durations: input2.durations,
-    shotCount: input2.durations.length
+    shotCount: input2.durations.length,
+    ...input2.prompts ? { prompts: input2.prompts } : {},
+    ...input2.continuity !== void 0 ? { continuity: input2.continuity } : {},
+    ...input2.model !== void 0 ? { model: input2.model } : {},
+    ...input2.aspectRatio !== void 0 ? { aspectRatio: input2.aspectRatio } : {},
+    ...input2.firstFrames ? { firstFrames: input2.firstFrames } : {},
+    ...input2.lastFrames ? { lastFrames: input2.lastFrames } : {}
   });
   return { usd, fingerprint };
 }
@@ -44607,6 +44632,9 @@ function proposeRepair(input2) {
   const bad = input2.graph.nodes.find((node2) => node2.shot === input2.badShot);
   const later = downstreamShots(input2.graph, input2.badShot, ["last-frame-seed"]);
   const pinned = downstreamShots(input2.graph, input2.badShot, ["board-still", "end-pin"]);
+  const inferred = input2.graph.edges.filter(
+    (edge) => edge.kind === "inferred" && edge.verified === false && edge.fromShot === input2.badShot && edge.toShot !== input2.badShot
+  );
   const badDuration = bad ? [bad.durationSeconds] : [];
   const laterDurations = later.map((shot) => durationOf(input2.graph, shot));
   const boundaryStill = input2.graph.edges.find(
@@ -44619,7 +44647,7 @@ function proposeRepair(input2) {
     id: "retry-alone",
     costUsd: videoUsd(badDuration, resolution),
     fixes: [`Re-renders shot ${input2.badShot} only.`],
-    leavesBroken: later.length > 0 ? hardCuts(input2.badShot, later) : pinned.length > 0 ? [`Shot ${pinned.join(", ")} keeps the pinned boundary frame, so this retry does not open a new cut.`] : [],
+    leavesBroken: later.length > 0 ? hardCuts(input2.badShot, later) : pinned.length > 0 ? [`Shot ${pinned.join(", ")} keeps the pinned boundary frame, so this retry does not open a new cut.`] : inferred.map((edge) => `The link from shot ${edge.fromShot} to shot ${edge.toShot} was not recorded, so it is unverified. retry_shot will treat the join after shot ${input2.badShot} as a cut.`),
     shotsToRender: [input2.badShot],
     stillsToBuy: 0,
     requiresApproval: true
@@ -44958,7 +44986,7 @@ function reviewContinuity(input2) {
 // mcp/characters.ts
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat3, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
 import { basename as basename2, join as join7, sep as sep2 } from "node:path";
 
@@ -45453,7 +45481,7 @@ async function readCharacterLock(lockPath) {
 }
 async function lockFileAge(lockPath) {
   try {
-    const info = await stat3(lockPath);
+    const info = await stat4(lockPath);
     return Date.now() - info.mtimeMs;
   } catch {
     return void 0;
@@ -46534,7 +46562,7 @@ function runPreVideoGate(input2) {
 
 // mcp/server.ts
 import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
-import { mkdir as mkdir5, readFile as readFile6, readdir as readdir3, rename as rename3, stat as stat4, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir5, mkdtemp, readFile as readFile6, readdir as readdir3, rename as rename3, rm as rm4, stat as stat5, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
 import { join as join8 } from "node:path";
 import { createHash as createHash6, randomUUID as randomUUID3 } from "node:crypto";
 
@@ -47278,6 +47306,16 @@ function costRefusal(paid) {
     ...paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}
   });
 }
+function withCost(result, paid) {
+  const text = result.content[0]?.text ?? "{}";
+  let body = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = { message: text };
+  }
+  return refusal({ ...body, ...costFields(paid) });
+}
 function costFields(paid) {
   if (!paid) return {};
   return {
@@ -47699,12 +47737,19 @@ server.registerTool(
     });
     const clipJob = jobId ? sequenceJobs.get(jobId) : void 0;
     const clipPaid = quoteGate(
-      { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd },
+      { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd: budgetUsd ?? clipJob?.spendLedger?.thresholdUsd },
       "video",
       clipEstimate,
       clipFingerprint,
       clipJob ? recordedSpendUsd(clipJob) : 0
     );
+    if (clipJob && budgetUsd !== void 0) {
+      clipJob.spendLedger = {
+        ...clipJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(clipJob), pendingUsd: 0 },
+        thresholdUsd: budgetUsd
+      };
+      await persistJob(clipJob);
+    }
     const clipCostRefusal = costRefusal(clipPaid);
     if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
@@ -47801,7 +47846,7 @@ server.registerTool(
     const extensionUsd = Math.round(args.durationSeconds * ratePerSecond("720p") * 100) / 100;
     const extensionJob = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
     const extensionPaid = quoteGate(
-      args,
+      { ...args, budgetUsd: args.budgetUsd ?? extensionJob?.spendLedger?.thresholdUsd },
       "extend",
       extensionUsd,
       quoteFingerprint({
@@ -47812,6 +47857,13 @@ server.registerTool(
       }),
       extensionJob ? recordedSpendUsd(extensionJob) : 0
     );
+    if (extensionJob && args.budgetUsd !== void 0) {
+      extensionJob.spendLedger = {
+        ...extensionJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(extensionJob), pendingUsd: 0 },
+        thresholdUsd: args.budgetUsd
+      };
+      await persistJob(extensionJob);
+    }
     const extensionCostRefusal = costRefusal(extensionPaid);
     if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
@@ -47825,10 +47877,10 @@ server.registerTool(
       });
     }
     const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
-    if (extensionSession) return extensionSession;
+    if (extensionSession) return withCost(extensionSession, extensionPaid);
     const resolved = resolveVideoCredential();
     if (resolved.ok === false) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason, ...costFields(extensionPaid) }, null, 2) }] };
     }
     const credential = resolved.credential;
     if (credential.kind === "session") {
@@ -47878,6 +47930,11 @@ server.registerTool(
       if (!statusRes.ok) continue;
       const poll = await statusRes.json();
       if (poll.status === "done" || poll.status === "completed") {
+        const extendCost = costUsdFromUsage(poll.usage);
+        if (extensionJob && (extendCost ?? 0) > 0) {
+          noteReportedSpend(extensionJob, "extend", extendCost ?? 0);
+          await persistJob(extensionJob);
+        }
         return {
           content: [{
             type: "text",
@@ -47887,7 +47944,8 @@ server.registerTool(
               videoUrl: poll.video?.url,
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
-              auth: toolAuth(credential.source)
+              auth: toolAuth(credential.source),
+              ...costFields(extensionPaid)
             }, null, 2)
           }]
         };
@@ -48012,7 +48070,20 @@ server.registerTool(
       referenceImageUrls: args.referenceImageUrls ?? []
     });
     const stillJob = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
-    const stillPaid = quoteGate(args, "still", STILL_USD, stillFingerprint, stillJob ? recordedSpendUsd(stillJob) : 0);
+    const stillPaid = quoteGate(
+      { ...args, budgetUsd: args.budgetUsd ?? stillJob?.spendLedger?.thresholdUsd },
+      "still",
+      STILL_USD,
+      stillFingerprint,
+      stillJob ? recordedSpendUsd(stillJob) : 0
+    );
+    if (stillJob && args.budgetUsd !== void 0) {
+      stillJob.spendLedger = {
+        ...stillJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(stillJob), pendingUsd: 0 },
+        thresholdUsd: args.budgetUsd
+      };
+      await persistJob(stillJob);
+    }
     const stillCostRefusal = costRefusal(stillPaid);
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
@@ -48047,6 +48118,10 @@ server.registerTool(
       },
       { outputDir: OUTPUT_DIR }
     );
+    if (stillJob && (result.costUsd ?? 0) > 0) {
+      noteReportedSpend(stillJob, "still", result.costUsd ?? 0);
+      await persistJob(stillJob);
+    }
     if (!result.localPath) {
       return {
         content: [{
@@ -48080,6 +48155,7 @@ server.registerTool(
           auth: toolAuth(result.auth),
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : void 0,
+          ...costFields(stillPaid),
           message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
         }, null, 2)
       }]
@@ -48296,7 +48372,7 @@ async function readClaim(jobId) {
 }
 async function claimFileAge(jobId) {
   try {
-    const info = await stat4(claimPath(jobId));
+    const info = await stat5(claimPath(jobId));
     return Date.now() - info.mtimeMs;
   } catch {
     return void 0;
@@ -48357,7 +48433,7 @@ async function discardIfUnchanged(path, expected) {
   }
   let tombAge;
   try {
-    tombAge = Date.now() - (await stat4(tomb)).mtimeMs;
+    tombAge = Date.now() - (await stat5(tomb)).mtimeMs;
   } catch {
     tombAge = void 0;
   }
@@ -48378,7 +48454,7 @@ async function acquireClaimTurn(jobId) {
   }
   let turnAge;
   try {
-    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+    turnAge = Date.now() - (await stat5(dest)).mtimeMs;
   } catch {
     return void 0;
   }
@@ -48411,6 +48487,15 @@ async function releaseClaimTurn(jobId, token) {
   if (!raw.includes(token)) return;
   await discardIfUnchanged(dest, raw);
 }
+async function commitClaimFromDisk(jobId, owner) {
+  const disk = await readPersistedJob(jobId);
+  if (!disk) return false;
+  noteRevision(disk);
+  disk.claim = owner;
+  sequenceJobs.set(jobId, disk);
+  await persistJob(disk);
+  return true;
+}
 async function claimFilm(jobId) {
   await refreshJobsFromDisk();
   const job = sequenceJobs.get(jobId);
@@ -48441,10 +48526,8 @@ async function claimFilm(jobId) {
       const owner = thisOwner();
       if (heldAge === void 0) {
         if (await placeClaim(jobId, owner)) {
-          job.claim = owner;
-          sequenceJobs.set(job.id, job);
-          await persistJob(job);
-          return { ok: true };
+          if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+          await unlink3(claimPath(jobId)).catch(() => void 0);
         }
         continue;
       }
@@ -48453,19 +48536,16 @@ async function claimFilm(jobId) {
         raw = await readFile6(claimPath(jobId), "utf8");
       } catch {
         if (await placeClaim(jobId, owner)) {
-          job.claim = owner;
-          sequenceJobs.set(job.id, job);
-          await persistJob(job);
-          return { ok: true };
+          if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+          await unlink3(claimPath(jobId)).catch(() => void 0);
         }
         continue;
       }
       if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
       if (!await placeClaim(jobId, owner)) continue;
-      job.claim = owner;
-      sequenceJobs.set(job.id, job);
-      await persistJob(job);
-      return { ok: true };
+      if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+      await unlink3(claimPath(jobId)).catch(() => void 0);
+      continue;
     } finally {
       await releaseClaimTurn(jobId, turn);
     }
@@ -48479,7 +48559,7 @@ async function liveTurnWithoutClaim(jobId) {
   const dest = claimTurnPath(jobId);
   let turnAge;
   try {
-    turnAge = Date.now() - (await stat4(dest)).mtimeMs;
+    turnAge = Date.now() - (await stat5(dest)).mtimeMs;
   } catch {
     return false;
   }
@@ -48539,13 +48619,21 @@ async function saveJobAnnotation(jobId, patch) {
   }
 }
 async function releaseFilmClaim(jobId) {
-  const job = sequenceJobs.get(jobId);
-  if (job?.claim?.token === processToken) {
-    job.claim = void 0;
-    await persistJob(job);
-  } else {
+  const disk = await readPersistedJob(jobId);
+  const memory = sequenceJobs.get(jobId);
+  const job = disk ?? memory;
+  if (!job) {
     await unlink3(claimPath(jobId)).catch(() => void 0);
+    return;
   }
+  if ((disk?.claim?.token ?? memory?.claim?.token) !== processToken && memory?.claim?.token !== processToken) {
+    await unlink3(claimPath(jobId)).catch(() => void 0);
+    return;
+  }
+  noteRevision(job);
+  job.claim = void 0;
+  sequenceJobs.set(jobId, job);
+  await persistJob(job);
 }
 function sequenceJobId() {
   return `seq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -48945,10 +49033,17 @@ server.registerTool(
     const sequenceQuote = videoQuote({
       resolution: args.resolution,
       pin: args.pin ?? "start",
-      durations: args.shots.map((shot) => shot.durationSeconds)
+      durations: args.shots.map((shot) => shot.durationSeconds),
+      prompts: args.shots.map((shot) => shot.prompt),
+      continuity: args.continuity,
+      model: args.model,
+      aspectRatio: args.aspectRatio,
+      firstFrames: args.shots.map((shot) => shot.firstFrameUrl),
+      lastFrames: args.shots.map((shot) => shot.lastFrameUrl)
     });
+    const sequenceBudget = args.budgetUsd ?? resumeJob?.spendLedger?.thresholdUsd;
     const sequencePaid = quoteGate(
-      args,
+      { ...args, budgetUsd: sequenceBudget },
       "video",
       estimate,
       sequenceQuote.fingerprint,
@@ -49082,7 +49177,7 @@ server.registerTool(
       };
     }
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
-    if (sessionRefusal) return sessionRefusal;
+    if (sessionRefusal) return withCost(sessionRefusal, sequencePaid);
     const preparedAudio = {
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0
     };
@@ -49138,6 +49233,7 @@ server.registerTool(
           // of the whole film still chains from where the film actually began.
           startFramePath: resumeJob.startFramePath,
           warnings: resumeJob.warnings ? [...resumeJob.warnings] : void 0,
+          ...resumeJob.spendLedger ? { spendLedger: structuredClone(resumeJob.spendLedger) } : {},
           ledger: args.ledger ? {
             locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
             props: args.ledger.props ?? resumeJob.ledger?.props ?? [],
@@ -49176,8 +49272,14 @@ server.registerTool(
           } : {}
         }
       };
-      if (sequencePaid?.budgetWarning) {
+      if (sequencePaid.budgetWarning) {
         job.warnings = [...job.warnings ?? [], sequencePaid.budgetWarning];
+      }
+      if (sequenceBudget !== void 0) {
+        job.spendLedger = {
+          ...job.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(job), pendingUsd: 0 },
+          thresholdUsd: sequenceBudget
+        };
       }
       sequenceJobs.set(job.id, job);
       void persistJob(job);
@@ -49212,7 +49314,8 @@ server.registerTool(
       return {
         content: [{ type: "text", text: JSON.stringify({
           action: job.state === "running" ? "started" : job.state,
-          ...jobPayload(job)
+          ...jobPayload(job),
+          ...costFields(sequencePaid)
         }, null, 2) }]
       };
     } finally {
@@ -49424,7 +49527,7 @@ server.registerTool(
       boardDeps
     );
     const boardPaid = quoteGate(
-      args,
+      { ...args, budgetUsd: args.budgetUsd ?? boardJob?.spendLedger?.thresholdUsd },
       "board",
       priced.estimate.estimatedUsd,
       boardFingerprint,
@@ -49577,8 +49680,9 @@ server.registerTool(
       resolution: retryResolution,
       prompt
     });
+    const retryBudget = args.budgetUsd ?? original.spendLedger?.thresholdUsd;
     const retryPaid = quoteGate(
-      args,
+      { ...args, budgetUsd: retryBudget },
       "retry",
       estimateUsd,
       retryFingerprint,
@@ -49666,7 +49770,7 @@ server.registerTool(
       });
     }
     const repairSession = await refuseIfSessionWillNotLast(duration3 * 1e3);
-    if (repairSession) return repairSession;
+    if (repairSession) return withCost(repairSession, retryPaid);
     const claim2 = await claimFilm(original.id);
     if (!claim2.ok) {
       return {
@@ -49695,7 +49799,8 @@ server.registerTool(
         shots: [],
         settings,
         startFramePath: original.startFramePath,
-        warnings: [...original.warnings ?? [], ...retryPaid?.budgetWarning ? [retryPaid.budgetWarning] : []],
+        warnings: [...original.warnings ?? [], ...retryPaid.budgetWarning ? [retryPaid.budgetWarning] : []],
+        ...original.spendLedger ? { spendLedger: structuredClone(original.spendLedger) } : {},
         repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
         ledger: original.ledger,
         // Every reused shot was paid for by the original film. Count it, so the
@@ -49709,6 +49814,12 @@ server.registerTool(
         job.warnings.push(
           `Shot ${index} was re-rendered, but ${later} from the original shot ${index}'s last frame, so the join after shot ${index} is a cut, not a chained continuation.`
         );
+      }
+      if (retryBudget !== void 0) {
+        job.spendLedger = {
+          ...job.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(original), pendingUsd: 0 },
+          thresholdUsd: retryBudget
+        };
       }
       sequenceJobs.set(job.id, job);
       void persistJob(job);
@@ -49742,7 +49853,8 @@ server.registerTool(
       return {
         content: [{ type: "text", text: JSON.stringify({
           action: job.state === "running" ? "started" : job.state,
-          ...jobPayload(job)
+          ...jobPayload(job),
+          ...costFields(retryPaid)
         }, null, 2) }]
       };
     } finally {
@@ -49843,15 +49955,15 @@ function filesIdentical(left, right) {
     return false;
   }
 }
-async function reviewShotsFromJob(job) {
+async function reviewShotsFromJob(job, reviewFrameDir) {
   const shots = [];
   for (let index = 0; index < job.shots.length; index += 1) {
     const shot = job.shots[index];
     const ledger = job.ledger?.shots?.find((entry) => entry.shot === shot.index);
     const worn = ledger?.checklists.flatMap((list) => list.worn.map((layer) => layer.id));
     let opening = shot.openingFramePath;
-    if (!opening && shot.localPath && existsSync2(shot.localPath)) {
-      opening = await extractFirstFrame(shot.localPath);
+    if (!opening && shot.localPath && existsSync2(shot.localPath) && reviewFrameDir) {
+      opening = await extractFirstFrame(shot.localPath, reviewFrameDir);
     }
     shots.push({
       index: shot.index,
@@ -49897,75 +50009,65 @@ server.registerTool(
     let shots = args.shots;
     let ledgerArtifact = callerSupplied ? "caller-supplied" : "ledger";
     let plannedShots = [];
-    let diskMeasurements = [];
     if (args.jobId) await refreshJobsFromDisk();
     const job = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
     if (args.jobId && !job) {
       return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
     }
-    if (!shots && job) {
-      shots = await reviewShotsFromJob(job);
-      ledgerArtifact = `job:${job.id}#ledger`;
-      plannedShots = [
-        ...(job.ledger?.wardrobeEvents ?? []).map((event) => event.shot),
-        ...(job.ledger?.propEvents ?? []).map((event) => event.shot)
-      ];
-      diskMeasurements = job.shots.flatMap((shot) => {
-        if (typeof shot.closingFrameAgreement !== "number") return [];
-        if (!shot.localPath || !shot.lastFramePath) return [];
-        if (!existsSync2(shot.localPath) || !existsSync2(shot.lastFramePath)) return [];
-        return [{
-          afterShot: shot.index,
-          agreement: shot.closingFrameAgreement,
-          method: "closing-frame-agreement",
-          source: "disk"
-        }];
+    const reviewFrameDir = !shots && job ? await mkdtemp(join8(JOBS_DIR, ".review-frames-")) : void 0;
+    try {
+      if (!shots && job) {
+        shots = await reviewShotsFromJob(job, reviewFrameDir);
+        ledgerArtifact = `job:${job.id}#ledger`;
+        plannedShots = [
+          ...(job.ledger?.wardrobeEvents ?? []).map((event) => event.shot),
+          ...(job.ledger?.propEvents ?? []).map((event) => event.shot)
+        ];
+      }
+      if (!shots || shots.length === 0) {
+        return refusal({
+          error: "No shots to review",
+          executed: false,
+          willRender: false,
+          willSpend: false
+        });
+      }
+      const review = reviewContinuity({
+        shots,
+        measurements: (args.measurements ?? []).map((measurement) => ({ ...measurement, source: "caller" })),
+        fileExists: (file2) => existsSync2(file2),
+        filesIdentical,
+        ledgerArtifact,
+        plannedShots,
+        styleNotes: args.styleNotes,
+        narrativeSuggestions: args.narrativeSuggestions,
+        resolution: args.resolution
       });
-    }
-    if (!shots || shots.length === 0) {
+      let persisted = false;
+      let persistError;
+      if (args.jobId && !callerSupplied) {
+        const saved = await saveJobAnnotation(args.jobId, (current) => {
+          current.continuityReview = review;
+        });
+        persisted = saved.ok;
+        if (!saved.ok) persistError = saved.message;
+      }
       return refusal({
-        error: "No shots to review",
-        executed: false,
-        willRender: false,
-        willSpend: false
+        ...review,
+        persisted,
+        source: callerSupplied ? "caller-supplied" : "job",
+        reproducible: !callerSupplied,
+        ...persistError ? { persistError } : {}
       });
+    } finally {
+      if (reviewFrameDir) await rm4(reviewFrameDir, { recursive: true, force: true });
     }
-    const review = reviewContinuity({
-      shots,
-      measurements: [
-        ...diskMeasurements,
-        ...(args.measurements ?? []).map((measurement) => ({ ...measurement, source: "caller" }))
-      ],
-      fileExists: (file2) => existsSync2(file2),
-      filesIdentical,
-      ledgerArtifact,
-      plannedShots,
-      styleNotes: args.styleNotes,
-      narrativeSuggestions: args.narrativeSuggestions,
-      resolution: args.resolution
-    });
-    let persisted = false;
-    let persistError;
-    if (args.jobId && !callerSupplied) {
-      const saved = await saveJobAnnotation(args.jobId, (current) => {
-        current.continuityReview = review;
-      });
-      persisted = saved.ok;
-      if (!saved.ok) persistError = saved.message;
-    }
-    return refusal({
-      ...review,
-      persisted,
-      source: callerSupplied ? "caller-supplied" : "job",
-      reproducible: !callerSupplied,
-      ...persistError ? { persistError } : {}
-    });
   }
 );
 server.registerTool(
   "propose_repair",
   {
-    description: "Propose least-cost repairs for one bad shot from the frames that were actually used. Free and advisory: it does not approve and it does not render. Pass an option's costQuote to retry_shot or render_sequence, which are the calls that can spend.",
+    description: "Propose least-cost repairs for one bad shot from the frames that were actually used. Free and advisory: it does not approve and it does not render. When a job id is given, retry-alone includes the costQuote retry_shot accepts. The other options are advice only.",
     inputSchema: external_exports.object({
       jobId: external_exports.string().optional(),
       badShot: external_exports.number().int().min(1),
@@ -50037,25 +50139,22 @@ server.registerTool(
     const repairJob = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
     const badRecord = source.find((shot) => shot.index === args.badShot);
     const options = proposal.options.map((option) => {
-      const fingerprint = option.id === "retry-alone" && args.jobId ? quoteFingerprint({
+      if (option.id !== "retry-alone" || !args.jobId) {
+        return { ...option, advisory: true };
+      }
+      const fingerprint = quoteFingerprint({
         kind: "retry",
         jobId: args.jobId,
         shotIndex: args.badShot,
         durationSeconds: badRecord?.durationSeconds ?? 0,
         resolution,
         prompt: repairJob?.shots.find((shot) => shot.index === args.badShot)?.prompt ?? ""
-      }) : quoteFingerprint({
-        kind: option.id === "reboard-boundary" ? "board" : "video",
-        strategy: option.id,
-        shots: option.shotsToRender,
-        usd: option.costUsd,
-        resolution
       });
       return {
         ...option,
         costQuote: {
           version: 1,
-          kind: option.id === "retry-alone" ? "retry" : option.id === "reboard-boundary" ? "board" : "video",
+          kind: "retry",
           usd: option.costUsd,
           fingerprint
         }

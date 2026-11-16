@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { processHost, sweepOrphanTemps } from "../mcp/runtime.ts";
 import { noteReportedSpend, recordedSpendUsd, type SequenceJob } from "../mcp/server.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -143,7 +144,7 @@ describe("phase 1 recovery without a bot", () => {
   it("keeps both annotations when two processes write the same film", async () => {
     const jobs = await jobsDir();
     process.env.THESHOW_JOBS_DIR = path.join(tmpdir(), "another-stale-jobs-dir");
-    for (let round = 0; round < 8; round += 1) {
+    for (let round = 0; round < 60; round += 1) {
       const id = `seq_phase1_race_${round}`;
       await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
       const [review, repair] = await Promise.all([
@@ -163,7 +164,67 @@ describe("phase 1 recovery without a bot", () => {
       expect(saved.repairProposal?.version, `round ${round}`).toBe(1);
       expect(saved.filmPath).toBe(`/keep/${id}.mp4`);
     }
-  }, 60_000);
+  }, 180_000);
+
+  it("does not write a review onto a film that is still rendering", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_running_guard";
+    const body = film(id);
+    body.state = "running";
+    const original = JSON.stringify(body);
+    await writeFile(path.join(jobs, `${id}.json`), original);
+    const child = await runChild(jobs, ["refuse-running", id]);
+    expect(child.status, child.stderr).toBe(0);
+    const saved = JSON.parse(child.stdout) as { ok: boolean; message: string };
+    expect(saved.ok).toBe(false);
+    expect(saved.message).toMatch(/rendering/);
+    expect(saved.message).not.toMatch(/already running/);
+    const after = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as { state: string; continuityReview?: unknown };
+    expect(after.state).toBe("running");
+    expect(after.continuityReview).toBeUndefined();
+  });
+
+  it("says to retry when another process holds the claim", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_claim_held";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
+    const holder = spawn(process.execPath, ["--import", "tsx", CHILD, "claim", id], {
+      cwd: ROOT,
+      env: childEnv(jobs),
+    });
+    let held = "";
+    holder.stdout.setEncoding("utf8");
+    holder.stdout.on("data", (chunk: string) => { held += chunk; });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`claim did not answer\n${held}`)), 10_000);
+      holder.stdout.on("data", () => {
+        if (held.includes("\n")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    const once = await runChild(jobs, ["annotate-once", id]);
+    holder.kill("SIGKILL");
+    expect(once.status, once.stderr).toBe(0);
+    const saved = JSON.parse(once.stdout) as { ok: boolean; message: string };
+    expect(saved.ok).toBe(false);
+    expect(saved.message).toMatch(/retry shortly/);
+    expect(saved.message).not.toMatch(/already running/);
+  });
+
+  it("leaves another host's young temp file alone and removes a dead local one", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-temps-"));
+    const slug = processHost.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32) || "host";
+    const foreign = path.join(dir, `job.424242.otherhost.${"a".repeat(8)}.tmp`);
+    const dead = path.join(dir, `job.999999.${slug}.${"b".repeat(8)}.tmp`);
+    await writeFile(foreign, "foreign");
+    await writeFile(dead, "dead");
+    await sweepOrphanTemps(dir);
+    const names = await readdir(dir);
+    expect(names.some((name) => name.includes("otherhost"))).toBe(true);
+    expect(names.some((name) => name.includes("999999"))).toBe(false);
+  });
 
   it("adds a reported board cost on top of recorded shot costs", () => {
     const job = {

@@ -6,8 +6,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
-import { setBeforeRenameProbe, sweepOrphanTemps } from "../mcp/runtime.ts";
-import { claimFilm, readPersistedJob, saveJobAnnotation } from "../mcp/server.ts";
+import { setBeforeRenameProbe, sweepOrphanTemps, thisOwner } from "../mcp/runtime.ts";
+import { claimFilm, persistJob, readPersistedJob, saveJobAnnotation } from "../mcp/server.ts";
 
 async function main(): Promise<void> {
   const [mode, ...rest] = process.argv.slice(2);
@@ -18,6 +18,43 @@ async function main(): Promise<void> {
     else if (field === "description") await saveCharacter({ name, description: value });
     else if (field === "appearance") await saveCharacter({ name, appearance: value });
     else throw new Error(`unknown field ${field}`);
+    return;
+  }
+  if (mode === "refuse-running") {
+    const id = rest[0];
+    if (!id) throw new Error("refuse-running needs a job id");
+    const existing = await readPersistedJob(id);
+    if (!existing) throw new Error("missing job");
+    existing.state = "running";
+    existing.owner = thisOwner();
+    await persistJob(existing);
+    const saved = await saveJobAnnotation(id, (job) => {
+      job.continuityReview = {
+        version: 1,
+        findings: [],
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+      };
+    });
+    process.stdout.write(`${JSON.stringify(saved)}\n`);
+    return;
+  }
+  if (mode === "annotate-once") {
+    const id = rest[0];
+    if (!id) throw new Error("annotate-once needs a job id");
+    const saved = await saveJobAnnotation(id, (job) => {
+      job.continuityReview = {
+        version: 1,
+        findings: [],
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+      };
+    });
+    process.stdout.write(`${JSON.stringify(saved)}\n`);
     return;
   }
   if (mode === "annotate-review" || mode === "annotate-repair") {

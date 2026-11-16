@@ -143,9 +143,10 @@ async function hasAudioStream(file: string) {
  * The first frame of a clip, named from the file path so a second call reuses it.
  * This is a local ffmpeg read. It does not call a paid API.
  */
-export async function extractFirstFrame(file: string): Promise<string | undefined> {
+export async function extractFirstFrame(file: string, destDir?: string): Promise<string | undefined> {
   const { ffmpeg } = await resolveTools();
-  const dir = await ensureOutputDir();
+  const dir = destDir ?? await ensureOutputDir();
+  if (destDir) await mkdir(destDir, { recursive: true });
   const digest = createHash("sha1").update(`first:${file}`).digest("hex").slice(0, 16);
   const outPath = join(dir, `frame-first-${digest}.png`);
   try {
