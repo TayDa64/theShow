@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { videoQuote } from "../mcp/costGate.ts";
-import { JOBS_DIR, OUTPUT_DIR } from "../mcp/media.ts";
+import { JOBS_DIR, OUTPUT_DIR, resolveTools } from "../mcp/media.ts";
 import { server } from "../mcp/server.ts";
 
 const exec = promisify(execFile);
@@ -681,8 +681,9 @@ describe("phase 1 tools", () => {
     const clip = `${OUTPUT_DIR}/phase1-review-source.mp4`;
     const frame = `${OUTPUT_DIR}/phase1-review-last.png`;
     await mkdir(OUTPUT_DIR, { recursive: true });
-    await exec("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.2", "-frames:v", "1", clip]);
-    await exec("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=white:s=16x16:d=0.1", "-frames:v", "1", frame]);
+    const { ffmpeg } = await resolveTools();
+    await exec(ffmpeg, ["-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.2", "-frames:v", "1", clip]);
+    await exec(ffmpeg, ["-y", "-f", "lavfi", "-i", "color=c=white:s=16x16:d=0.1", "-frames:v", "1", frame]);
     const before = new Set(await readdir(OUTPUT_DIR));
     const id = "seq_phase1_review_frames";
     await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
