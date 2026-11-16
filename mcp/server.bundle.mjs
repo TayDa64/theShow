@@ -1093,11 +1093,11 @@ var require_util = __commonJS({
       return false;
     }
     exports.schemaHasRules = schemaHasRules;
-    function schemaHasRulesButRef(schema, RULES) {
+    function schemaHasRulesButRef(schema, RULES2) {
       if (typeof schema == "boolean")
         return !schema;
       for (const key in schema)
-        if (key !== "$ref" && RULES.all[key])
+        if (key !== "$ref" && RULES2.all[key])
           return true;
       return false;
     }
@@ -2491,17 +2491,17 @@ var require_validate = __commonJS({
     }
     function schemaKeywords(it, types, typeErrors, errsCount) {
       const { gen, schema, data, allErrors, opts, self } = it;
-      const { RULES } = self;
-      if (schema.$ref && (opts.ignoreKeywordsWithRef || !(0, util_1.schemaHasRulesButRef)(schema, RULES))) {
-        gen.block(() => keywordCode(it, "$ref", RULES.all.$ref.definition));
+      const { RULES: RULES2 } = self;
+      if (schema.$ref && (opts.ignoreKeywordsWithRef || !(0, util_1.schemaHasRulesButRef)(schema, RULES2))) {
+        gen.block(() => keywordCode(it, "$ref", RULES2.all.$ref.definition));
         return;
       }
       if (!opts.jtd)
         checkStrictTypes(it, types);
       gen.block(() => {
-        for (const group of RULES.rules)
+        for (const group of RULES2.rules)
           groupKeywords(group);
-        groupKeywords(RULES.post);
+        groupKeywords(RULES2.post);
       });
       function groupKeywords(group) {
         if (!(0, applicability_1.shouldUseGroup)(schema, group))
@@ -2979,7 +2979,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3006,7 +3006,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3870,7 +3870,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3906,50 +3906,50 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base, relative2, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse4(serialize(base, options), options);
-        relative = parse4(serialize(relative, options), options);
+        relative2 = parse4(serialize(relative2, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative.scheme) {
-        target.scheme = relative.scheme;
-        target.userinfo = relative.userinfo;
-        target.host = relative.host;
-        target.port = relative.port;
-        target.path = removeDotSegments(relative.path || "");
-        target.query = relative.query;
+      if (!options.tolerant && relative2.scheme) {
+        target.scheme = relative2.scheme;
+        target.userinfo = relative2.userinfo;
+        target.host = relative2.host;
+        target.port = relative2.port;
+        target.path = removeDotSegments(relative2.path || "");
+        target.query = relative2.query;
       } else {
-        if (relative.userinfo !== void 0 || relative.host !== void 0 || relative.port !== void 0) {
-          target.userinfo = relative.userinfo;
-          target.host = relative.host;
-          target.port = relative.port;
-          target.path = removeDotSegments(relative.path || "");
-          target.query = relative.query;
+        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
+          target.userinfo = relative2.userinfo;
+          target.host = relative2.host;
+          target.port = relative2.port;
+          target.path = removeDotSegments(relative2.path || "");
+          target.query = relative2.query;
         } else {
-          if (!relative.path) {
+          if (!relative2.path) {
             target.path = base.path;
-            if (relative.query !== void 0) {
-              target.query = relative.query;
+            if (relative2.query !== void 0) {
+              target.query = relative2.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative.path[0] === "/") {
-              target.path = removeDotSegments(relative.path);
+            if (relative2.path[0] === "/") {
+              target.path = removeDotSegments(relative2.path);
             } else {
               const baseHasAuthority = base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0;
               if (baseHasAuthority && !base.path) {
-                target.path = "/" + relative.path;
+                target.path = "/" + relative2.path;
               } else if (!base.path) {
-                target.path = relative.path;
+                target.path = relative2.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
               }
               target.path = base.scheme === void 0 && !baseHasAuthority && target.path[0] !== "/" ? removeDotSegmentsRelative(target.path) : removeDotSegments(target.path);
             }
-            target.query = relative.query;
+            target.query = relative2.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3957,7 +3957,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative.fragment;
+      target.fragment = relative2.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4261,7 +4261,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -4656,10 +4656,10 @@ var require_core = __commonJS({
       }
       // Remove keyword
       removeKeyword(keyword) {
-        const { RULES } = this;
-        delete RULES.keywords[keyword];
-        delete RULES.all[keyword];
-        for (const group of RULES.rules) {
+        const { RULES: RULES2 } = this;
+        delete RULES2.keywords[keyword];
+        delete RULES2.all[keyword];
+        for (const group of RULES2.rules) {
           const i = group.rules.findIndex((rule) => rule.keyword === keyword);
           if (i >= 0)
             group.rules.splice(i, 1);
@@ -4827,9 +4827,9 @@ var require_core = __commonJS({
     }
     var KEYWORD_NAME = /^[a-z_$][a-z0-9_$:-]*$/i;
     function checkKeyword(keyword, def) {
-      const { RULES } = this;
+      const { RULES: RULES2 } = this;
       (0, util_1.eachItem)(keyword, (kwd) => {
-        if (RULES.keywords[kwd])
+        if (RULES2.keywords[kwd])
           throw new Error(`Keyword ${kwd} is already defined`);
         if (!KEYWORD_NAME.test(kwd))
           throw new Error(`Keyword ${kwd} has invalid name`);
@@ -4845,13 +4845,13 @@ var require_core = __commonJS({
       const post = definition === null || definition === void 0 ? void 0 : definition.post;
       if (dataType && post)
         throw new Error('keyword with "post" flag cannot have "type"');
-      const { RULES } = this;
-      let ruleGroup = post ? RULES.post : RULES.rules.find(({ type: t }) => t === dataType);
+      const { RULES: RULES2 } = this;
+      let ruleGroup = post ? RULES2.post : RULES2.rules.find(({ type: t }) => t === dataType);
       if (!ruleGroup) {
         ruleGroup = { type: dataType, rules: [] };
-        RULES.rules.push(ruleGroup);
+        RULES2.rules.push(ruleGroup);
       }
-      RULES.keywords[keyword] = true;
+      RULES2.keywords[keyword] = true;
       if (!definition)
         return;
       const rule = {
@@ -4866,7 +4866,7 @@ var require_core = __commonJS({
         addBeforeRule.call(this, ruleGroup, rule, definition.before);
       else
         ruleGroup.rules.push(rule);
-      RULES.all[keyword] = rule;
+      RULES2.all[keyword] = rule;
       (_a3 = definition.implements) === null || _a3 === void 0 ? void 0 : _a3.forEach((kwd) => this.addKeyword(kwd));
     }
     function addBeforeRule(ruleGroup, rule, before) {
@@ -8201,11 +8201,11 @@ var require_util2 = __commonJS({
       return false;
     }
     exports.schemaHasRules = schemaHasRules;
-    function schemaHasRulesButRef(schema, RULES) {
+    function schemaHasRulesButRef(schema, RULES2) {
       if (typeof schema == "boolean")
         return !schema;
       for (const key in schema)
-        if (key !== "$ref" && RULES.all[key])
+        if (key !== "$ref" && RULES2.all[key])
           return true;
       return false;
     }
@@ -9564,17 +9564,17 @@ var require_validate2 = __commonJS({
     }
     function schemaKeywords(it, types, typeErrors, errsCount) {
       const { gen, schema, data, allErrors, opts, self } = it;
-      const { RULES } = self;
-      if (schema.$ref && (opts.ignoreKeywordsWithRef || !(0, util_1.schemaHasRulesButRef)(schema, RULES))) {
-        gen.block(() => keywordCode(it, "$ref", RULES.all.$ref.definition));
+      const { RULES: RULES2 } = self;
+      if (schema.$ref && (opts.ignoreKeywordsWithRef || !(0, util_1.schemaHasRulesButRef)(schema, RULES2))) {
+        gen.block(() => keywordCode(it, "$ref", RULES2.all.$ref.definition));
         return;
       }
       if (!opts.jtd)
         checkStrictTypes(it, types);
       gen.block(() => {
-        for (const group of RULES.rules)
+        for (const group of RULES2.rules)
           groupKeywords(group);
-        groupKeywords(RULES.post);
+        groupKeywords(RULES2.post);
       });
       function groupKeywords(group) {
         if (!(0, applicability_1.shouldUseGroup)(schema, group))
@@ -10052,7 +10052,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -10079,7 +10079,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -10554,10 +10554,10 @@ var require_core3 = __commonJS({
       }
       // Remove keyword
       removeKeyword(keyword) {
-        const { RULES } = this;
-        delete RULES.keywords[keyword];
-        delete RULES.all[keyword];
-        for (const group of RULES.rules) {
+        const { RULES: RULES2 } = this;
+        delete RULES2.keywords[keyword];
+        delete RULES2.all[keyword];
+        for (const group of RULES2.rules) {
           const i = group.rules.findIndex((rule) => rule.keyword === keyword);
           if (i >= 0)
             group.rules.splice(i, 1);
@@ -10725,9 +10725,9 @@ var require_core3 = __commonJS({
     }
     var KEYWORD_NAME = /^[a-z_$][a-z0-9_$:-]*$/i;
     function checkKeyword(keyword, def) {
-      const { RULES } = this;
+      const { RULES: RULES2 } = this;
       (0, util_1.eachItem)(keyword, (kwd) => {
-        if (RULES.keywords[kwd])
+        if (RULES2.keywords[kwd])
           throw new Error(`Keyword ${kwd} is already defined`);
         if (!KEYWORD_NAME.test(kwd))
           throw new Error(`Keyword ${kwd} has invalid name`);
@@ -10743,13 +10743,13 @@ var require_core3 = __commonJS({
       const post = definition === null || definition === void 0 ? void 0 : definition.post;
       if (dataType && post)
         throw new Error('keyword with "post" flag cannot have "type"');
-      const { RULES } = this;
-      let ruleGroup = post ? RULES.post : RULES.rules.find(({ type: t }) => t === dataType);
+      const { RULES: RULES2 } = this;
+      let ruleGroup = post ? RULES2.post : RULES2.rules.find(({ type: t }) => t === dataType);
       if (!ruleGroup) {
         ruleGroup = { type: dataType, rules: [] };
-        RULES.rules.push(ruleGroup);
+        RULES2.rules.push(ruleGroup);
       }
-      RULES.keywords[keyword] = true;
+      RULES2.keywords[keyword] = true;
       if (!definition)
         return;
       const rule = {
@@ -10764,7 +10764,7 @@ var require_core3 = __commonJS({
         addBeforeRule.call(this, ruleGroup, rule, definition.before);
       else
         ruleGroup.rules.push(rule);
-      RULES.all[keyword] = rule;
+      RULES2.all[keyword] = rule;
       (_a3 = definition.implements) === null || _a3 === void 0 ? void 0 : _a3.forEach((kwd) => this.addKeyword(kwd));
     }
     function addBeforeRule(ruleGroup, rule, before) {
@@ -21645,7 +21645,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve2) {
+function isRecursive(inst, stack, resolve3) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -21655,7 +21655,7 @@ function isRecursive(inst, stack, resolve2) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve2);
+      const answer = isRecursive(child, stack, resolve3);
       if (answer > result)
         result = answer;
     }
@@ -21666,7 +21666,7 @@ function isRecursive(inst, stack, resolve2) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -21730,7 +21730,7 @@ function isRecursive(inst, stack, resolve2) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -30291,19 +30291,19 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
   }
   const propOutputs = /* @__PURE__ */ new Map();
   for (const key of allKeys) {
-    const propSchema = propShape[key];
+    const propSchema2 = propShape[key];
     const kx = keyExpr(key);
     const inputVar = newVar(ctx);
     doc.write(`const ${inputVar} = ${accessor}[${kx}];`);
-    if (propSchema._zod.optin !== void 0) {
+    if (propSchema2._zod.optin !== void 0) {
       const outputVar2 = newVar(ctx);
       doc.write(`let ${outputVar2} = (() => {`);
       doc.indented((d) => {
-        const outputAccessor = compileChild(d, ctx, propSchema, inputVar);
+        const outputAccessor = compileChild(d, ctx, propSchema2, inputVar);
         d.write(`return ${outputAccessor};`);
       });
       doc.write(`})();`);
-      if (propSchema._zod.optout === "optional") {
+      if (propSchema2._zod.optout === "optional") {
         doc.write(`if (${outputVar2} === INVALID) {`);
         doc.indented((d) => {
           d.write(`if (${kx} in ${accessor}) return INVALID;`);
@@ -30315,10 +30315,10 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
       }
       propOutputs.set(key, outputVar2);
     } else {
-      if (requiresPresenceCheck(propSchema)) {
+      if (requiresPresenceCheck(propSchema2)) {
         doc.write(`if (!(${kx} in ${accessor})) return INVALID;`);
       }
-      const outputAccessor = compileChild(doc, ctx, propSchema, inputVar, buildsValue);
+      const outputAccessor = compileChild(doc, ctx, propSchema2, inputVar, buildsValue);
       if (outputAccessor !== null)
         propOutputs.set(key, outputAccessor);
     }
@@ -36479,8 +36479,8 @@ function convertBaseSchema(schema, ctx) {
       const properties = schema.properties || {};
       const requiredSet = new Set(schema.required || []);
       const additionalSchema = typeof schema.additionalProperties === "object" ? convertSchema(schema.additionalProperties, ctx) : void 0;
-      for (const [key, propSchema] of Object.entries(properties)) {
-        const propZodSchema = convertSchema(propSchema, ctx);
+      for (const [key, propSchema2] of Object.entries(properties)) {
+        const propZodSchema = convertSchema(propSchema2, ctx);
         assignProp(shape, key, requiredSet.has(key) ? propZodSchema : propZodSchema.optional());
       }
       if (schema.patternProperties) {
@@ -40168,7 +40168,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -40185,7 +40185,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -40263,7 +40263,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -40525,12 +40525,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -41670,7 +41670,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -42334,12 +42334,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
@@ -42755,6 +42755,56 @@ async function closingFrameAgreement(input2) {
     return void 0;
   }
 }
+function correlateGrayBuffers(left, right) {
+  if (left.length < 1024 || right.length < 1024) return void 0;
+  let ma = 0;
+  let mb = 0;
+  for (let i = 0; i < 1024; i += 1) {
+    ma += left[i];
+    mb += right[i];
+  }
+  ma /= 1024;
+  mb /= 1024;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let i = 0; i < 1024; i += 1) {
+    const x = left[i] - ma;
+    const y = right[i] - mb;
+    num += x * y;
+    da += x * x;
+    db += y * y;
+  }
+  if (da === 0 || db === 0) return void 0;
+  return Math.round(num / Math.sqrt(da * db) * 1e3) / 1e3;
+}
+async function grayscaleStillCorrelation(left, right) {
+  const { ffmpeg } = await resolveTools();
+  const thumb = async (file2) => {
+    const { stdout } = await exec(ffmpeg, [
+      "-v",
+      "error",
+      "-i",
+      file2,
+      "-frames:v",
+      "1",
+      "-vf",
+      "scale=32:32,format=gray",
+      "-f",
+      "rawvideo",
+      "-"
+    ], { encoding: "buffer", maxBuffer: 4 << 20 });
+    const buf = stdout;
+    return buf.subarray(0, 32 * 32);
+  };
+  try {
+    const a = await thumb(left);
+    const b = await thumb(right);
+    return correlateGrayBuffers(a, b);
+  } catch {
+    return void 0;
+  }
+}
 var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
 function assertBedCoversFilm(bedSeconds, filmSeconds) {
   if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
@@ -42860,7 +42910,7 @@ async function assembleClips(input2) {
     clipAudio
   }));
   let mode;
-  let totalDuration = durations.reduce((sum, d) => sum + d, 0);
+  let totalDuration2 = durations.reduce((sum, d) => sum + d, 0);
   if (fade === 0) {
     const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
     const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
@@ -42882,21 +42932,21 @@ async function assembleClips(input2) {
       previousA = aLabel;
       elapsed = offset + durations[i];
     }
-    totalDuration = elapsed;
+    totalDuration2 = elapsed;
     mode = "xfade";
   }
   let audioMap = "[aout]";
   if (wantBed && input2.audioTrackFile) {
     const bedSeconds = await probeDuration(input2.audioTrackFile);
-    assertBedCoversFilm(bedSeconds, totalDuration);
+    assertBedCoversFilm(bedSeconds, totalDuration2);
     const bedIndex = input2.clips.length;
     const gain = Math.min(Math.max(bedGain, 0), 4);
     const fadeOut = Math.min(
       input2.audioTrackFadeOutSeconds ?? 1.5,
-      Math.max(totalDuration / 2, 0.1)
+      Math.max(totalDuration2 / 2, 0.1)
     );
     args.push("-i", input2.audioTrackFile);
-    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration2.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration2 - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
     if (clipAudio === "replace") {
       filters.push(`${bedFilter}[aoutmix]`);
     } else {
@@ -42929,7 +42979,7 @@ async function assembleClips(input2) {
     outPath
   );
   await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration };
+  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration2 } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration2 };
 }
 async function pathToDataUrl(file2, mime = "image/png") {
   const buffer = await readFile(file2);
@@ -43680,7 +43730,7 @@ function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
   return Number.isFinite(ticks) && ticks > 0 ? ticks / USD_TICKS_PER_DOLLAR : void 0;
 }
-var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+var sleep = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
 function describeHttpFailure(status, body) {
   const text = body.trim();
   if (!text.startsWith("<")) {
@@ -45032,12 +45082,907 @@ function reviewContinuity(input2) {
   };
 }
 
+// mcp/coverageSuggestions.ts
+var COVERAGE_VERSION = 1;
+var RULE_VERSION = 1;
+var RENDERER_MAX_SECONDS = 15;
+var COVERAGE_RULE_IDS = [
+  "coverage.wide-before-first-close",
+  "coverage.consecutive-same-shot",
+  "coverage.reestablish-on-location-change",
+  "coverage.line-shorter-than-speech",
+  "coverage.line-without-person-coverage",
+  "structure.ladder-order",
+  "pacing.total-duration",
+  "pacing.shot-exceeds-renderer-max"
+];
+var WIDE = /* @__PURE__ */ new Set(["wide", "establishing"]);
+var CLOSE = /* @__PURE__ */ new Set(["close", "close-up", "closeup", "feet-close"]);
+var PERSON = /* @__PURE__ */ new Set(["medium", "close", "close-up", "closeup", "feet-close"]);
+var RULE_KIND = {
+  "coverage.wide-before-first-close": "coverage",
+  "coverage.consecutive-same-shot": "coverage",
+  "coverage.reestablish-on-location-change": "coverage",
+  "coverage.line-shorter-than-speech": "coverage",
+  "coverage.line-without-person-coverage": "coverage",
+  "structure.ladder-order": "structure",
+  "pacing.total-duration": "pacing",
+  "pacing.shot-exceeds-renderer-max": "pacing"
+};
+function ladderTitles(ladder, shotCount) {
+  const counts = /* @__PURE__ */ new Map();
+  const titles = [];
+  for (let index = 0; index < shotCount; index += 1) {
+    const position = shotCount === 1 ? 0 : index / (shotCount - 1);
+    let beat = ladder[0];
+    for (const candidate of ladder) {
+      if (candidate.at <= position + 1e-9) beat = candidate;
+    }
+    const base = beat?.title ?? "";
+    const seen = counts.get(base) ?? 0;
+    counts.set(base, seen + 1);
+    titles.push(seen === 0 ? base : `${base} ${seen + 1}`);
+  }
+  return titles;
+}
+function coverageKey(shot) {
+  const named = shot.framing?.trim() || shot.shotType?.trim();
+  return named ? named.toLowerCase() : void 0;
+}
+function shotTypesRecorded(shots) {
+  return shots.some((shot) => coverageKey(shot) !== void 0);
+}
+function abstain(ruleId, shots, reason) {
+  return {
+    ruleId,
+    ruleVersion: RULE_VERSION,
+    shots,
+    kind: RULE_KIND[ruleId],
+    severity: "info",
+    class: "unverified",
+    summary: reason,
+    abstention: reason,
+    wouldSpend: false
+  };
+}
+function changeFor(request, addingShot) {
+  if (request.source === "plan") {
+    return {
+      text: "Re-plan with plan_storyboard. suggest_coverage does not change the plan or call that tool.",
+      tool: "plan_storyboard"
+    };
+  }
+  if (addingShot) {
+    return {
+      text: "A new or replaced shot is a new render. Call render_sequence with resumeFromJobId, board_film, or retry_shot. Each of those tools prices the work itself and waits for its own approval.",
+      tool: "render_sequence"
+    };
+  }
+  return {
+    text: "Changing this shot is a new render. Call retry_shot or render_sequence. Each tool prices the work itself and waits for its own approval.",
+    tool: "retry_shot"
+  };
+}
+function measured2(request, ruleId, shots, severity, summary, values, addingShot) {
+  return {
+    ruleId,
+    ruleVersion: RULE_VERSION,
+    shots,
+    kind: RULE_KIND[ruleId],
+    severity,
+    class: "measured",
+    summary,
+    evidence: {
+      method: ruleId,
+      values,
+      artifactPaths: request.artifactPaths
+    },
+    suggestedChange: changeFor(request, addingShot),
+    wouldSpend: false
+  };
+}
+function missingShotTypeReason(source) {
+  return source === "job" ? "shot type not recorded on this film" : "shot type was not supplied";
+}
+function wideBeforeClose(request) {
+  const ruleId = "coverage.wide-before-first-close";
+  if (!shotTypesRecorded(request.shots)) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), missingShotTypeReason(request.source))];
+  }
+  const located = request.shots.filter((shot) => shot.locationId?.trim());
+  if (located.length === 0) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), "location not recorded")];
+  }
+  const suggestions = [];
+  let cursor = 0;
+  while (cursor < request.shots.length) {
+    const location = request.shots[cursor].locationId?.trim();
+    if (!location) {
+      cursor += 1;
+      continue;
+    }
+    let end = cursor + 1;
+    while (end < request.shots.length && request.shots[end].locationId?.trim() === location) end += 1;
+    const run = request.shots.slice(cursor, end);
+    const closeIndex = run.findIndex((shot) => CLOSE.has(coverageKey(shot) ?? ""));
+    if (closeIndex >= 0) {
+      const close = run[closeIndex];
+      const hasWide = run.slice(0, closeIndex).some((shot) => WIDE.has(coverageKey(shot) ?? ""));
+      if (!hasWide) {
+        suggestions.push(measured2(
+          request,
+          ruleId,
+          [close.index],
+          "consider",
+          `The first close shot in ${location} has no wide shot before it.`,
+          {
+            locationId: location,
+            shot: close.index,
+            shotType: coverageKey(close) ?? null
+          },
+          true
+        ));
+      }
+    }
+    cursor = end;
+  }
+  const missing = request.shots.filter((shot) => !shot.locationId?.trim()).map((shot) => shot.index);
+  if (missing.length > 0) {
+    suggestions.push(abstain(ruleId, missing, "location not recorded"));
+  }
+  return suggestions;
+}
+function consecutiveSame(request) {
+  const ruleId = "coverage.consecutive-same-shot";
+  if (!shotTypesRecorded(request.shots)) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), missingShotTypeReason(request.source))];
+  }
+  const suggestions = [];
+  let run = [];
+  let runKey;
+  const flush = () => {
+    if (runKey && run.length >= 3) {
+      suggestions.push(measured2(
+        request,
+        ruleId,
+        run.map((shot) => shot.index),
+        "consider",
+        `${run.length} shots in a row are ${runKey}.`,
+        { shotType: runKey, count: run.length },
+        false
+      ));
+    }
+    run = [];
+    runKey = void 0;
+  };
+  for (const shot of request.shots) {
+    const key = coverageKey(shot);
+    if (!key || key !== runKey) {
+      flush();
+      if (key) {
+        run = [shot];
+        runKey = key;
+      }
+      continue;
+    }
+    run.push(shot);
+  }
+  flush();
+  return suggestions;
+}
+function reestablish(request) {
+  const ruleId = "coverage.reestablish-on-location-change";
+  if (!shotTypesRecorded(request.shots)) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), missingShotTypeReason(request.source))];
+  }
+  const anyLocation = request.shots.some((shot) => shot.locationId?.trim());
+  if (!anyLocation) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), "location not recorded")];
+  }
+  const suggestions = [];
+  for (let index = 1; index < request.shots.length; index += 1) {
+    const previous = request.shots[index - 1];
+    const shot = request.shots[index];
+    const from = previous.locationId?.trim();
+    const to = shot.locationId?.trim();
+    if (!from || !to) {
+      suggestions.push(abstain(ruleId, [shot.index], "location not recorded"));
+      continue;
+    }
+    if (from === to) continue;
+    const key = coverageKey(shot);
+    if (!key) {
+      suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
+      continue;
+    }
+    if (!WIDE.has(key)) {
+      suggestions.push(measured2(
+        request,
+        ruleId,
+        [shot.index],
+        "consider",
+        `The cut from ${from} to ${to} does not open on a wide shot.`,
+        { from, to, shot: shot.index, shotType: key },
+        true
+      ));
+    }
+  }
+  return suggestions;
+}
+function lineShorter(request) {
+  const ruleId = "coverage.line-shorter-than-speech";
+  const suggestions = [];
+  for (const shot of request.shots) {
+    const text = shot.line?.text?.trim();
+    if (!text) continue;
+    const delivery = shot.line?.delivery;
+    if (!delivery && shot.lineSource !== "spoken-ledger") {
+      suggestions.push(abstain(ruleId, [shot.index], "line delivery not recorded"));
+      continue;
+    }
+    const pace = delivery === "sung" ? "sung" : "spoken";
+    if (typeof shot.durationSeconds !== "number" || !Number.isFinite(shot.durationSeconds)) {
+      suggestions.push(abstain(ruleId, [shot.index], "duration not recorded"));
+      continue;
+    }
+    const needed = durationFromLine(text, pace);
+    if (shot.durationSeconds < needed) {
+      suggestions.push(measured2(
+        request,
+        ruleId,
+        [shot.index],
+        "consider",
+        `The line needs about ${needed}s and the shot is ${shot.durationSeconds}s.`,
+        {
+          neededSeconds: needed,
+          durationSeconds: shot.durationSeconds,
+          delivery: pace,
+          deliverySource: shot.lineSource === "spoken-ledger" ? "spoken-ledger" : "caller"
+        },
+        false
+      ));
+    }
+  }
+  return suggestions;
+}
+function lineCoverage(request) {
+  const ruleId = "coverage.line-without-person-coverage";
+  if (!shotTypesRecorded(request.shots)) {
+    const withLine = request.shots.filter((shot) => shot.line?.text?.trim());
+    if (withLine.length === 0) return [];
+    return [abstain(ruleId, withLine.map((shot) => shot.index), missingShotTypeReason(request.source))];
+  }
+  const suggestions = [];
+  for (const shot of request.shots) {
+    const text = shot.line?.text?.trim();
+    if (!text) continue;
+    const key = coverageKey(shot);
+    if (!key) {
+      suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
+      continue;
+    }
+    if (!PERSON.has(key)) {
+      suggestions.push(measured2(
+        request,
+        ruleId,
+        [shot.index],
+        "consider",
+        `A line is delivered on a ${key} shot, which is not medium or close coverage.`,
+        { shotType: key, shot: shot.index },
+        false
+      ));
+    }
+  }
+  return suggestions;
+}
+function ladderOrder(request) {
+  const ruleId = "structure.ladder-order";
+  if (request.callerSuppliedBeats || !request.usedBuiltInLadder) return [];
+  if (request.ladder.length === 0 || request.shots.length === 0) return [];
+  const expected = ladderTitles(request.ladder, request.shots.length);
+  const actual = request.shots.map((shot) => shot.title?.trim() ?? "");
+  if (actual.some((title) => title.length === 0)) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), "shot title not recorded")];
+  }
+  const mismatches = request.shots.filter((shot, index) => shot.title?.trim() !== expected[index]);
+  if (mismatches.length === 0) return [];
+  return [measured2(
+    request,
+    ruleId,
+    mismatches.map((shot) => shot.index),
+    "consider",
+    "This plan was marked as the built-in ladder, and the shot titles are not in that order.",
+    {
+      expected: expected.join(" | "),
+      actual: actual.join(" | ")
+    },
+    false
+  )];
+}
+function totalDuration(request) {
+  const ruleId = "pacing.total-duration";
+  if (request.targetDurationSeconds === void 0) return [];
+  if (!request.shots.every((shot) => typeof shot.durationSeconds === "number" && Number.isFinite(shot.durationSeconds))) {
+    return [abstain(ruleId, request.shots.map((shot) => shot.index), "duration not recorded")];
+  }
+  const total = request.shots.reduce((sum, shot) => sum + (shot.durationSeconds ?? 0), 0);
+  if (Math.abs(total - request.targetDurationSeconds) <= 1e-6) return [];
+  return [measured2(
+    request,
+    ruleId,
+    request.shots.map((shot) => shot.index),
+    "info",
+    `The shots add up to ${total}s and the target is ${request.targetDurationSeconds}s.`,
+    { totalSeconds: total, targetDurationSeconds: request.targetDurationSeconds },
+    false
+  )];
+}
+function shotMax(request) {
+  const ruleId = "pacing.shot-exceeds-renderer-max";
+  const suggestions = [];
+  for (const shot of request.shots) {
+    if (typeof shot.durationSeconds !== "number" || !Number.isFinite(shot.durationSeconds)) continue;
+    if (shot.durationSeconds > RENDERER_MAX_SECONDS) {
+      suggestions.push(measured2(
+        request,
+        ruleId,
+        [shot.index],
+        "consider",
+        `Shot ${shot.index} is ${shot.durationSeconds}s. A render accepts at most ${RENDERER_MAX_SECONDS}s.`,
+        { durationSeconds: shot.durationSeconds, maxSeconds: RENDERER_MAX_SECONDS },
+        false
+      ));
+    }
+  }
+  return suggestions;
+}
+var RULES = {
+  "coverage.wide-before-first-close": wideBeforeClose,
+  "coverage.consecutive-same-shot": consecutiveSame,
+  "coverage.reestablish-on-location-change": reestablish,
+  "coverage.line-shorter-than-speech": lineShorter,
+  "coverage.line-without-person-coverage": lineCoverage,
+  "structure.ladder-order": ladderOrder,
+  "pacing.total-duration": totalDuration,
+  "pacing.shot-exceeds-renderer-max": shotMax
+};
+function suggestCoverage(request) {
+  const suggestions = COVERAGE_RULE_IDS.flatMap((id) => RULES[id](request));
+  return {
+    version: COVERAGE_VERSION,
+    executed: false,
+    willRender: false,
+    willSpend: false,
+    mutatedPaths: [],
+    source: request.source,
+    suggestions
+  };
+}
+function coverageShotsFromJob(job) {
+  return (job.shots ?? []).map((shot, position) => {
+    const index = typeof shot.index === "number" ? shot.index : position + 1;
+    const ledgerShot = job.ledger?.shots?.find((entry) => entry.shot === index);
+    const spoken = job.ledger?.spokenLines?.find((entry) => entry.shot === index);
+    const text = spoken?.line?.trim();
+    return {
+      index,
+      ...shot.title ? { title: shot.title } : {},
+      ...shot.shotType?.trim() ? { shotType: shot.shotType } : {},
+      ...shot.framing?.trim() ? { framing: shot.framing } : {},
+      ...typeof shot.durationSeconds === "number" ? { durationSeconds: shot.durationSeconds } : {},
+      ...ledgerShot?.locationId?.trim() ? { locationId: ledgerShot.locationId } : {},
+      ...text ? { line: { text, delivery: "spoken" }, lineSource: "spoken-ledger" } : {}
+    };
+  });
+}
+
+// mcp/crossFilm.ts
+import { homedir as homedir3 } from "node:os";
+import { isAbsolute, join as join7, relative, resolve as resolve2, sep as sep2 } from "node:path";
+var CROSS_FILM_VERSION = 1;
+var CROSS_FILM_MIN = 2;
+var CROSS_FILM_MAX = 20;
+function consistencyDirectory() {
+  return process.env.THESHOW_CONSISTENCY_DIR || join7(homedir3(), ".theshow", "consistency");
+}
+function consistencyDirIsSafe(dir, jobsDir) {
+  const target = resolve2(dir);
+  const jobs = resolve2(jobsDir);
+  if (target === jobs) return false;
+  const fromJobs = relative(jobs, target);
+  if (fromJobs === "" || !fromJobs.startsWith(`..${sep2}`) && fromJobs !== ".." && !isAbsolute(fromJobs)) {
+    return false;
+  }
+  return true;
+}
+var wornSchema = external_exports.object({ id: external_exports.string() }).passthrough();
+var checklistSchema = external_exports.object({
+  character: external_exports.string(),
+  worn: external_exports.array(wornSchema).optional()
+}).passthrough();
+var propSchema = external_exports.object({
+  id: external_exports.string(),
+  locationId: external_exports.string(),
+  name: external_exports.string().optional(),
+  placement: external_exports.string().optional(),
+  holder: external_exports.string().optional(),
+  count: external_exports.number().optional(),
+  fixed: external_exports.boolean().optional()
+}).passthrough();
+var jobSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  startedAt: external_exports.number(),
+  state: external_exports.string().optional(),
+  spentUsd: external_exports.number().optional(),
+  shots: external_exports.array(external_exports.object({
+    index: external_exports.number(),
+    openingFramePath: external_exports.string().optional(),
+    localPath: external_exports.string().optional(),
+    shotType: external_exports.string().optional(),
+    framing: external_exports.string().optional(),
+    durationSeconds: external_exports.number().optional(),
+    title: external_exports.string().optional()
+  }).passthrough()).optional(),
+  settings: external_exports.object({
+    aspectRatio: external_exports.string().optional(),
+    resolution: external_exports.string().optional(),
+    model: external_exports.string().optional(),
+    pin: external_exports.string().optional(),
+    voiceId: external_exports.string().optional(),
+    clipAudio: external_exports.string().optional(),
+    characters: external_exports.array(external_exports.string()).optional()
+  }).passthrough().optional(),
+  ledger: external_exports.object({
+    promptStyle: external_exports.string().optional(),
+    props: external_exports.array(propSchema).optional(),
+    shots: external_exports.array(external_exports.object({
+      shot: external_exports.number().optional(),
+      locationId: external_exports.string().optional(),
+      checklists: external_exports.array(checklistSchema).optional()
+    }).passthrough()).optional()
+  }).passthrough().optional(),
+  resumedFrom: external_exports.object({ jobId: external_exports.string(), fromShot: external_exports.number() }).optional(),
+  repairedFrom: external_exports.object({
+    jobId: external_exports.string(),
+    shotIndex: external_exports.number(),
+    originalCostUsd: external_exports.number().optional()
+  }).optional(),
+  spendLedger: external_exports.object({
+    appliedNoteIds: external_exports.array(external_exports.string()).optional()
+  }).passthrough().optional(),
+  characterSnapshots: external_exports.array(external_exports.object({
+    name: external_exports.string(),
+    updatedAt: external_exports.string(),
+    references: external_exports.array(external_exports.object({ path: external_exports.string(), sha256: external_exports.string() }))
+  })).optional()
+});
+function parseCrossFilmJob(value, path) {
+  const parsed = jobSchema.safeParse(value);
+  if (!parsed.success) return void 0;
+  return { ...parsed.data, path };
+}
+function namesMatch(left, right) {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+function measured3(topic, jobIds, summary, evidence, planned) {
+  return {
+    topic,
+    class: "measured",
+    summary,
+    jobIds,
+    evidence,
+    ...planned !== void 0 ? { planned } : {}
+  };
+}
+function unverified2(topic, jobIds, reason, paths) {
+  return {
+    topic,
+    class: "unverified",
+    summary: reason,
+    jobIds,
+    abstention: reason,
+    evidence: { method: "abstain", artifactPaths: paths }
+  };
+}
+function visuallyFlagged(topic, jobIds, summary, evidence) {
+  return { topic, class: "visually-flagged", summary, jobIds, evidence };
+}
+function characterDrift(input2) {
+  const findings = [];
+  for (const job of input2.jobs) {
+    const names = job.settings?.characters ?? [];
+    for (const name of names) {
+      const fact = input2.characters.get(name.trim().toLowerCase());
+      if (!fact) {
+        findings.push(unverified2(
+          "character-record",
+          [job.id],
+          `No character record on disk for ${name}.`,
+          [job.path]
+        ));
+        continue;
+      }
+      const updated = Date.parse(fact.updatedAt);
+      if (!Number.isFinite(updated)) {
+        findings.push(unverified2(
+          "character-record",
+          [job.id],
+          `character.json updatedAt for ${fact.name} is not a time.`,
+          [job.path, fact.path]
+        ));
+        continue;
+      }
+      const changed = updated > job.startedAt;
+      findings.push(measured3(
+        "character-record",
+        [job.id],
+        changed ? `${fact.name} changed after this film.` : `${fact.name} character.json updatedAt is not later than this film.`,
+        {
+          method: "character-updatedAt",
+          artifactPaths: [job.path, fact.path],
+          value: `${fact.updatedAt} vs ${new Date(job.startedAt).toISOString()}`
+        }
+      ));
+      if (changed) {
+        findings.push(unverified2(
+          "character-record",
+          [job.id],
+          "What changed is not stored. The character record has no history.",
+          [fact.path]
+        ));
+      }
+    }
+  }
+  return findings;
+}
+function wornMap(job) {
+  const shot = job.ledger?.shots?.[0];
+  if (!shot?.checklists) return void 0;
+  const map2 = /* @__PURE__ */ new Map();
+  for (const list of shot.checklists) {
+    const ids = (list.worn ?? []).map((layer) => layer.id.trim()).filter(Boolean).sort();
+    map2.set(list.character.trim().toLowerCase(), ids);
+  }
+  return map2;
+}
+function wardrobe(input2) {
+  const findings = [];
+  const maps = /* @__PURE__ */ new Map();
+  for (const job of input2.jobs) {
+    const worn = wornMap(job);
+    maps.set(job.id, worn);
+    if (!worn) {
+      findings.push(unverified2(
+        "wardrobe",
+        [job.id],
+        "No wardrobe ledger on this film.",
+        [job.path]
+      ));
+    }
+  }
+  const names = /* @__PURE__ */ new Set();
+  for (const worn of maps.values()) {
+    if (!worn) continue;
+    for (const name of worn.keys()) names.add(name);
+  }
+  const withLedger = input2.jobs.filter((job) => maps.get(job.id));
+  for (const name of names) {
+    const rows = withLedger.map((job) => ({
+      job,
+      ids: maps.get(job.id)?.get(name) ?? []
+    }));
+    const signatures = new Set(rows.map((row) => row.ids.join(",")));
+    if (signatures.size <= 1) continue;
+    findings.push(measured3(
+      "wardrobe",
+      rows.map((row) => row.job.id),
+      `First-shot worn layers for ${name} differ across these films.`,
+      {
+        method: "ledger-worn-ids",
+        artifactPaths: rows.map((row) => row.job.path),
+        value: rows.map((row) => `${row.job.id}=[${row.ids.join(",")}]`).join(" ; ")
+      },
+      input2.intentionalWardrobeDifference
+    ));
+  }
+  return findings;
+}
+var SETTING_FIELDS = [
+  "aspectRatio",
+  "resolution",
+  "model",
+  "pin",
+  "voiceId",
+  "clipAudio",
+  "promptStyle"
+];
+function settingValue(job, field) {
+  if (field === "promptStyle") return job.ledger?.promptStyle ?? null;
+  return job.settings?.[field] ?? null;
+}
+function settingsDiffs(input2) {
+  const findings = [];
+  for (const field of SETTING_FIELDS) {
+    const values = input2.jobs.map((job) => settingValue(job, field));
+    const distinct = new Set(values.map((value) => value ?? ""));
+    if (distinct.size <= 1) continue;
+    const source = field === "promptStyle" ? "ledger.promptStyle" : `settings.${field}`;
+    findings.push(measured3(
+      "settings",
+      input2.jobs.map((job) => job.id),
+      `${source} differs across these films.`,
+      {
+        method: "settings-field",
+        artifactPaths: input2.jobs.map((job) => job.path),
+        value: input2.jobs.map((job, index) => `${job.id}=${values[index] ?? "unset"}`).join(" ; ")
+      }
+    ));
+  }
+  return findings;
+}
+function propSignature2(prop) {
+  return [
+    prop.id,
+    prop.name ?? "",
+    prop.placement ?? "",
+    prop.holder ?? "",
+    prop.count ?? "",
+    prop.fixed === void 0 ? "" : String(prop.fixed)
+  ].join("|");
+}
+function locationProps(input2) {
+  const findings = [];
+  const byJob = /* @__PURE__ */ new Map();
+  for (const job of input2.jobs) {
+    if (!job.ledger) {
+      byJob.set(job.id, void 0);
+      findings.push(unverified2(
+        "location-props",
+        [job.id],
+        "No prop ledger on this film.",
+        [job.path]
+      ));
+      continue;
+    }
+    const grouped = /* @__PURE__ */ new Map();
+    for (const prop of job.ledger.props ?? []) {
+      const list = grouped.get(prop.locationId) ?? [];
+      list.push(propSignature2(prop));
+      grouped.set(prop.locationId, list);
+    }
+    for (const [location, list] of grouped) grouped.set(location, [...list].sort());
+    byJob.set(job.id, grouped);
+  }
+  const locations = /* @__PURE__ */ new Set();
+  for (const grouped of byJob.values()) {
+    if (!grouped) continue;
+    for (const location of grouped.keys()) locations.add(location);
+  }
+  for (const location of locations) {
+    const rows = input2.jobs.flatMap((job) => {
+      const grouped = byJob.get(job.id);
+      if (!grouped || !grouped.has(location)) return [];
+      return [{ job, signature: (grouped.get(location) ?? []).join("||") }];
+    });
+    if (rows.length < 2) continue;
+    const distinct = new Set(rows.map((row) => row.signature));
+    if (distinct.size <= 1) continue;
+    findings.push(measured3(
+      "location-props",
+      rows.map((row) => row.job.id),
+      `Props for location ${location} differ across these films.`,
+      {
+        method: "ledger-prop-signature",
+        artifactPaths: rows.map((row) => row.job.path),
+        value: location
+      }
+    ));
+  }
+  return findings;
+}
+function snapshotKey(job, name) {
+  const snap = job.characterSnapshots?.find((entry) => namesMatch(entry.name, name));
+  if (!snap) return void 0;
+  return snap.references.map((ref) => ref.sha256).sort().join(",");
+}
+function referenceIdentity(input2) {
+  const names = /* @__PURE__ */ new Set();
+  for (const job of input2.jobs) {
+    for (const name of job.settings?.characters ?? []) names.add(name.trim().toLowerCase());
+    for (const snap of job.characterSnapshots ?? []) names.add(snap.name.trim().toLowerCase());
+  }
+  if (names.size === 0) return [];
+  const findings = [];
+  for (const name of names) {
+    const rows = input2.jobs.map((job) => ({ job, key: snapshotKey(job, name) }));
+    const recorded = rows.filter((row) => row.key !== void 0);
+    const missing = rows.filter((row) => row.key === void 0);
+    if (missing.length > 0) {
+      findings.push(unverified2(
+        "identity",
+        missing.map((row) => row.job.id),
+        "character reference version not recorded on this film",
+        missing.map((row) => row.job.path)
+      ));
+    }
+    if (recorded.length < 2) continue;
+    const distinct = new Set(recorded.map((row) => row.key));
+    findings.push(measured3(
+      "identity",
+      recorded.map((row) => row.job.id),
+      distinct.size > 1 ? `Stored reference hashes for ${name} differ. This is sha256 of the files recorded on the job, not a face match.` : `Stored reference hashes for ${name} match. This is sha256 of the files recorded on the job, not a face match.`,
+      {
+        method: "sha256",
+        artifactPaths: recorded.map((row) => row.job.path),
+        value: distinct.size > 1 ? "differs" : "identical"
+      }
+    ));
+  }
+  return findings;
+}
+async function frameIdentity(input2) {
+  if (input2.jobs.length < 2) return [];
+  const frames = /* @__PURE__ */ new Map();
+  for (const job of input2.jobs) frames.set(job.id, await input2.resolveFirstFrame(job));
+  const findings = [];
+  const first = input2.jobs[0];
+  const firstFrame = frames.get(first.id);
+  for (const job of input2.jobs.slice(1)) {
+    const other = frames.get(job.id);
+    const pair = [first, job];
+    const paths = [firstFrame?.cited, other?.cited].filter((path) => Boolean(path));
+    if (!firstFrame?.path || !other?.path || !input2.fileExists(firstFrame.path) || !input2.fileExists(other.path)) {
+      findings.push(unverified2(
+        "identity",
+        pair.map((entry) => entry.id),
+        "No first frame on disk for one of these films, so identity was not compared.",
+        paths.length > 0 ? paths : pair.map((entry) => entry.path)
+      ));
+      continue;
+    }
+    const artifactPaths = [firstFrame.cited, other.cited];
+    const ephemeral = firstFrame.ephemeral || other.ephemeral;
+    if (input2.filesIdentical(firstFrame.path, other.path)) {
+      findings.push(measured3(
+        "identity",
+        pair.map((entry) => entry.id),
+        "The first frames are byte-identical. This is sha256, not a face match.",
+        { method: "sha256", artifactPaths, value: "identical", ...ephemeral ? { ephemeral } : {} }
+      ));
+      continue;
+    }
+    let score;
+    try {
+      score = await input2.correlate(firstFrame.path, other.path);
+    } catch {
+      score = void 0;
+    }
+    if (typeof score === "number" && Number.isFinite(score)) {
+      findings.push(measured3(
+        "identity",
+        pair.map((entry) => entry.id),
+        `32\xD732 grayscale correlation of the first frames is ${score}. This is not a face match.`,
+        {
+          method: "32x32-grayscale-correlation",
+          artifactPaths,
+          value: score,
+          ...ephemeral ? { ephemeral } : {}
+        }
+      ));
+      continue;
+    }
+    findings.push(visuallyFlagged(
+      "identity",
+      pair.map((entry) => entry.id),
+      "Both first frames are on disk and the 32\xD732 grayscale correlation could not be scored. This is not a face match.",
+      { method: "32x32-grayscale-correlation", artifactPaths, ...ephemeral ? { ephemeral } : {} }
+    ));
+  }
+  return findings;
+}
+function lineage(input2) {
+  const known = new Set(input2.jobs.map((job) => job.id));
+  const findings = [];
+  for (const job of input2.jobs) {
+    if (job.resumedFrom) {
+      findings.push(measured3(
+        "lineage",
+        [job.id],
+        `${job.id} resumed from ${job.resumedFrom.jobId} at shot ${job.resumedFrom.fromShot}.`,
+        {
+          method: "job-field",
+          artifactPaths: [job.path],
+          value: known.has(job.resumedFrom.jobId) ? "parent-in-set" : job.resumedFrom.jobId
+        }
+      ));
+    }
+    if (job.repairedFrom) {
+      findings.push(measured3(
+        "lineage",
+        [job.id],
+        `${job.id} repaired shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}.`,
+        {
+          method: "job-field",
+          artifactPaths: [job.path],
+          value: known.has(job.repairedFrom.jobId) ? "parent-in-set" : job.repairedFrom.jobId
+        }
+      ));
+    }
+  }
+  return findings;
+}
+function filmRows(input2) {
+  return input2.jobs.map((job) => ({
+    jobId: job.id,
+    path: job.path,
+    startedAt: job.startedAt,
+    state: job.state ?? null,
+    spentUsd: typeof job.spentUsd === "number" ? Math.round(job.spentUsd * 100) / 100 : 0,
+    pendingSpendUsd: input2.pendingSpendUsd.get(job.id) ?? 0
+  }));
+}
+async function checkCrossFilm(input2) {
+  const missing = input2.missingJobIds ?? [];
+  const missingFindings = missing.map((id) => unverified2(
+    "lineage",
+    [id],
+    "Job file not on disk.",
+    []
+  ));
+  if (input2.jobs.length < CROSS_FILM_MIN) {
+    return {
+      version: CROSS_FILM_VERSION,
+      executed: false,
+      willRender: false,
+      willSpend: false,
+      mutatedPaths: [],
+      findings: missingFindings,
+      films: filmRows(input2),
+      persisted: false,
+      error: `Need ${CROSS_FILM_MIN} to ${CROSS_FILM_MAX} films. ${input2.jobs.length} could be read.`
+    };
+  }
+  if (input2.jobs.length > CROSS_FILM_MAX) {
+    return {
+      version: CROSS_FILM_VERSION,
+      executed: false,
+      willRender: false,
+      willSpend: false,
+      mutatedPaths: [],
+      findings: [],
+      films: [],
+      persisted: false,
+      error: `${input2.jobs.length} films match. Pass an explicit list of at most ${CROSS_FILM_MAX}.`
+    };
+  }
+  const frames = await frameIdentity(input2);
+  return {
+    version: CROSS_FILM_VERSION,
+    executed: false,
+    willRender: false,
+    willSpend: false,
+    mutatedPaths: [],
+    findings: [
+      ...missingFindings,
+      ...characterDrift(input2),
+      ...wardrobe(input2),
+      ...settingsDiffs(input2),
+      ...locationProps(input2),
+      ...referenceIdentity(input2),
+      ...frames,
+      ...lineage(input2)
+    ],
+    films: filmRows(input2),
+    persisted: false
+  };
+}
+
 // mcp/characters.ts
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
-import { basename as basename2, join as join7, sep as sep2 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { basename as basename2, join as join8, sep as sep3 } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
@@ -45058,12 +46003,12 @@ function sortLayers(layers) {
 function layerType(layer) {
   return layer.type ?? "clothing";
 }
-function defaultWorn(wardrobe) {
-  if (wardrobe.startState?.worn) return [...wardrobe.startState.worn];
-  return wardrobe.layers.map((layer) => layer.id);
+function defaultWorn(wardrobe2) {
+  if (wardrobe2.startState?.worn) return [...wardrobe2.startState.worn];
+  return wardrobe2.layers.map((layer) => layer.id);
 }
-function findStateImage(wardrobe, worn) {
-  return (wardrobe.stateImages ?? []).find((entry) => sameWorn(entry.worn, worn));
+function findStateImage(wardrobe2, worn) {
+  return (wardrobe2.stateImages ?? []).find((entry) => sameWorn(entry.worn, worn));
 }
 function resolveProp(props, dest, locationId) {
   const key = dest.trim().toLowerCase();
@@ -45109,14 +46054,14 @@ function applyWardrobeEvent(runtimes, props, event, locationId, warnings) {
     );
     return;
   }
-  const wardrobe = runtime.wardrobe;
-  if (!wardrobe) {
+  const wardrobe2 = runtime.wardrobe;
+  if (!wardrobe2) {
     warnings.push(
       `Wardrobe event on shot ${event.shot} targets ${runtime.name}, who has no layered wardrobe.`
     );
     return;
   }
-  const layer = layerById2(wardrobe.layers, event.layer);
+  const layer = layerById2(wardrobe2.layers, event.layer);
   if (!layer) {
     warnings.push(
       `Wardrobe event on shot ${event.shot} names unknown layer "${event.layer}" for ${runtime.name}.`
@@ -45212,12 +46157,12 @@ function applyPropEvent(props, event, warnings) {
   };
 }
 function checklistFor(runtime, props, warnings) {
-  const wardrobe = runtime.wardrobe;
-  if (!wardrobe) return void 0;
-  const worn = sortLayers(wardrobe.layers.filter((layer) => runtime.worn.has(layer.id)));
+  const wardrobe2 = runtime.wardrobe;
+  if (!wardrobe2) return void 0;
+  const worn = sortLayers(wardrobe2.layers.filter((layer) => runtime.worn.has(layer.id)));
   const outermost = sortLayers(worn.filter((layer) => layerType(layer) === "clothing")).at(-1);
-  const staged = props.filter((prop) => wardrobe.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
-    const layer = wardrobe.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
+  const staged = props.filter((prop) => wardrobe2.layers.some((layer) => stagedPropId(runtime.name, layer.id) === prop.id)).map((prop) => {
+    const layer = wardrobe2.layers.find((entry) => stagedPropId(runtime.name, entry.id) === prop.id);
     return {
       layerId: layer?.id ?? prop.id,
       item: prop.name,
@@ -45235,12 +46180,12 @@ function checklistFor(runtime, props, warnings) {
     staged,
     adjustments: [...runtime.adjustments.entries()].map(([layerId, note]) => ({
       layerId,
-      item: layerById2(wardrobe.layers, layerId)?.item ?? layerId,
+      item: layerById2(wardrobe2.layers, layerId)?.item ?? layerId,
       note
     })),
     warnings: []
   };
-  const photo = findStateImage(wardrobe, worn.map((layer) => layer.id));
+  const photo = findStateImage(wardrobe2, worn.map((layer) => layer.id));
   const hasPhoto = Boolean(photo?.referenceImageUrls.some((url2) => url2.trim()));
   if (!hasPhoto) {
     const groupOutermost = /* @__PURE__ */ new Map();
@@ -45441,7 +46386,7 @@ function characterFromRecord(record2) {
 }
 
 // mcp/characters.ts
-var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join7(homedir3(), ".theshow", "characters");
+var CHARACTERS_DIR = process.env.THESHOW_CHARACTERS_DIR || join8(homedir4(), ".theshow", "characters");
 function charactersRoot() {
   return process.env.THESHOW_CHARACTERS_DIR || CHARACTERS_DIR;
 }
@@ -45457,10 +46402,10 @@ function sameName(a, b) {
 }
 function candidateFolders(root, name) {
   const slug = slugFor(name);
-  return [join7(root, slug), join7(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
+  return [join8(root, slug), join8(root, `${slug}-${shortHash(name.trim().toLowerCase())}`)];
 }
 function parseRecord(folder, raw) {
-  const file2 = join7(folder, "character.json");
+  const file2 = join8(folder, "character.json");
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.name !== "string" || !parsed.name.trim()) {
@@ -45484,7 +46429,7 @@ function parseRecord(folder, raw) {
   }
 }
 async function readRecord(folder, options = {}) {
-  const file2 = join7(folder, "character.json");
+  const file2 = join8(folder, "character.json");
   try {
     return parseRecord(folder, await readFile5(file2, "utf8"));
   } catch (err) {
@@ -45701,7 +46646,7 @@ async function stealStaleLock(lockPath) {
 }
 async function withFolderLock(folder, body) {
   await mkdir4(folder, { recursive: true });
-  const lockPath = join7(folder, ".write.lock");
+  const lockPath = join8(folder, ".write.lock");
   const deadline = Date.now() + characterLockWaitMs();
   let delay = 20;
   const token = randomUUID2();
@@ -45724,7 +46669,7 @@ async function withFolderLock(folder, body) {
       continue;
     }
     if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
-    await new Promise((resolve2) => setTimeout(resolve2, delay));
+    await new Promise((resolve3) => setTimeout(resolve3, delay));
     delay = Math.min(delay * 2, 250);
   }
 }
@@ -45735,7 +46680,7 @@ function copyNameFor(source) {
   return `${stem}-${shortHash(source)}${extension}`;
 }
 async function keepReferences(input2) {
-  const refsDir = join7(input2.folder, "refs");
+  const refsDir = join8(input2.folder, "refs");
   const kept = [];
   const seen = /* @__PURE__ */ new Set();
   for (const ref of input2.refs) {
@@ -45747,11 +46692,11 @@ async function keepReferences(input2) {
       continue;
     }
     const source = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-    if (source === refsDir || source.startsWith(refsDir + sep2)) {
+    if (source === refsDir || source.startsWith(refsDir + sep3)) {
       kept.push(source);
       continue;
     }
-    const target = join7(refsDir, copyNameFor(source));
+    const target = join8(refsDir, copyNameFor(source));
     try {
       const bytes = await readFile5(source);
       await mkdir4(refsDir, { recursive: true });
@@ -45793,7 +46738,7 @@ async function saveCharacter(input2) {
       warnings
     });
     const wardrobeInput = input2.wardrobe ?? existing?.wardrobe;
-    const wardrobe = wardrobeInput ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings }) : void 0;
+    const wardrobe2 = wardrobeInput ? await keepWardrobeReferences({ folder, wardrobe: wardrobeInput, warnings }) : void 0;
     const latest = await readRecord(folder, { quiet: true });
     const base = latest ?? existing;
     const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -45803,7 +46748,7 @@ async function saveCharacter(input2) {
       role: input2.role ?? base?.role,
       description: input2.description ?? base?.description,
       appearance: input2.appearance ?? base?.appearance,
-      wardrobe: input2.wardrobe ? wardrobe : base?.wardrobe ?? wardrobe,
+      wardrobe: input2.wardrobe ? wardrobe2 : base?.wardrobe ?? wardrobe2,
       referenceImageUrls: input2.referenceImageUrls ? referenceImageUrls : base?.referenceImageUrls ?? referenceImageUrls,
       createdAt: base?.createdAt || now,
       updatedAt: now,
@@ -45825,22 +46770,48 @@ async function saveCharacter(input2) {
     }
     try {
       await mkdir4(folder, { recursive: true });
-      await atomicWriteFile(join7(folder, "character.json"), JSON.stringify(onDisk, null, 2));
+      await atomicWriteFile(join8(folder, "character.json"), JSON.stringify(onDisk, null, 2));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      warnings.push(`Could not write ${join7(folder, "character.json")}: ${message}`);
+      warnings.push(`Could not write ${join8(folder, "character.json")}: ${message}`);
       console.error(`theShow: could not save character ${name}:`, err);
     }
     if (warnings.length > 0) record2.warnings = warnings;
     return record2;
   });
 }
+async function snapshotCharacter(name) {
+  const record2 = await loadCharacter(name);
+  if (!record2) return void 0;
+  const references = [];
+  for (const ref of record2.referenceImageUrls) {
+    if (!ref || /^https?:\/\//i.test(ref) || ref.startsWith("data:")) continue;
+    try {
+      const bytes = await readFile5(ref);
+      references.push({
+        path: ref,
+        sha256: createHash5("sha256").update(bytes).digest("hex")
+      });
+    } catch {
+      continue;
+    }
+  }
+  return { name: record2.name, updatedAt: record2.updatedAt, references };
+}
+async function loadCharacter(name) {
+  const root = charactersRoot();
+  for (const folder of candidateFolders(root, name)) {
+    const record2 = await readRecord(folder, { quiet: true });
+    if (record2 && sameName(record2.name, name)) return record2;
+  }
+  return void 0;
+}
 function loadCharacterSync(name) {
   const root = charactersRoot();
   for (const folder of candidateFolders(root, name)) {
     let raw;
     try {
-      raw = readFileSync2(join7(folder, "character.json"), "utf8");
+      raw = readFileSync2(join8(folder, "character.json"), "utf8");
     } catch {
       continue;
     }
@@ -45859,7 +46830,7 @@ async function loadAllCharacters() {
   }
   const newest = /* @__PURE__ */ new Map();
   for (const entry of folders) {
-    const record2 = await readRecord(join7(root, entry));
+    const record2 = await readRecord(join8(root, entry));
     if (!record2) continue;
     const key = `${slugFor(record2.name)}|${record2.name.trim().toLowerCase()}`;
     const previous = newest.get(key);
@@ -46215,10 +47186,10 @@ function expandPropEventToSteps(event, props) {
 function stepsForShot(plan, shot) {
   const named = (plan.shotSteps ?? []).find((entry) => entry.shot === shot);
   if (named) return [...named.steps];
-  const wardrobe = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
+  const wardrobe2 = (plan.wardrobeEvents ?? []).filter((event) => event.shot === shot);
   const props = (plan.propEvents ?? []).filter((event) => event.shot === shot);
   return [
-    ...wardrobe.flatMap((event) => expandWardrobeEventToSteps(event, plan)),
+    ...wardrobe2.flatMap((event) => expandWardrobeEventToSteps(event, plan)),
     ...props.flatMap((event) => expandPropEventToSteps(event, plan.props ?? []))
   ];
 }
@@ -46612,7 +47583,7 @@ function runPreVideoGate(input2) {
 // mcp/server.ts
 import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
 import { mkdir as mkdir5, mkdtemp, readFile as readFile6, readdir as readdir3, rename as rename3, rm as rm5, stat as stat5, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 import { createHash as createHash6, randomUUID as randomUUID3 } from "node:crypto";
 
 // mcp/resume-claim-probe.ts
@@ -47432,7 +48403,7 @@ function carrySpend(source) {
   };
 }
 function spendJournalDir(jobId) {
-  return join8(JOBS_DIR, ".spend-journal", jobId);
+  return join9(JOBS_DIR, ".spend-journal", jobId);
 }
 function isSpendNote(value) {
   if (!value || typeof value !== "object") return false;
@@ -47454,7 +48425,7 @@ async function listJournal(jobId) {
   const valid = [];
   const torn = [];
   for (const name of names) {
-    const file2 = join8(dir, name);
+    const file2 = join9(dir, name);
     if (!name.endsWith(".json") || name.startsWith(".")) {
       const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
       if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
@@ -47528,8 +48499,8 @@ async function enqueueSpendNote(jobId, note) {
   const dir = spendJournalDir(jobId);
   await mkdir5(dir, { recursive: true });
   const finalName = `${String(Date.now()).padStart(16, "0")}-${full.id}.json`;
-  const dest = join8(dir, finalName);
-  const tmp = join8(dir, `.${finalName}.${process.pid}.tmp`);
+  const dest = join9(dir, finalName);
+  const tmp = join9(dir, `.${finalName}.${process.pid}.tmp`);
   await writeFile5(tmp, JSON.stringify(full));
   await rename3(tmp, dest);
 }
@@ -47898,7 +48869,7 @@ function localImagePath(ref) {
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
-var sleep2 = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+var sleep2 = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
 function cancelledBeforeSpend(extra) {
   if (!extra?.signal?.aborted) return void 0;
   return {
@@ -48252,7 +49223,7 @@ async function resolveToLocalFile(input2) {
     await mkdir5(DOWNLOAD_DIR, { recursive: true });
     const digest = createHash6("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
-    const target = join8(DOWNLOAD_DIR, `src-${digest}.${ext}`);
+    const target = join9(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
     if (existing !== void 0) return target;
     const res = await fetch(input2, { redirect: "follow" });
@@ -48561,7 +49532,7 @@ var sequenceJobs = /* @__PURE__ */ new Map();
 var jobRevision = /* @__PURE__ */ new Map();
 var jobWriteChain = /* @__PURE__ */ new Map();
 function claimPath(jobId) {
-  return join8(JOBS_DIR, `${jobId}.claim`);
+  return join9(JOBS_DIR, `${jobId}.claim`);
 }
 function noteRevision(job) {
   if (typeof job.revision === "number") {
@@ -48582,7 +49553,7 @@ async function persistJob(job) {
   const write = previous.then(async () => {
     if (jobRevision.get(job.id) !== revision) return;
     try {
-      await atomicWriteFile(join8(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      await atomicWriteFile(join9(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
       if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
       else await unlink3(claimPath(job.id)).catch(() => void 0);
       if (beforeJournalDelete) await beforeJournalDelete();
@@ -48640,7 +49611,7 @@ async function refreshJobsFromDisk() {
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     try {
-      const raw = await readFile6(join8(JOBS_DIR, name), "utf8");
+      const raw = await readFile6(join9(JOBS_DIR, name), "utf8");
       const job = JSON.parse(raw);
       if (!job?.id) continue;
       const memory = sequenceJobs.get(job.id);
@@ -48875,7 +49846,7 @@ async function liveTurnWithoutClaim(jobId) {
 }
 async function readPersistedJob(jobId) {
   try {
-    const raw = await readFile6(join8(JOBS_DIR, `${jobId}.json`), "utf8");
+    const raw = await readFile6(join9(JOBS_DIR, `${jobId}.json`), "utf8");
     const job = JSON.parse(raw);
     if (!job || job.id !== jobId) return void 0;
     return job;
@@ -49033,7 +50004,7 @@ async function runSequenceJob(job, args) {
       let retries = 0;
       while (result.status === "failed" && result.retryable && retries < 3) {
         retries += 1;
-        await new Promise((resolve2) => setTimeout(resolve2, 2500 * retries));
+        await new Promise((resolve3) => setTimeout(resolve3, 2500 * retries));
         result = await renderShot();
       }
       if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
@@ -49073,7 +50044,8 @@ async function runSequenceJob(job, args) {
         closingFrameAgreement: void 0,
         prompt: shot.prompt,
         sentPrompt: anchored,
-        durationSeconds: shot.durationSeconds
+        durationSeconds: shot.durationSeconds,
+        ...shot.shotType?.trim() ? { shotType: shot.shotType.trim() } : {}
       };
       const quotedShot = Math.round(shot.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
       const shotCharge = chargeForProviderResult(result, quotedShot);
@@ -49594,6 +50566,7 @@ server.registerTool(
           thresholdUsd: sequenceBudget
         };
       }
+      await attachCharacterSnapshots(job, args.characters);
       sequenceJobs.set(job.id, job);
       void persistJob(job);
       const sourceId = resumeJob?.id;
@@ -50134,6 +51107,7 @@ server.registerTool(
           thresholdUsd: retryBudget
         };
       }
+      await attachCharacterSnapshots(job, settings?.characters);
       sequenceJobs.set(job.id, job);
       void persistJob(job);
       void withoutHttpRenderMemo(() => runSequenceJob(job, {
@@ -50358,7 +51332,7 @@ server.registerTool(
     if (args.jobId && !job) {
       return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
     }
-    const reviewFrameDir = !shots && job ? await mkdtemp(join8(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`)) : void 0;
+    const reviewFrameDir = !shots && job ? await mkdtemp(join9(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`)) : void 0;
     const frameSources = /* @__PURE__ */ new Map();
     try {
       if (!shots && job) {
@@ -50533,6 +51507,321 @@ server.registerTool(
       persisted,
       ...persistError ? { persistError } : {}
     });
+  }
+);
+var beforeAdvisory;
+var beforeAdvisoryFrames;
+async function attachCharacterSnapshots(job, names) {
+  if (!names || names.length === 0) return;
+  const snapshots = [];
+  for (const name of names) {
+    try {
+      const snap = await snapshotCharacter(name);
+      if (snap) snapshots.push(snap);
+    } catch {
+    }
+  }
+  if (snapshots.length > 0) job.characterSnapshots = snapshots;
+}
+var coverageLineSchema = external_exports.object({
+  text: external_exports.string().optional(),
+  delivery: external_exports.enum(["spoken", "sung"]).optional()
+});
+var coverageShotSchema = external_exports.object({
+  index: external_exports.number().optional(),
+  shotNumber: external_exports.number().optional(),
+  title: external_exports.string().optional(),
+  action: external_exports.string().optional(),
+  shotType: external_exports.string().optional(),
+  framing: external_exports.string().optional(),
+  durationSeconds: external_exports.number().optional(),
+  locationId: external_exports.string().optional(),
+  line: coverageLineSchema.optional()
+});
+function toCoverageShot(raw, position) {
+  const index = raw.index ?? raw.shotNumber ?? position + 1;
+  const text = raw.line?.text?.trim();
+  return {
+    index,
+    ...raw.title ? { title: raw.title } : {},
+    ...raw.shotType?.trim() ? { shotType: raw.shotType } : {},
+    ...raw.framing?.trim() ? { framing: raw.framing } : {},
+    ...typeof raw.durationSeconds === "number" ? { durationSeconds: raw.durationSeconds } : {},
+    ...raw.locationId?.trim() ? { locationId: raw.locationId } : {},
+    ...text ? {
+      line: {
+        text,
+        ...raw.line?.delivery ? { delivery: raw.line.delivery } : {}
+      },
+      lineSource: "caller"
+    } : {}
+  };
+}
+function mergePlanShots(args) {
+  const base = args.plan?.shots ?? args.shots ?? args.beats ?? [];
+  return base.map((shot, position) => {
+    const beat = args.beats?.[position];
+    const merged = toCoverageShot({
+      ...shot,
+      ...beat?.title && !shot.title ? { title: beat.title } : {},
+      ...beat?.shotType && !shot.shotType ? { shotType: beat.shotType } : {},
+      ...beat?.framing && !shot.framing ? { framing: beat.framing } : {},
+      ...beat?.durationSeconds !== void 0 && shot.durationSeconds === void 0 ? { durationSeconds: beat.durationSeconds } : {},
+      ...beat?.locationId && !shot.locationId ? { locationId: beat.locationId } : {},
+      ...beat?.line && !shot.line ? { line: beat.line } : {}
+    }, position);
+    if (!merged.locationId) {
+      const fromLedger = args.plan?.continuity?.shots?.find((entry) => entry.shot === merged.index)?.locationId;
+      if (fromLedger?.trim()) merged.locationId = fromLedger;
+    }
+    return merged;
+  });
+}
+server.registerTool(
+  "suggest_coverage",
+  {
+    description: "Suggest coverage, pacing, and ladder-order notes for a plan or a finished film. Free and advisory: it does not render, spend, reorder shots, or approve anything. A plan is the useful input, before anything is rendered. Shot type is never inferred from prompt text. Caller-supplied beats are never corrected toward the built-in ladder. Pass usedBuiltInLadder only when plan_storyboard built the plan from that ladder.",
+    inputSchema: external_exports.object({
+      jobId: external_exports.string().optional().describe("Read this film from disk. Ignored when a plan, shots, or beats are also passed."),
+      usedBuiltInLadder: external_exports.boolean().optional().describe(
+        "True only when this plan came from the built-in ladder. Caller beats are never compared to that ladder."
+      ),
+      targetDurationSeconds: external_exports.number().positive().optional(),
+      beats: external_exports.array(coverageShotSchema).optional().describe(
+        "Caller-supplied beats, in the caller's order. They are not reordered toward the built-in ladder."
+      ),
+      shots: external_exports.array(coverageShotSchema).optional(),
+      plan: external_exports.object({
+        shots: external_exports.array(coverageShotSchema).optional(),
+        totalDurationSeconds: external_exports.number().optional(),
+        continuity: external_exports.object({
+          shots: external_exports.array(external_exports.object({
+            shot: external_exports.number().optional(),
+            locationId: external_exports.string().optional()
+          })).optional()
+        }).optional()
+      }).optional()
+    })
+  },
+  async (args) => {
+    if (beforeAdvisory) await beforeAdvisory();
+    const callerPlan = Boolean(args.plan || args.shots || args.beats);
+    if (!callerPlan && !args.jobId) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        suggestions: [],
+        error: "Pass a plan, shots, beats, or a jobId."
+      });
+    }
+    let shots;
+    let source;
+    let artifactPaths;
+    if (callerPlan) {
+      shots = mergePlanShots(args);
+      source = "plan";
+      artifactPaths = ["caller-supplied"];
+    } else {
+      const job = await readPersistedJob(args.jobId ?? "");
+      if (!job) {
+        return refusal({
+          version: 1,
+          executed: false,
+          willRender: false,
+          willSpend: false,
+          mutatedPaths: [],
+          source: "job",
+          suggestions: [],
+          error: "Unknown jobId"
+        });
+      }
+      shots = coverageShotsFromJob(job);
+      source = "job";
+      artifactPaths = [join9(JOBS_DIR, `${job.id}.json`)];
+    }
+    if (shots.length === 0) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        source,
+        suggestions: [],
+        error: "No shots to read."
+      });
+    }
+    const callerBeats = Boolean(args.beats && args.beats.length > 0);
+    const report = suggestCoverage({
+      shots,
+      source,
+      usedBuiltInLadder: args.usedBuiltInLadder === true && !callerBeats,
+      callerSuppliedBeats: callerBeats,
+      ...args.targetDurationSeconds !== void 0 ? { targetDurationSeconds: args.targetDurationSeconds } : {},
+      artifactPaths,
+      ladder: BEAT_LADDER.map((beat) => ({ at: beat.at, title: beat.title }))
+    });
+    return refusal(report);
+  }
+);
+async function filmsMatchingCharacter(name) {
+  let fileNames = [];
+  try {
+    fileNames = await readdir3(JOBS_DIR);
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json") || fileName.startsWith(".")) continue;
+    const full = join9(JOBS_DIR, fileName);
+    let value;
+    try {
+      value = JSON.parse(await readFile6(full, "utf8"));
+    } catch {
+      continue;
+    }
+    const job = parseCrossFilmJob(value, full);
+    if (!job) continue;
+    const listed = job.settings?.characters?.some((entry) => namesMatch(entry, name)) ?? false;
+    if (!listed) continue;
+    found.push(job);
+  }
+  found.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  return found;
+}
+async function filmsById(ids) {
+  const jobs = [];
+  const missing = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const raw = await readPersistedJob(id);
+    const job = raw ? parseCrossFilmJob(raw, join9(JOBS_DIR, `${id}.json`)) : void 0;
+    if (!job) missing.push(id);
+    else jobs.push(job);
+  }
+  return { jobs, missing };
+}
+server.registerTool(
+  "check_cross_film",
+  {
+    description: "Compare two to twenty films already on disk: character timestamps, first-shot wardrobe, settings, location props, reference hashes, first frames, and resume or repair lineage. Free and read-only. It does not render, spend, claim a film, or write a job file. There is no series id. Pass jobIds, or a character name to select films that list that character. A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory.",
+    inputSchema: external_exports.object({
+      jobIds: external_exports.array(external_exports.string().min(1)).min(CROSS_FILM_MIN).max(CROSS_FILM_MAX).optional().describe(
+        "Films to compare, 2 to 20. The order is the caller's."
+      ),
+      character: external_exports.string().min(1).optional().describe(
+        "Select films whose settings.characters include this name. There is no series id."
+      ),
+      persist: external_exports.boolean().default(false).describe(
+        "When true, write one report under the consistency directory. The default writes nothing."
+      ),
+      intentionalWardrobeDifference: external_exports.boolean().default(false).describe(
+        "When true, a first-shot wardrobe difference is marked planned. It still does not change the films."
+      )
+    })
+  },
+  async (args) => {
+    if (beforeAdvisory) await beforeAdvisory();
+    if (!args.jobIds && !args.character) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        findings: [],
+        films: [],
+        persisted: false,
+        error: "Pass jobIds or a character name."
+      });
+    }
+    let jobs;
+    let missing = [];
+    if (args.jobIds) {
+      const loaded = await filmsById(args.jobIds);
+      jobs = loaded.jobs;
+      missing = loaded.missing;
+      if (args.character) {
+        jobs = jobs.filter((job) => job.settings?.characters?.some((name) => namesMatch(name, args.character ?? "")) ?? false);
+      }
+    } else {
+      jobs = await filmsMatchingCharacter(args.character ?? "");
+    }
+    const characters = /* @__PURE__ */ new Map();
+    for (const job of jobs) {
+      for (const name of job.settings?.characters ?? []) {
+        const key = name.trim().toLowerCase();
+        if (characters.has(key)) continue;
+        const record2 = await loadCharacter(name);
+        characters.set(key, record2 ? { name: record2.name, updatedAt: record2.updatedAt, path: join9(record2.folder, "character.json") } : void 0);
+      }
+    }
+    const pendingSpendUsd = /* @__PURE__ */ new Map();
+    for (const job of jobs) {
+      const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
+      pendingSpendUsd.set(job.id, queued.pendingSpendUsd);
+    }
+    const withinRange = jobs.length >= CROSS_FILM_MIN && jobs.length <= CROSS_FILM_MAX;
+    let frameDir;
+    const needsFrames = withinRange && jobs.some((job) => {
+      const shot = job.shots?.[0];
+      if (!shot?.localPath || !existsSync2(shot.localPath)) return false;
+      return !(shot.openingFramePath && existsSync2(shot.openingFramePath));
+    });
+    if (needsFrames) {
+      frameDir = await mkdtemp(join9(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`));
+      if (beforeAdvisoryFrames) await beforeAdvisoryFrames();
+    }
+    try {
+      const report = await checkCrossFilm({
+        jobs,
+        missingJobIds: missing,
+        characters,
+        pendingSpendUsd,
+        intentionalWardrobeDifference: args.intentionalWardrobeDifference,
+        fileExists: (file2) => existsSync2(file2),
+        filesIdentical,
+        correlate: (left, right) => grayscaleStillCorrelation(left, right),
+        resolveFirstFrame: async (job) => {
+          const shot = job.shots?.[0];
+          if (shot?.openingFramePath && existsSync2(shot.openingFramePath)) {
+            return { path: shot.openingFramePath, cited: shot.openingFramePath, ephemeral: false };
+          }
+          if (shot?.localPath && existsSync2(shot.localPath) && frameDir) {
+            const extracted = await extractFirstFrame(shot.localPath, frameDir);
+            if (extracted) return { path: extracted, cited: shot.localPath, ephemeral: true };
+          }
+          return { cited: job.path, ephemeral: false };
+        }
+      });
+      if (!args.persist || report.error) return refusal(report);
+      const dir = consistencyDirectory();
+      if (!consistencyDirIsSafe(dir, JOBS_DIR)) {
+        return refusal({
+          ...report,
+          persisted: false,
+          persistError: "Refusing to write a cross-film report inside the jobs directory."
+        });
+      }
+      const reportId = `cxf_${randomUUID3()}`;
+      const reportPath = join9(dir, `${reportId}.json`);
+      const body = {
+        ...report,
+        reportId,
+        reportPath,
+        persisted: true
+      };
+      await atomicWriteFile(reportPath, JSON.stringify(body, null, 2));
+      return refusal(body);
+    } finally {
+      if (frameDir) await rm5(frameDir, { recursive: true, force: true });
+    }
   }
 );
 

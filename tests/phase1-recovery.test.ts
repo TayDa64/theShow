@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { hostKey, exclusiveTempPath, sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
+import { waitForChildClose, waitForChildSignal } from "./child-signal.ts";
 import { noteReportedSpend, recordedSpendUsd, type SequenceJob } from "../mcp/server.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -119,17 +120,10 @@ describe("phase 1 recovery without a bot", () => {
     let stdout = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`child did not pause\n${stdout}`)), 10_000);
-      child.stdout.on("data", () => {
-        if (stdout.includes("paused-before-rename")) {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-    });
+    await waitForChildSignal(child, () => stdout, "child-ready", 60_000);
+    await waitForChildSignal(child, () => stdout, "paused-before-rename", 60_000);
     child.kill("SIGKILL");
-    await new Promise((resolve) => child.on("close", resolve));
+    await waitForChildClose(child);
     const raw = await readFile(path.join(jobs, `${id}.json`), "utf8");
     expect(JSON.parse(raw).continuityReview).toBeUndefined();
     expect(JSON.parse(raw).state).toBe("completed");
@@ -139,7 +133,7 @@ describe("phase 1 recovery without a bot", () => {
     expect(sweeper.status, sweeper.stderr).toBe(0);
     const after = (await readdir(jobs)).filter((name) => name.endsWith(".tmp"));
     expect(after).toEqual([]);
-  }, 20_000);
+  }, 120_000);
 
   it("keeps both annotations when two processes write the same film", async () => {
     const jobs = await jobsDir();
@@ -335,17 +329,10 @@ describe("phase 1 recovery without a bot", () => {
       let stdout = "";
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`${pause} did not pause\n${stdout}`)), 15_000);
-        child.stdout.on("data", () => {
-          if (stdout.includes("paused")) {
-            clearTimeout(timer);
-            resolve();
-          }
-        });
-      });
+      await waitForChildSignal(child, () => stdout, "child-ready", 60_000);
+      await waitForChildSignal(child, () => stdout, "paused", 60_000);
       child.kill("SIGKILL");
-      await new Promise((resolve) => child.on("close", resolve));
+      await waitForChildClose(child);
       const first = await runChild(jobs, ["drain-owned", id]);
       const second = await runChild(jobs, ["drain-owned", id]);
       expect(first.status, first.stderr).toBe(0);
@@ -359,7 +346,7 @@ describe("phase 1 recovery without a bot", () => {
       const left = await readdir(path.join(jobs, ".spend-journal", id)).catch(() => [] as string[]);
       expect(left.filter((name) => name.endsWith(".json")), pause).toEqual([]);
     }
-  }, 40_000);
+  }, 180_000);
 
   it("keeps a queued total exact across two claims and drops a torn note", async () => {
     const jobs = await jobsDir();

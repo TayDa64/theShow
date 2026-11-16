@@ -59,7 +59,7 @@ Confirm the wiring:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with **fifteen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
+You want `theshow` reported healthy with **seventeen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
 
 If the session's tool list has no `plan_storyboard`, the plugin is not loaded there. theShow's skill tells the model to stop and say so rather than quietly build a film some other way.
 
@@ -81,7 +81,7 @@ Set `THESHOW_MCP_FROM_SOURCE=1` to run `mcp/stdio-main.ts` through `tsx` instead
 
 ### Streamable HTTP
 
-A second process can expose the same fifteen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
+A second process can expose the same seventeen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
 
 ```bash
 THESHOW_TRANSPORT=http \
@@ -191,6 +191,7 @@ A command that spends money still prices the work and waits for a yes. The comma
 6. **Assemble.** `render_sequence` can assemble the finished shots. `assemble_film` joins an ordered list of clips with FFmpeg. Joins are hard cuts by default. A music bed shorter than the film is refused. It is not looped.
 7. **Retry.** `retry_shot` re-renders one shot of a finished film and splices it back. The other shots stay as they were. The seam after the repaired shot is a cut, and the tool says so in `warnings`. `propose_repair` lists cheaper and wider options first and does not render them.
 8. **Review.** `review_continuity` classifies each cut as measured, visually flagged, or unverified. It does not render or delete anything.
+9. **Advise.** `suggest_coverage` reads a plan, or a film already on disk, and suggests coverage, pacing, and ladder-order notes. `check_cross_film` compares two to twenty films. Both are free. Neither renders, spends, or approves. A note that would need a new shot names `render_sequence`, `board_film`, or `retry_shot`, and that tool still returns its own price and waits for its own approval.
 
 ---
 
@@ -213,6 +214,8 @@ A command that spends money still prices the work and waits for a yes. The comma
 | `check_sequence` | free | Progress and real cost on a `render_sequence` job |
 | `review_continuity` | free | Evidence review of each cut. It does not render or spend |
 | `propose_repair` | free | Repair options with a price, what they fix, and what stays broken. It does not render |
+| `suggest_coverage` | free | Coverage, pacing, and ladder notes for a plan or a film. It does not render or spend |
+| `check_cross_film` | free | Read-only comparison of 2–20 films. It does not render, spend, or write a job |
 
 ---
 
@@ -258,7 +261,7 @@ What is free, and what is not:
 
 | | |
 |---|---|
-| Free | `configure_film`, `create_character`, `plan_storyboard`, `extract_last_frame`, `assemble_film`, `list_films`, `check_sequence`, `review_continuity`, `propose_repair`, and any still or clip the tool reports as already on disk |
+| Free | `configure_film`, `create_character`, `plan_storyboard`, `extract_last_frame`, `assemble_film`, `list_films`, `check_sequence`, `review_continuity`, `propose_repair`, `suggest_coverage`, `check_cross_film`, and any still or clip the tool reports as already on disk |
 | $0.02 | one still from `generate_still` or `board_film`, after `confirm` |
 | Per second | video from `render_sequence`, `generate_controlled_clip`, `retry_shot`, and `extend_clip`, after the gate and `confirm` |
 | Unbilled | an estimate (`confirm` omitted), a declined card, a contract the gate refuses, and a render the provider does not bill |

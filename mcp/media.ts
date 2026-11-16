@@ -255,6 +255,60 @@ export async function closingFrameAgreement(input: {
   }
 }
 
+/**
+ * Pearson correlation of two 32×32 grayscale buffers.
+ * A flat buffer has no correlation. This is not a face match.
+ */
+export function correlateGrayBuffers(left: Buffer, right: Buffer): number | undefined {
+  if (left.length < 1024 || right.length < 1024) return undefined;
+  let ma = 0;
+  let mb = 0;
+  for (let i = 0; i < 1024; i += 1) {
+    ma += left[i];
+    mb += right[i];
+  }
+  ma /= 1024;
+  mb /= 1024;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let i = 0; i < 1024; i += 1) {
+    const x = left[i] - ma;
+    const y = right[i] - mb;
+    num += x * y;
+    da += x * x;
+    db += y * y;
+  }
+  if (da === 0 || db === 0) return undefined;
+  return Math.round((num / Math.sqrt(da * db)) * 1000) / 1000;
+}
+
+/**
+ * 32×32 grayscale correlation of two still images on disk.
+ * The same measurement as closingFrameAgreement, without seeking a clip tail.
+ * It is not a face match and it does not call a vision API.
+ */
+export async function grayscaleStillCorrelation(left: string, right: string): Promise<number | undefined> {
+  const { ffmpeg } = await resolveTools();
+  const thumb = async (file: string) => {
+    const { stdout } = await exec(ffmpeg, [
+      "-v", "error", "-i", file,
+      "-frames:v", "1",
+      "-vf", "scale=32:32,format=gray",
+      "-f", "rawvideo", "-",
+    ], { encoding: "buffer", maxBuffer: 4 << 20 });
+    const buf = stdout as unknown as Buffer;
+    return buf.subarray(0, 32 * 32);
+  };
+  try {
+    const a = await thumb(left);
+    const b = await thumb(right);
+    return correlateGrayBuffers(a, b);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Below this, a clip did not arrive on the frame it was pinned to. */
 export const CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
 

@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These fifteen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These seventeen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -444,6 +444,8 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Repair one shot | `retry_shot` | `jobId` + `shotIndex`; every other shot reused free |
 | Review a cut | `review_continuity` | free; measured, visually flagged, or unverified; does not render |
 | Repair options | `propose_repair` | free; prices the options and does not render |
+| Coverage notes | `suggest_coverage` | free; does not render, spend, or reorder caller beats |
+| Compare films | `check_cross_film` | free; read-only; 2 to 20 job ids; does not render or spend |
 | Find an old film | `list_films` | free; returns job ids, costs and paths from earlier sessions |
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
@@ -531,7 +533,22 @@ three fields.
 
 `review_continuity` is free. It classifies wardrobe, props, pose at the seam, lighting, and identity
 on each cut as measured, visually flagged, or unverified. It does not render, delete, or reorder.
-Do not invent a finding it abstained on. The vision auditor stays unwired.
+Do not invent a finding it abstained on. The vision auditor stays unwired. Style notes and story
+notes passed to that tool are ignored.
+
+`suggest_coverage` is free. Pass a plan, or beats, before anything is rendered. It can also read a
+`jobId`. Each note has evidence or an abstention. It does not reorder beats the user supplied, and
+it does not infer a shot type from the prompt. A film that never stored `shotType` abstains with
+"shot type not recorded on this film". If a note would need a new or replaced shot, name
+`render_sequence`, `board_film`, or `retry_shot` and wait for that tool's own approval. Do not treat
+the note as a quote.
+
+`check_cross_film` is free and read-only. Pass 2 to 20 `jobIds`, or a character name to select films
+that list that character. There is no series id. It reports character timestamps, first-shot
+wardrobe, settings, props, reference hashes, first-frame byte identity or a 32×32 grayscale
+correlation, and resume or repair links. A grayscale score is not a face match. Do not invent a
+difference it marked unverified. `persist: true` writes a report outside the jobs directory. It
+does not edit the films.
 
 `budgetUsd`, when the user set one, warns if spent money plus the pending estimate crosses it. The
 warning does not spend and does not stop a render that already started. `overrideValidation` does

@@ -10,3 +10,6 @@ Call `list_films` with the limit from the arguments if one was given, and
 can pick one to continue or repair.
 
 This is read-only and spends nothing.
+
+To compare two or more of these films, call `check_cross_film` with their job ids. It is free,
+read-only, and does not render. There is no series id. Pass the ids the user means.

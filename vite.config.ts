@@ -40,7 +40,7 @@ export default defineConfig(() => {
     test: {
       environment: 'node',
       globals: true,
-      setupFiles: './tests/setup.ts',
+      setupFiles: ['./tests/env-first.ts', './tests/setup.ts'],
       exclude: ['playwright/**', 'e2e/**', 'node_modules/**', 'dist/**'],
       coverage: {
         provider: 'v8',
