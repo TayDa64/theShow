@@ -28,7 +28,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveTools } from "../mcp/media.ts";
 import { sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
-import { assertGuardLog } from "./guard-log.ts";
+import { assertGuardLog, type GuardedProcess } from "./guard-log.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -442,6 +442,45 @@ async function snapshotHome(home: string): Promise<Record<string, Record<string,
   return out;
 }
 
+function bundleProcesses(rootPid: number): GuardedProcess[] {
+  const found: GuardedProcess[] = [];
+  const stack = [rootPid];
+  const seen = new Set<number>();
+  while (stack.length > 0) {
+    const pid = stack.pop();
+    if (pid === undefined || seen.has(pid)) continue;
+    seen.add(pid);
+    let children = "";
+    try {
+      children = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8");
+    } catch {
+      children = "";
+    }
+    for (const part of children.trim().split(/\s+/)) {
+      if (part) stack.push(Number(part));
+    }
+    try {
+      const args = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0");
+      const script = args
+        .map((arg) => path.basename(arg))
+        .find((name) => name === "server.bundle.mjs" || name === "server-http.bundle.mjs");
+      if (script) found.push({ pid, script });
+    } catch {
+      // The process can exit between the walk and the read.
+    }
+  }
+  return found;
+}
+
+function requireBundle(rootPid: number, script: string): GuardedProcess {
+  const found = bundleProcesses(rootPid).filter((item) => item.script === script);
+  if (found.length !== 1) {
+    const listed = found.map((item) => String(item.pid)).join(", ");
+    throw new Error(`expected one ${script} under pid ${rootPid}, found ${listed || "none"}`);
+  }
+  return found[0];
+}
+
 function pidsHolding(rootPid: number, target: string): number[] {
   const found: number[] = [];
   const stack = [rootPid];
@@ -790,7 +829,10 @@ describe("built bundle end to end", () => {
         await mkdir(unreadable);
         await writeFile(invalid, "{ \"id\": \"seq_e2e_invalid\", ");
       }
-      for (const [client, home] of [[stdio, stdioHome], [http, httpHome]] as const) {
+      for (const [client, home, script] of [
+        [stdio, stdioHome, "server.bundle.mjs"],
+        [http, httpHome, "server-http.bundle.mjs"],
+      ] as const) {
         const body = toolJson(await client.call("check_cross_film", {
           jobIds: ["seq_e2e_unreadable", "seq_e2e_invalid", "seq_e2e_absent"],
         }));
@@ -801,7 +843,12 @@ describe("built bundle end to end", () => {
         expect(cited("seq_e2e_invalid")?.evidence?.artifactPaths).toEqual([path.join(home, "jobs", "seq_e2e_invalid.json")]);
         expect(cited("seq_e2e_absent")?.summary).toBe("Job file not on disk.");
         expect(cited("seq_e2e_absent")?.evidence?.artifactPaths).toEqual([]);
-        assertGuardLog(await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""), 1);
+        const launcher = client.child.pid;
+        if (!launcher) throw new Error("missing launcher pid");
+        assertGuardLog(
+          await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""),
+          [requireBundle(launcher, script)],
+        );
       }
     } finally {
       stdio.stop();
@@ -821,9 +868,15 @@ describe("built bundle end to end", () => {
       const suggestBytes = await readFile(suggestFile);
       const crossBytes = await readFile(crossFile);
 
+      const bundles: GuardedProcess[] = [];
+      const script = transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs";
+
       async function start(): Promise<BundleClient> {
         const client = transport === "stdio" ? new StdioBundle(home) : new HttpBundle(home);
         await client.ready();
+        const launcher = client.child.pid;
+        if (!launcher) throw new Error("missing launcher pid");
+        bundles.push(requireBundle(launcher, script));
         return client;
       }
 
@@ -894,7 +947,9 @@ describe("built bundle end to end", () => {
         expect(reports.length).toBeGreaterThan(0);
         expect(reports.every((entry) => !entry.endsWith(".tmp"))).toBe(true);
         // suggest kill, cross-film kill, and the restarted server each load the guard.
-        assertGuardLog(await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""), 3);
+        // The launcher's own marker does not count. Each recorded bundle pid does.
+        expect(bundles).toHaveLength(3);
+        assertGuardLog(await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""), bundles);
       } finally {
         restarted.stop();
       }

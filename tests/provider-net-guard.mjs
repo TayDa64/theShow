@@ -4,7 +4,8 @@
  * The production server has no provider base-URL override, so this log is the
  * proof that a tool call did not reach a provider.
  *
- * A line is `guard-loaded` at startup, or `<kind> <target>` for each attempt.
+ * A loaded line is `guard-loaded <pid> <script>`. A connect line is `connect <host>`,
+ * including `connect <undetermined>` when the host cannot be read.
  * Loopback is an exact hostname: localhost, an address in 127.0.0.0/8, or ::1.
  * Prefix matches such as localhost.example.com and 127.0.0.1.nip.io are not loopback.
  */
@@ -12,12 +13,14 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { appendFileSync } from "node:fs";
-import { isLoopback } from "./loopback-host.mjs";
+import { basename } from "node:path";
+import { connectHost, isLoopback } from "./loopback-host.mjs";
 
 const logFile = process.env.THESHOW_NET_GUARD_FILE;
 export const GUARD_MARKER = "guard-loaded";
+const scriptName = basename(process.argv[1] ?? "unknown");
 
-if (logFile) appendFileSync(logFile, `${GUARD_MARKER}\n`);
+if (logFile) appendFileSync(logFile, `${GUARD_MARKER} ${process.pid} ${scriptName}\n`);
 
 export { isLoopback };
 
@@ -58,10 +61,16 @@ wrapRequest(https, "https");
 
 const originalConnect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function patchedConnect(...args) {
-  const first = args[0];
-  let host = "";
-  if (typeof first === "object" && first) host = first.host || first.hostname || "";
-  else if (typeof args[1] === "string") host = args[1];
-  if (host) note("connect", host);
+  // Node's public helpers call this as connect([options, cb]). A bare
+  // connect(port, host) or connect(path) is the other form. No host is a
+  // failure, not a skip, and originalConnect is not reached.
+  const first = Array.isArray(args[0]) ? args[0][0] : args[0];
+  const host = connectHost([first, ...args.slice(1)]).trim();
+  const target = host || "<undetermined>";
+  const line = `connect ${target}\n`;
+  if (logFile) appendFileSync(logFile, line);
+  if (!host || !isLoopback(host)) {
+    throw new Error(`provider network blocked: connect ${target}`);
+  }
   return originalConnect.apply(this, args);
 };

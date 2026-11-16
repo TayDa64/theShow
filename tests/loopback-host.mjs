@@ -15,6 +15,24 @@ export function hostnameOf(target) {
   }
 }
 
+/**
+ * Host of a Socket.connect argument list.
+ * Node calls the prototype as `connect([options, cb])`. A port/host call is
+ * `(port, host)`. No host means the destination cannot be judged.
+ */
+export function connectHost(args) {
+  const list = Array.isArray(args) ? args : [];
+  const raw = list[0];
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  if (first && typeof first === "object") {
+    if (typeof first.host === "string" && first.host.length > 0) return first.host;
+    if (typeof first.hostname === "string" && first.hostname.length > 0) return first.hostname;
+    return "";
+  }
+  if (typeof list[1] === "string" && list[1].length > 0) return list[1];
+  return "";
+}
+
 /** True for localhost, 127.0.0.0/8, and ::1. An empty target is not a provider call. */
 export function isLoopback(target) {
   const host = hostnameOf(target);
