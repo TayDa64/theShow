@@ -99,6 +99,9 @@ describe("dependency-aware repair", () => {
     const dependents = proposal.options.find((option) => option.id === "retry-dependents");
     expect(dependents?.costUsd).toBe(1.12);
     expect(dependents?.shotsToRender).toEqual([1]);
+    expect(dependents?.fixes.join(" ")).toMatch(/no downstream shot/);
+    expect(dependents?.leavesBroken.join(" ")).toMatch(/unverified/);
+    expect(dependents?.leavesBroken.join(" ")).toMatch(/cut/);
     const alone = proposal.options.find((option) => option.id === "retry-alone");
     expect(alone?.leavesBroken.join(" ")).toMatch(/unverified/);
     expect(alone?.leavesBroken.join(" ")).toMatch(/cut/);

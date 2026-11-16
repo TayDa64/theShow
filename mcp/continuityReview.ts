@@ -26,6 +26,8 @@ export type ReviewEvidence = {
   method: string;
   artifactPaths: string[];
   value?: number | string;
+  /** True when a cited frame was extracted for the review and then removed. */
+  ephemeral?: boolean;
 };
 
 export type ContinuityFinding = {

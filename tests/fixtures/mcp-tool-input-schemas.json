@@ -1167,7 +1167,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {
@@ -1243,7 +1243,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {
@@ -1420,7 +1420,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {
@@ -2186,7 +2186,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {
@@ -2564,7 +2564,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {
@@ -2634,7 +2634,7 @@
             ]
           },
           "approvedFingerprint": {
-            "description": "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
             "type": "string"
           },
           "budgetUsd": {

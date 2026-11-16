@@ -94,6 +94,8 @@ import {
   atomicWriteFile,
   currentMcpServer,
   sweepOrphanTemps,
+  sweepStaleReviewFrames,
+  hostKey,
   elicitTimeoutMs,
   flushJobWrites,
   installShutdown,
@@ -1080,7 +1082,7 @@ const costApprovalFields = {
     "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
   ),
   approvedFingerprint: z.string().optional().describe(
-    "Fingerprint of the approved estimate. Resolution, duration, shot count, and pin are inside it. A change invalidates the confirm.",
+    "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
   ),
   budgetUsd: z.number().min(0).optional().describe(
     "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
@@ -1164,15 +1166,27 @@ export function recordedSpendUsd(job: {
   return Math.round(job.shots.reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100) / 100;
 }
 
-export function noteReportedSpend(job: SequenceJob, kind: SpendKind, usd: number): void {
+export function noteReportedSpend(
+  job: SequenceJob,
+  kind: SpendKind,
+  usd: number,
+  flags?: { estimated?: boolean; derived?: boolean },
+): void {
   if (!(usd > 0)) return;
   const entries = [...(job.spendLedger?.entries ?? [])];
   if (entries.length === 0) {
     for (const shot of job.shots) {
-      if ((shot.costUsd ?? 0) > 0) entries.push({ kind: "video", usd: shot.costUsd ?? 0 });
+      if ((shot.costUsd ?? 0) > 0) {
+        entries.push({ kind: "video", usd: shot.costUsd ?? 0, derived: true });
+      }
     }
   }
-  entries.push({ kind, usd: Math.round(usd * 100) / 100 });
+  entries.push({
+    kind,
+    usd: Math.round(usd * 100) / 100,
+    ...(flags?.estimated ? { estimated: true } : {}),
+    ...(flags?.derived ? { derived: true } : {}),
+  });
   const spentUsd = Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
   job.spendLedger = {
     version: 1,
@@ -1183,7 +1197,61 @@ export function noteReportedSpend(job: SequenceJob, kind: SpendKind, usd: number
   };
 }
 
+/** Keep a film's recorded spend. A pre-ledger film is derived from its shot costs. */
+export function carrySpend(source: SequenceJob): PersistedSpend | undefined {
+  if (source.spendLedger?.entries && source.spendLedger.entries.length > 0) {
+    return structuredClone(source.spendLedger);
+  }
+  const derived = source.shots.flatMap((shot) => (
+    (shot.costUsd ?? 0) > 0
+      ? [{ kind: "video" as const, usd: Math.round((shot.costUsd ?? 0) * 100) / 100, derived: true }]
+      : []
+  ));
+  if (derived.length === 0) {
+    return source.spendLedger ? structuredClone(source.spendLedger) : undefined;
+  }
+  const spentUsd = Math.round(derived.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  return {
+    version: 1,
+    spentUsd,
+    pendingUsd: 0,
+    ...(source.spendLedger?.thresholdUsd !== undefined ? { thresholdUsd: source.spendLedger.thresholdUsd } : {}),
+    entries: derived,
+  };
+}
+
+async function writeFilmNote(jobId: string, patch: (job: SequenceJob) => void): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const saved = await saveJobAnnotation(jobId, patch);
+    if (saved.ok || !saved.message.includes("retry shortly")) return;
+    await sleep(5 + attempt);
+  }
+}
+
+async function rememberBudget(jobId: string, budgetUsd: number): Promise<void> {
+  await writeFilmNote(jobId, (job) => {
+    const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
+    job.spendLedger = {
+      ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+      thresholdUsd: budgetUsd,
+      spentUsd: spent,
+    };
+  });
+}
+
+async function recordFilmCost(
+  jobId: string,
+  kind: SpendKind,
+  usd: number,
+  estimated: boolean,
+): Promise<void> {
+  await writeFilmNote(jobId, (job) => {
+    noteReportedSpend(job, kind, usd, estimated ? { estimated: true } : undefined);
+  });
+}
+
 async function refuseIfSessionWillNotLast(estimatedJobMs: number) {
+  if (process.env.THESHOW_STUB_VIDEO === "1") return undefined;
   const session = await ensureCredentialForJob(estimatedJobMs);
   if (session.ok) return undefined;
   return refusal({
@@ -1690,13 +1758,7 @@ server.registerTool(
       clipFingerprint,
       clipJob ? recordedSpendUsd(clipJob) : 0,
     );
-    if (clipJob && budgetUsd !== undefined) {
-      clipJob.spendLedger = {
-        ...(clipJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(clipJob), pendingUsd: 0 }),
-        thresholdUsd: budgetUsd,
-      };
-      await persistJob(clipJob);
-    }
+    if (jobId && budgetUsd !== undefined) await rememberBudget(jobId, budgetUsd);
     const clipCostRefusal = costRefusal(clipPaid);
     if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
@@ -1753,10 +1815,11 @@ server.registerTool(
     job.referenceImageUrls = prepared.length > 0 ? prepared : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
-    if (clipJob && (result.costUsd ?? 0) > 0) {
-      noteReportedSpend(clipJob, "video", result.costUsd ?? 0);
-      if (budgetUsd !== undefined && clipJob.spendLedger) clipJob.spendLedger.thresholdUsd = budgetUsd;
-      await persistJob(clipJob);
+    const reportedClip = result.costUsd;
+    const clipStub = result.fallback === "stub" || result.code === "no-credential";
+    if (jobId && !clipStub) {
+      const estimated = !((reportedClip ?? 0) > 0);
+      await recordFilmCost(jobId, "video", estimated ? clipPaid.quote.usd : (reportedClip ?? 0), estimated);
     }
     return {
       content: [{
@@ -1821,13 +1884,7 @@ server.registerTool(
       }),
       extensionJob ? recordedSpendUsd(extensionJob) : 0,
     );
-    if (extensionJob && args.budgetUsd !== undefined) {
-      extensionJob.spendLedger = {
-        ...(extensionJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(extensionJob), pendingUsd: 0 }),
-        thresholdUsd: args.budgetUsd,
-      };
-      await persistJob(extensionJob);
-    }
+    if (args.jobId && args.budgetUsd !== undefined) await rememberBudget(args.jobId, args.budgetUsd);
     const extensionCostRefusal = costRefusal(extensionPaid);
     if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
@@ -1896,7 +1953,8 @@ server.registerTool(
     }
 
     if (!args.waitForCompletion) {
-      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
     }
 
     const deadline = Date.now() + args.timeoutSeconds * 1000;
@@ -1907,9 +1965,9 @@ server.registerTool(
       const poll = (await statusRes.json()) as { status?: string; video?: { url?: string; duration?: number }; usage?: Record<string, unknown> };
       if (poll.status === "done" || poll.status === "completed") {
         const extendCost = costUsdFromUsage(poll.usage);
-        if (extensionJob && (extendCost ?? 0) > 0) {
-          noteReportedSpend(extensionJob, "extend", extendCost ?? 0);
-          await persistJob(extensionJob);
+        const estimated = !((extendCost ?? 0) > 0);
+        if (args.jobId) {
+          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : (extendCost ?? 0), estimated);
         }
         return {
           content: [{
@@ -1930,7 +1988,8 @@ server.registerTool(
         return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
     }
-    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
   }
 );
 
@@ -2103,13 +2162,7 @@ server.registerTool(
       stillFingerprint,
       stillJob ? recordedSpendUsd(stillJob) : 0,
     );
-    if (stillJob && args.budgetUsd !== undefined) {
-      stillJob.spendLedger = {
-        ...(stillJob.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(stillJob), pendingUsd: 0 }),
-        thresholdUsd: args.budgetUsd,
-      };
-      await persistJob(stillJob);
-    }
+    if (stillJob && args.budgetUsd !== undefined && args.jobId) await rememberBudget(args.jobId, args.budgetUsd);
     const stillCostRefusal = costRefusal(stillPaid);
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
@@ -2145,9 +2198,11 @@ server.registerTool(
       { outputDir: OUTPUT_DIR },
     );
 
-    if (stillJob && (result.costUsd ?? 0) > 0) {
-      noteReportedSpend(stillJob, "still", result.costUsd ?? 0);
-      await persistJob(stillJob);
+    const reportedStill = result.costUsd;
+    const stillStub = result.code === "no-credential" || result.code === "expired-credential";
+    if (args.jobId && !stillStub) {
+      const estimated = !((reportedStill ?? 0) > 0);
+      await recordFilmCost(args.jobId, "still", estimated ? stillPaid.quote.usd : (reportedStill ?? 0), estimated);
     }
 
     if (!result.localPath) {
@@ -2587,6 +2642,7 @@ export async function refreshJobsFromDisk(): Promise<void> {
 
 export async function loadJobsFromDisk() {
   await sweepOrphanTemps(JOBS_DIR);
+  await sweepStaleReviewFrames(JOBS_DIR);
   await refreshJobsFromDisk();
 }
 
@@ -3727,7 +3783,7 @@ server.registerTool(
         // of the whole film still chains from where the film actually began.
         startFramePath: resumeJob.startFramePath,
         warnings: resumeJob.warnings ? [...resumeJob.warnings] : undefined,
-        ...(resumeJob.spendLedger ? { spendLedger: structuredClone(resumeJob.spendLedger) } : {}),
+        ...(resumeJob ? { spendLedger: carrySpend(resumeJob) } : {}),
         ledger: args.ledger
           ? {
               locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
@@ -4103,7 +4159,7 @@ server.registerTool(
     if (boardCostRefusal) return boardCostRefusal;
     if (decision === "spend") {
       const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
-      if (sessionRefusal) return sessionRefusal;
+      if (sessionRefusal) return withCost(sessionRefusal, boardPaid);
     }
     const board = decision === "spend"
       ? await boardFilm(
@@ -4119,10 +4175,8 @@ server.registerTool(
         boardDeps,
       )
       : priced;
-    if (boardJob && (board.estimate.spentUsd ?? 0) > 0) {
-      noteReportedSpend(boardJob, "board", board.estimate.spentUsd);
-      if (args.budgetUsd !== undefined && boardJob.spendLedger) boardJob.spendLedger.thresholdUsd = args.budgetUsd;
-      await persistJob(boardJob);
+    if (boardJob && args.jobId && (board.estimate.spentUsd ?? 0) > 0) {
+      await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, false);
     }
 
     const boardFrames = Array.isArray(board.frames) ? board.frames : [];
@@ -4426,7 +4480,7 @@ server.registerTool(
       settings,
       startFramePath: original.startFramePath,
       warnings: [...(original.warnings ?? []), ...(retryPaid.budgetWarning ? [retryPaid.budgetWarning] : [])],
-      ...(original.spendLedger ? { spendLedger: structuredClone(original.spendLedger) } : {}),
+      ...(carrySpend(original) ? { spendLedger: carrySpend(original) } : {}),
       repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
       ledger: original.ledger,
       // Every reused shot was paid for by the original film. Count it, so the
@@ -4620,15 +4674,23 @@ function filesIdentical(left: string, right: string): boolean {
   }
 }
 
-async function reviewShotsFromJob(job: SequenceJob, reviewFrameDir?: string): Promise<ReviewShot[]> {
+async function reviewShotsFromJob(
+  job: SequenceJob,
+  reviewFrameDir?: string,
+): Promise<{ shots: ReviewShot[]; sources: Map<string, string> }> {
   const shots: ReviewShot[] = [];
+  const sources = new Map<string, string>();
   for (let index = 0; index < job.shots.length; index += 1) {
     const shot = job.shots[index];
     const ledger = job.ledger?.shots?.find((entry) => entry.shot === shot.index);
     const worn = ledger?.checklists.flatMap((list) => list.worn.map((layer) => layer.id));
     let opening = shot.openingFramePath;
     if (!opening && shot.localPath && existsSync(shot.localPath) && reviewFrameDir) {
-      opening = await extractFirstFrame(shot.localPath, reviewFrameDir);
+      const extracted = await extractFirstFrame(shot.localPath, reviewFrameDir);
+      if (extracted) {
+        opening = extracted;
+        sources.set(extracted, shot.localPath);
+      }
     }
     shots.push({
       index: shot.index,
@@ -4650,7 +4712,34 @@ async function reviewShotsFromJob(job: SequenceJob, reviewFrameDir?: string): Pr
       ...(shot.lastFramePath ? { boardStillPaths: [shot.lastFramePath] } : {}),
     });
   }
-  return shots;
+  return { shots, sources };
+}
+
+function detachReviewFrames(
+  review: ContinuityReview,
+  tempDir: string | undefined,
+  sources: Map<string, string>,
+): ContinuityReview {
+  if (!tempDir) return review;
+  const prefix = tempDir.endsWith("/") ? tempDir : `${tempDir}/`;
+  return {
+    ...review,
+    findings: review.findings.map((finding) => {
+      if (!finding.evidence) return finding;
+      const touched = finding.evidence.artifactPaths.some((file) => file === tempDir || file.startsWith(prefix));
+      if (!touched) return finding;
+      return {
+        ...finding,
+        evidence: {
+          ...finding.evidence,
+          artifactPaths: finding.evidence.artifactPaths.map((file) => (
+            file === tempDir || file.startsWith(prefix) ? (sources.get(file) ?? file) : file
+          )),
+          ephemeral: true,
+        },
+      };
+    }),
+  };
 }
 
 server.registerTool(
@@ -4686,10 +4775,15 @@ server.registerTool(
     if (args.jobId && !job) {
       return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
     }
-    const reviewFrameDir = !shots && job ? await mkdtemp(join(JOBS_DIR, ".review-frames-")) : undefined;
+    const reviewFrameDir = !shots && job
+      ? await mkdtemp(join(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`))
+      : undefined;
+    const frameSources = new Map<string, string>();
     try {
     if (!shots && job) {
-      shots = await reviewShotsFromJob(job, reviewFrameDir);
+      const loaded = await reviewShotsFromJob(job, reviewFrameDir);
+      shots = loaded.shots;
+      for (const [frame, source] of loaded.sources) frameSources.set(frame, source);
       ledgerArtifact = `job:${job.id}#ledger`;
       plannedShots = [
         ...(job.ledger?.wardrobeEvents ?? []).map((event) => event.shot),
@@ -4715,17 +4809,18 @@ server.registerTool(
       narrativeSuggestions: args.narrativeSuggestions,
       resolution: args.resolution,
     });
+    const published = detachReviewFrames(review, reviewFrameDir, frameSources);
     let persisted = false;
     let persistError: string | undefined;
     if (args.jobId && !callerSupplied) {
       const saved = await saveJobAnnotation(args.jobId, (current) => {
-        current.continuityReview = review;
+        current.continuityReview = published;
       });
       persisted = saved.ok;
       if (!saved.ok) persistError = saved.message;
     }
     return refusal({
-      ...review,
+      ...published,
       persisted,
       source: callerSupplied ? "caller-supplied" : "job",
       reproducible: !callerSupplied,

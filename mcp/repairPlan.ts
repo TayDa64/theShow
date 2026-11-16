@@ -225,9 +225,15 @@ export function proposeRepair(input: {
     fixes: [
       `Re-renders shot ${input.badShot} and ${later.length === 0 ? "no downstream shot" : `shot ${later.join(", ")}`}, which ${later.length === 1 ? "was" : "were"} seeded from it.`,
     ],
-    leavesBroken: extension
-      ? [`Shot ${input.badShot} was an extension of ${extension.artifact}. Re-rendering replaces that extension; the source clip is not itself a later shot.`]
-      : [],
+    leavesBroken: [
+      ...(extension
+        ? [`Shot ${input.badShot} was an extension of ${extension.artifact}. Re-rendering replaces that extension; the source clip is not itself a later shot.`]
+        : []),
+      ...inferred.map((edge) => (
+        `The link from shot ${edge.fromShot} to shot ${edge.toShot} was not recorded, so it is unverified. ` +
+        `retry_shot will treat the join after shot ${input.badShot} as a cut.`
+      )),
+    ],
     shotsToRender: [input.badShot, ...later],
     stillsToBuy: 0,
     requiresApproval: true,

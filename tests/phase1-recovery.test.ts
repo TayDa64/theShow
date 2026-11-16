@@ -3,12 +3,12 @@
  * Each test uses its own jobs directory. The parent process's JOBS_DIR is not read.
  */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { processHost, sweepOrphanTemps } from "../mcp/runtime.ts";
+import { hostKey, sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
 import { noteReportedSpend, recordedSpendUsd, type SequenceJob } from "../mcp/server.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -143,28 +143,29 @@ describe("phase 1 recovery without a bot", () => {
 
   it("keeps both annotations when two processes write the same film", async () => {
     const jobs = await jobsDir();
-    process.env.THESHOW_JOBS_DIR = path.join(tmpdir(), "another-stale-jobs-dir");
-    for (let round = 0; round < 60; round += 1) {
-      const id = `seq_phase1_race_${round}`;
+    const ids = Array.from({ length: 60 }, (_, round) => `seq_phase1_race_${round}`);
+    for (const id of ids) {
       await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
-      const [review, repair] = await Promise.all([
-        runChild(jobs, ["annotate-review", id]),
-        runChild(jobs, ["annotate-repair", id]),
-      ]);
-      expect(review.status, review.stderr).toBe(0);
-      expect(repair.status, repair.stderr).toBe(0);
-      expect(review.stdout).toContain("persisted");
-      expect(repair.stdout).toContain("persisted");
+    }
+    const [review, repair] = await Promise.all([
+      runChild(jobs, ["annotate-batch", "review", ...ids]),
+      runChild(jobs, ["annotate-batch", "repair", ...ids]),
+    ]);
+    expect(review.status, review.stderr).toBe(0);
+    expect(repair.status, repair.stderr).toBe(0);
+    expect(review.stdout).toContain("persisted");
+    expect(repair.stdout).toContain("persisted");
+    for (const id of ids) {
       const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
         continuityReview?: { version?: number };
         repairProposal?: { version?: number };
         filmPath?: string;
       };
-      expect(saved.continuityReview?.version, `round ${round}`).toBe(1);
-      expect(saved.repairProposal?.version, `round ${round}`).toBe(1);
+      expect(saved.continuityReview?.version, id).toBe(1);
+      expect(saved.repairProposal?.version, id).toBe(1);
       expect(saved.filmPath).toBe(`/keep/${id}.mp4`);
     }
-  }, 180_000);
+  }, 60_000);
 
   it("does not write a review onto a film that is still rendering", async () => {
     const jobs = await jobsDir();
@@ -213,18 +214,127 @@ describe("phase 1 recovery without a bot", () => {
     expect(saved.message).not.toMatch(/already running/);
   });
 
-  it("leaves another host's young temp file alone and removes a dead local one", async () => {
+  it("leaves another host's young temp file alone and removes a dead local one and an old foreign one", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "theshow-temps-"));
-    const slug = processHost.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32) || "host";
-    const foreign = path.join(dir, `job.424242.otherhost.${"a".repeat(8)}.tmp`);
-    const dead = path.join(dir, `job.999999.${slug}.${"b".repeat(8)}.tmp`);
+    const foreign = path.join(dir, `job.424242.${"ab".repeat(32)}.${"a".repeat(8)}.tmp`);
+    const oldForeign = path.join(dir, `job.7.${"cd".repeat(32)}.${"d".repeat(8)}.tmp`);
+    const dead = path.join(dir, `job.999999.${hostKey()}.${"b".repeat(8)}.tmp`);
     await writeFile(foreign, "foreign");
+    await writeFile(oldForeign, "old");
     await writeFile(dead, "dead");
+    const past = new Date(Date.now() - 16 * 60 * 1000);
+    await utimes(oldForeign, past, past);
     await sweepOrphanTemps(dir);
     const names = await readdir(dir);
-    expect(names.some((name) => name.includes("otherhost"))).toBe(true);
+    expect(names.some((name) => name.includes("424242"))).toBe(true);
     expect(names.some((name) => name.includes("999999"))).toBe(false);
+    expect(names.some((name) => name.startsWith("job.7."))).toBe(false);
   });
+
+  it("sweeps a dead review-frame directory and an old foreign one, and keeps a young foreign one", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-frames-"));
+    const dead = path.join(dir, `.review-frames-999999-${hostKey()}-aaaaaa`);
+    const youngForeign = path.join(dir, `.review-frames-1-${"ab".repeat(32)}-bbbbbb`);
+    const oldForeign = path.join(dir, `.review-frames-1-${"cd".repeat(32)}-cccccc`);
+    await mkdir(dead);
+    await mkdir(youngForeign);
+    await mkdir(oldForeign);
+    const past = new Date(Date.now() - 16 * 60 * 1000);
+    await utimes(oldForeign, past, past);
+    await sweepStaleReviewFrames(dir);
+    const names = await readdir(dir);
+    expect(names.some((name) => name.includes("999999"))).toBe(false);
+    expect(names.some((name) => name.includes("bbbbbb"))).toBe(true);
+    expect(names.some((name) => name.includes("cccccc"))).toBe(false);
+  });
+
+  it("does not let a clip, still, or extend estimate rewrite a film another process is rendering", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_budget_running";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
+    const holder = spawn(process.execPath, ["--import", "tsx", CHILD, "hold-running", id], {
+      cwd: ROOT,
+      env: childEnv(jobs),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let held = "";
+    holder.stdout?.setEncoding("utf8");
+    holder.stdout?.on("data", (chunk: string) => { held += chunk; });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`holder did not answer\n${held}`)), 10_000);
+      holder.stdout?.on("data", () => {
+        if (held.includes("holding")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    const estimates = await Promise.all([
+      runChild(jobs, ["call-tool", "generate_controlled_clip", JSON.stringify({
+        prompt: "A lantern.", jobId: id, budgetUsd: 2, confirm: false,
+      })]),
+      runChild(jobs, ["call-tool", "generate_still", JSON.stringify({
+        prompt: "A lantern.", jobId: id, budgetUsd: 2, confirm: false,
+      })]),
+      runChild(jobs, ["call-tool", "extend_clip", JSON.stringify({
+        videoUrl: "https://example.test/clip.mp4", prompt: "A lantern.", jobId: id, budgetUsd: 2, confirm: false,
+      })]),
+    ]);
+    holder.kill("SIGKILL");
+    for (const estimate of estimates) expect(estimate.status, estimate.stderr).toBe(0);
+    const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
+      state: string;
+      filmPath?: string;
+      spendLedger?: { thresholdUsd?: number };
+    };
+    expect(saved.state).toBe("running");
+    expect(saved.filmPath).toBe(`/keep/${id}.mp4`);
+    expect(saved.spendLedger?.thresholdUsd).toBeUndefined();
+  }, 30_000);
+
+  it("keeps a review when a clip estimate and a paid clip record a budget on the same film", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_budget_race";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
+    const paid = {
+      prompt: "A lantern.",
+      jobId: id,
+      budgetUsd: 3,
+      confirm: true,
+      overrideValidation: true,
+      waitForCompletion: false,
+      durationSeconds: 1,
+    };
+    const [review, clip, still, extension] = await Promise.all([
+      runChild(jobs, ["annotate-review", id]),
+      runChild(jobs, ["call-tool", "generate_controlled_clip", JSON.stringify(paid)], { THESHOW_MOCK_PAID: "1" }),
+      runChild(jobs, ["call-tool", "generate_still", JSON.stringify({
+        prompt: "A lantern.", jobId: id, confirm: true, overrideValidation: true,
+      })], { THESHOW_MOCK_PAID: "1" }),
+      runChild(jobs, ["call-tool", "extend_clip", JSON.stringify({
+        videoUrl: "https://example.test/clip.mp4",
+        prompt: "A lantern.",
+        jobId: id,
+        confirm: true,
+        overrideValidation: true,
+        waitForCompletion: false,
+      })], { THESHOW_MOCK_PAID: "1" }),
+    ]);
+    expect(review.status, review.stderr).toBe(0);
+    expect(clip.status, clip.stderr).toBe(0);
+    expect(still.status, still.stderr).toBe(0);
+    expect(extension.status, extension.stderr).toBe(0);
+    const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
+      continuityReview?: { version?: number };
+      filmPath?: string;
+      spendLedger?: { entries?: Array<{ kind: string; estimated?: boolean }> };
+    };
+    expect(saved.continuityReview?.version).toBe(1);
+    expect(saved.filmPath).toBe(`/keep/${id}.mp4`);
+    const kinds = saved.spendLedger?.entries?.map((entry) => entry.kind) ?? [];
+    expect(kinds).toEqual(expect.arrayContaining(["video", "still", "extend"]));
+    expect(saved.spendLedger?.entries?.filter((entry) => entry.kind !== "video" || entry.estimated).length).toBeGreaterThan(0);
+  }, 30_000);
 
   it("adds a reported board cost on top of recorded shot costs", () => {
     const job = {

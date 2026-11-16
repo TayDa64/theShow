@@ -6,7 +6,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -163,8 +163,8 @@ export function setBeforeRenameProbe(next: (() => Promise<void>) | undefined): v
 
 const TEMP_SAFE_AGE_MS = 15 * 60 * 1000;
 
-function hostSlug(): string {
-  return processHost.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32) || "host";
+export function hostKey(): string {
+  return createHash("sha256").update(processHost).digest("hex");
 }
 
 /**
@@ -179,7 +179,7 @@ export async function sweepOrphanTemps(dir: string): Promise<void> {
   } catch {
     return;
   }
-  const ours = hostSlug();
+  const ours = hostKey();
   for (const name of names) {
     if (!name.endsWith(".tmp")) continue;
     const full = join(dir, name);
@@ -203,10 +203,41 @@ export async function sweepOrphanTemps(dir: string): Promise<void> {
   }
 }
 
+export async function sweepStaleReviewFrames(dir: string): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  const ours = hostKey();
+  for (const name of names) {
+    if (!name.startsWith(".review-frames-")) continue;
+    const full = join(dir, name);
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - (await stat(full)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age >= TEMP_SAFE_AGE_MS) {
+      await rm(full, { recursive: true, force: true }).catch(() => undefined);
+      continue;
+    }
+    const match = name.match(/^\.review-frames-(\d+)-([a-f0-9]{64})-/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const host = match[2];
+    if (host !== ours) continue;
+    if (pid === process.pid || pidAlive(pid)) continue;
+    await rm(full, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 export async function atomicWriteFile(path: string, data: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await sweepOrphanTemps(dirname(path));
-  const tmp = `${path}.${process.pid}.${hostSlug()}.${randomUUID()}.tmp`;
+  const tmp = `${path}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
   if (beforeRename) await beforeRename();
   await rename(tmp, path);

@@ -64,6 +64,10 @@ export type BudgetAssessment = {
 export type SpendEntry = {
   kind: SpendKind;
   usd: number;
+  /** True when the figure is the quote because the provider did not report a cost. */
+  estimated?: boolean;
+  /** True when the figure was taken from shot costs on a film that had no ledger. */
+  derived?: boolean;
 };
 
 export type PersistedSpend = {

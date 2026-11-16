@@ -2,13 +2,17 @@
  * The free review tools and the additive cost fields on the existing spend tools.
  * Fetch is a spy. A refused quote must not call a generator.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { videoQuote } from "../mcp/costGate.ts";
-import { JOBS_DIR } from "../mcp/media.ts";
+import { JOBS_DIR, OUTPUT_DIR } from "../mcp/media.ts";
 import { server } from "../mcp/server.ts";
+
+const exec = promisify(execFile);
 
 let client: Client;
 const fetchCalls: string[] = [];
@@ -410,5 +414,303 @@ describe("phase 1 tools", () => {
     expect(body.budgetWarning).toMatch(/does not authorize/);
     expect(body.costQuote.kind).toBe("video");
     expect(fetchCalls).toEqual([]);
+  });
+
+  it("names the quote when a bare board confirm reaches the session check", async () => {
+    fetchCalls.length = 0;
+    const body = JSON.parse(toolText(await client.callTool({
+      name: "board_film",
+      arguments: {
+        shots: [{ prompt: "A quiet courtyard." }],
+        confirm: true,
+        overrideValidation: true,
+      },
+    })));
+    expect(body.costQuote.kind).toBe("board");
+    expect(body.costQuote.usd).toEqual(expect.any(Number));
+    expect(body.unboundApproval?.warning).toMatch(/not bound/);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("names the quote on a render and a retry that actually start", async () => {
+    process.env.THESHOW_STUB_VIDEO = "1";
+    try {
+      const rendered = JSON.parse(toolText(await client.callTool({
+        name: "render_sequence",
+        arguments: { shots: [shot], confirm: true, overrideValidation: true, assemble: false },
+      })));
+      expect(rendered.jobId).toEqual(expect.any(String));
+      expect(rendered.unboundApproval?.approvedKind).toBe("video");
+      expect(rendered.unboundApproval?.warning).toMatch(/not bound/);
+      const id = "seq_phase1_retry_success";
+      await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+        id,
+        startedAt: 1,
+        state: "completed",
+        shotCount: 1,
+        completed: 1,
+        estimateUsd: 1.12,
+        spentUsd: 1.12,
+        shots: [{
+          index: 1,
+          title: "Old",
+          status: "completed",
+          costUsd: 1.12,
+          prompt: "A man walks across the courtyard.",
+          durationSeconds: 8,
+          localPath: "/keep/retry-success.mp4",
+        }],
+        settings: {
+          aspectRatio: "16:9",
+          resolution: "720p",
+          model: "grok-imagine-video-1.5",
+          fadeDuration: 0,
+          assemble: false,
+          pin: "start",
+        },
+      }));
+      const retried = JSON.parse(toolText(await client.callTool({
+        name: "retry_shot",
+        arguments: { jobId: id, shotIndex: 1, confirm: true, overrideValidation: true },
+      })));
+      expect(retried.jobId).toEqual(expect.any(String));
+      expect(retried.unboundApproval?.approvedKind).toBe("retry");
+      expect(retried.unboundApproval?.warning).toMatch(/not bound/);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+    }
+  }, 30_000);
+
+  it("keeps a resumed film's ledger on the new job", async () => {
+    process.env.THESHOW_STUB_VIDEO = "1";
+    try {
+      const id = "seq_phase1_resume_ledger";
+      await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+        id,
+        startedAt: 1,
+        state: "completed",
+        shotCount: 1,
+        completed: 1,
+        estimateUsd: 1.12,
+        spentUsd: 1.12,
+        spendLedger: {
+          version: 1,
+          spentUsd: 1.2,
+          pendingUsd: 0,
+          entries: [
+            { kind: "video", usd: 1.12 },
+            { kind: "still", usd: 0.08 },
+          ],
+        },
+        shots: [{
+          index: 1,
+          title: "Old",
+          status: "completed",
+          costUsd: 1.12,
+          prompt: "A lantern.",
+          durationSeconds: 8,
+          localPath: "/keep/resume.mp4",
+        }],
+        settings: {
+          aspectRatio: "16:9",
+          resolution: "720p",
+          model: "grok-imagine-video-1.5",
+          fadeDuration: 0,
+          assemble: false,
+          pin: "start",
+        },
+      }));
+      const resumed = JSON.parse(toolText(await client.callTool({
+        name: "render_sequence",
+        arguments: {
+          shots: [shot],
+          confirm: true,
+          overrideValidation: true,
+          assemble: false,
+          resumeFromJobId: id,
+        },
+      })));
+      expect(resumed.jobId).toEqual(expect.any(String));
+      let ledger: { spentUsd?: number; entries?: unknown[] } | undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const raw = await readFile(`${JOBS_DIR}/${resumed.jobId}.json`, "utf8");
+        ledger = JSON.parse(raw).spendLedger;
+        if (ledger) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(ledger?.spentUsd).toBe(1.2);
+      expect(ledger?.entries).toHaveLength(2);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+    }
+  });
+
+  it("keeps a replaced shot's cost when a pre-ledger film is retried", async () => {
+    process.env.THESHOW_STUB_VIDEO = "1";
+    try {
+      const id = "seq_phase1_legacy_ledger";
+      const shots = [0.28, 0.28, 0.28, 0.28].map((costUsd, index) => ({
+        index: index + 1,
+        title: `Shot ${index + 1}`,
+        status: "completed",
+        costUsd,
+        prompt: "A lantern.",
+        durationSeconds: 2,
+        localPath: `/keep/legacy-${index + 1}.mp4`,
+      }));
+      await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+        id,
+        startedAt: 1,
+        state: "completed",
+        shotCount: 4,
+        completed: 4,
+        estimateUsd: 1.12,
+        spentUsd: 1.12,
+        shots,
+        settings: {
+          aspectRatio: "16:9",
+          resolution: "720p",
+          model: "grok-imagine-video-1.5",
+          fadeDuration: 0,
+          assemble: false,
+          pin: "start",
+        },
+      }));
+      const retried = JSON.parse(toolText(await client.callTool({
+        name: "retry_shot",
+        arguments: { jobId: id, shotIndex: 1, confirm: true, overrideValidation: true },
+      })));
+      const saved = JSON.parse(await readFile(`${JOBS_DIR}/${retried.jobId}.json`, "utf8")) as {
+        spendLedger?: { spentUsd: number; entries: Array<{ derived?: boolean }> };
+      };
+      expect(saved.spendLedger?.spentUsd).toBe(1.12);
+      expect(saved.spendLedger?.entries.every((entry) => entry.derived)).toBe(true);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+    }
+  }, 30_000);
+
+  it("names the quote and records the estimate when an extension is submitted, times out, or returns no usage", async () => {
+    const previous = globalThis.fetch;
+    const previousKey = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = "test-not-a-key";
+    const id = "seq_phase1_extend_spend";
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1.12,
+      spentUsd: 1.12,
+      shots: [{ index: 1, title: "Old", status: "completed", costUsd: 1.12, prompt: "A lantern.", durationSeconds: 8 }],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: false, pin: "start" },
+    }));
+    const respond = (payload: unknown) => new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    try {
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/v1/videos/extensions")) return respond({ request_id: "req-extend" });
+        return respond({ status: "completed", video: { url: "https://example.test/out.mp4", duration: 6 } });
+      }) as typeof fetch;
+      const submitted = JSON.parse(toolText(await client.callTool({
+        name: "extend_clip",
+        arguments: {
+          videoUrl: "https://example.test/clip.mp4",
+          prompt: "The man keeps walking.",
+          confirm: true,
+          overrideValidation: true,
+          waitForCompletion: false,
+          jobId: id,
+        },
+      })));
+      expect(submitted.status).toBe("submitted");
+      expect(submitted.unboundApproval?.warning).toMatch(/not bound/);
+      expect(submitted.costEstimated).toBe(true);
+      const completed = JSON.parse(toolText(await client.callTool({
+        name: "extend_clip",
+        arguments: {
+          videoUrl: "https://example.test/clip.mp4",
+          prompt: "The man keeps walking.",
+          confirm: true,
+          overrideValidation: true,
+          waitForCompletion: true,
+          timeoutSeconds: 10,
+          jobId: id,
+        },
+      })));
+      expect(completed.status).toBe("completed");
+      expect(completed.unboundApproval?.warning).toMatch(/not bound/);
+      globalThis.fetch = (async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/v1/videos/extensions")) return respond({ request_id: "req-timeout" });
+        return respond({ status: "pending" });
+      }) as typeof fetch;
+      const timedOut = JSON.parse(toolText(await client.callTool({
+        name: "extend_clip",
+        arguments: {
+          videoUrl: "https://example.test/clip.mp4",
+          prompt: "The man keeps walking.",
+          confirm: true,
+          overrideValidation: true,
+          waitForCompletion: true,
+          timeoutSeconds: 10,
+          jobId: id,
+        },
+      })));
+      expect(timedOut.status).toBe("timeout");
+      expect(timedOut.unboundApproval?.warning).toMatch(/not bound/);
+      expect(timedOut.costEstimated).toBe(true);
+      const saved = JSON.parse(await readFile(`${JOBS_DIR}/${id}.json`, "utf8")) as {
+        spendLedger?: { entries?: Array<{ kind: string; estimated?: boolean }> };
+      };
+      const extensions = saved.spendLedger?.entries?.filter((entry) => entry.kind === "extend") ?? [];
+      expect(extensions.length).toBeGreaterThanOrEqual(3);
+      expect(extensions.every((entry) => entry.estimated)).toBe(true);
+    } finally {
+      globalThis.fetch = previous;
+      if (previousKey === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = previousKey;
+    }
+  }, 30_000);
+
+  it("cites the source clip instead of a review frame that is deleted, and does not write that frame into media", async () => {
+    const clip = `${OUTPUT_DIR}/phase1-review-source.mp4`;
+    const frame = `${OUTPUT_DIR}/phase1-review-last.png`;
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    await exec("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.2", "-frames:v", "1", clip]);
+    await exec("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=white:s=16x16:d=0.1", "-frames:v", "1", frame]);
+    const before = new Set(await readdir(OUTPUT_DIR));
+    const id = "seq_phase1_review_frames";
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 2,
+      completed: 2,
+      estimateUsd: 1,
+      spentUsd: 1,
+      shots: [
+        { index: 1, title: "A", status: "completed", localPath: clip, framePath: frame, durationSeconds: 2, prompt: "A lantern." },
+        { index: 2, title: "B", status: "completed", localPath: clip, durationSeconds: 2, prompt: "A lantern." },
+      ],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: false, pin: "start" },
+    }));
+    const body = JSON.parse(toolText(await client.callTool({
+      name: "review_continuity",
+      arguments: { jobId: id },
+    })));
+    const cited = JSON.stringify(body.findings);
+    expect(cited).not.toContain(".review-frames-");
+    expect(cited).toContain(clip);
+    const saved = JSON.parse(await readFile(`${JOBS_DIR}/${id}.json`, "utf8"));
+    expect(JSON.stringify(saved.continuityReview)).not.toContain(".review-frames-");
+    const after = await readdir(OUTPUT_DIR);
+    expect(after.filter((name) => name.startsWith("frame-first-") && !before.has(name))).toEqual([]);
+    const jobs = await readdir(JOBS_DIR);
+    expect(jobs.filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
   });
 });

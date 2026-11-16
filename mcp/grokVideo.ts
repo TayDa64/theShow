@@ -378,6 +378,9 @@ async function generateGrokClipNow(
 ): Promise<GrokClipResult> {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
+  if (process.env.THESHOW_STUB_VIDEO === "1") {
+    return { status: "failed", error: "stub", fallback: "stub" };
+  }
 
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
