@@ -743,7 +743,14 @@ describe("built bundle end to end", () => {
 
       for (const [client, , results, clip] of clients) {
         for (const call of await productionCalls(clip)) {
-          const body = toolJson(await client.call(call.name, call.args));
+          const result = await client.call(call.name, call.args);
+          const text = toolText(result);
+          let body: Record<string, unknown>;
+          try {
+            body = JSON.parse(text) as Record<string, unknown>;
+          } catch (err) {
+            throw new Error(`${call.name} returned non-JSON: ${text.slice(0, 400)}\n${err instanceof Error ? err.message : String(err)}`);
+          }
           results.push(body);
           const confirmed = call.args.confirm === true;
           if (QUOTE_TOOLS.has(call.name) && !confirmed) {

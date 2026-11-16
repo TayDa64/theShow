@@ -45,6 +45,8 @@ Confirmed, and still true after this PR except for the new file.
 
 `tests/e2e-bundles.test.ts` is the new hook: `mcp/launch.mjs` in bundle mode, no `THESHOW_MCP_FROM_SOURCE`, no `NODE_ENV=test`, no `THESHOW_STUB_VIDEO`.
 
+`extract_last_frame` and `assemble_film` call `probeDuration`, which runs `ffprobe` (`mcp/media.ts:89-102`). `@ffmpeg-installer/ffmpeg` ships ffmpeg and not ffprobe. `resolveTools` (`mcp/media.ts:60-80`) uses `/usr/bin/ffprobe` when `/usr/bin/ffmpeg` exists, and otherwise a sibling path that is not in the installer package. GitHub's `ubuntu-latest` image has neither binary, so the test job installs the `ffmpeg` apt package. That is a CI setup step, not a production change.
+
 ## Tool surface
 
 `registerTool` lines in `mcp/server.ts`, unchanged by N35:
