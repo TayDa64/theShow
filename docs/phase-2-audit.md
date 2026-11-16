@@ -134,3 +134,9 @@ Checked against the code after the first draft:
 - A settings field that is unset on any film in the set is unverified, not a measured difference against the films that recorded it.
 - A character omitted from a film's first-shot checklist is unverified, not an empty worn list.
 - `persist: true` lists the report path in `mutatedPaths`. The default remains an empty list.
+
+## Review round 2
+
+- A settings field recorded on every film is a measured difference only when the values are not equal. Equal values produce no finding.
+- A missing job file stays "Job file not on disk." A file that is present but is torn JSON, or that fails the schema, is "present but could not be parsed."
+- P39, dropping the remote-URL skip in `snapshotCharacter`, is not observable offline. `readFile` of an `https` or `data` URL throws, and the catch leaves `references` empty, which is the same result as skipping the URL.

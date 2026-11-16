@@ -290,6 +290,43 @@ describe("check_cross_film", () => {
     expect(differentFinding?.summary).toContain("differ");
   });
 
+  it("F7: equal settings produce no differs finding, and each field differs on its own", async () => {
+    const base = {
+      aspectRatio: "16:9",
+      resolution: "720p",
+      model: "grok-imagine-video-1.5",
+      pin: "start",
+      voiceId: "rex",
+      clipAudio: "keep",
+      characters: ["Ada"],
+    };
+    const film = (id: string, settings: Partial<typeof base> = {}, promptStyle = "legacy") => job({
+      id,
+      settings: { ...base, ...settings },
+      ledger: { promptStyle },
+    });
+    const equal = await checkCrossFilm(input([film("a"), film("b"), film("c")], { characters: new Map() }));
+    expect(equal.findings.filter((finding) => finding.topic === "settings")).toEqual([]);
+
+    const cases: Array<{ source: string; left: Partial<typeof base>; right: Partial<typeof base>; leftStyle?: string; rightStyle?: string }> = [
+      { source: "settings.aspectRatio", left: { aspectRatio: "16:9" }, right: { aspectRatio: "9:16" } },
+      { source: "settings.resolution", left: { resolution: "720p" }, right: { resolution: "480p" } },
+      { source: "settings.model", left: { model: "grok-imagine-video-1.5" }, right: { model: "other-model" } },
+      { source: "settings.pin", left: { pin: "start" }, right: { pin: "both" } },
+      { source: "settings.voiceId", left: { voiceId: "rex" }, right: { voiceId: "sage" } },
+      { source: "settings.clipAudio", left: { clipAudio: "keep" }, right: { clipAudio: "mute" } },
+      { source: "ledger.promptStyle", left: {}, right: {}, leftStyle: "legacy", rightStyle: "sections-v2" },
+    ];
+    for (const entry of cases) {
+      const report = await checkCrossFilm(input([
+        film("left", entry.left, entry.leftStyle),
+        film("right", entry.right, entry.rightStyle),
+      ], { characters: new Map() }));
+      const measured = report.findings.filter((finding) => finding.topic === "settings" && finding.class === "measured");
+      expect(measured.map((finding) => finding.summary), entry.source).toEqual([`${entry.source} differs across these films.`]);
+    }
+  });
+
   it("F4: an unset setting is unverified, not a measured difference", async () => {
     const set = job({ id: "set", settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", pin: "start", characters: ["Ada"] } });
     const unset = job({ id: "unset", settings: { resolution: "720p", model: "grok-imagine-video-1.5", pin: "start", characters: ["Ada"] } });
@@ -320,7 +357,7 @@ describe("check_cross_film", () => {
     expect(ada.some((finding) => finding.class === "unverified" && finding.jobIds.includes("omitted"))).toBe(true);
   });
 
-  it("P27: frames that cannot be correlated are visually flagged, not scored", async () => {
+  it("frames that cannot be correlated are visually flagged, not scored", async () => {
     const left = job({ id: "left", shots: [{ index: 1, openingFramePath: "/frames/a.png" }] });
     const right = job({ id: "right", shots: [{ index: 1, openingFramePath: "/frames/b.png" }] });
     const report = await checkCrossFilm(input([left, right], {
@@ -338,6 +375,28 @@ describe("check_cross_film", () => {
     expect(flagged?.evidence?.method).toBe("32x32-grayscale-correlation");
     expect(flagged?.evidence?.value).toBeUndefined();
     expect(report.findings.some((finding) => finding.class === "measured" && finding.evidence?.method === "32x32-grayscale-correlation")).toBe(false);
+  });
+
+  it("P27: a named frame that is not on disk stays unverified", async () => {
+    const left = job({ id: "left", shots: [{ index: 1, openingFramePath: "/frames/missing-a.png" }] });
+    const right = job({ id: "right", shots: [{ index: 1, openingFramePath: "/frames/missing-b.png" }] });
+    const report = await checkCrossFilm(input([left, right], {
+      characters: new Map(),
+      fileExists: () => false,
+      filesIdentical: () => false,
+      correlate: async () => {
+        throw new Error("missing frame");
+      },
+      resolveFirstFrame: async (entry) => ({
+        path: entry.shots?.[0]?.openingFramePath,
+        cited: entry.shots?.[0]?.openingFramePath ?? entry.path,
+        ephemeral: false,
+      }),
+    }));
+    const frames = report.findings.filter((finding) => finding.summary.includes("No first frame on disk"));
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.class).toBe("unverified");
+    expect(report.findings.some((finding) => finding.class === "visually-flagged")).toBe(false);
   });
 
   it("rejects a consistency directory inside the jobs directory", async () => {

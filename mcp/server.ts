@@ -5555,11 +5555,22 @@ async function filmsById(ids: string[]): Promise<{
     if (seen.has(id)) continue;
     seen.add(id);
     const full = join(JOBS_DIR, `${id}.json`);
+    let raw: string;
+    try {
+      raw = await readFile(full, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        missing.push(id);
+        continue;
+      }
+      invalid.push({ id, reason: "unreadable" });
+      continue;
+    }
     let value: unknown;
     try {
-      value = JSON.parse(await readFile(full, "utf8")) as unknown;
+      value = JSON.parse(raw) as unknown;
     } catch {
-      missing.push(id);
+      invalid.push({ id, reason: "invalid JSON" });
       continue;
     }
     const job = parseCrossFilmJob(value, full);

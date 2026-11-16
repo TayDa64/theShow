@@ -371,6 +371,7 @@ function settingsDiffs(input: CrossFilmInput): CrossFilmFinding[] {
       continue;
     }
     const distinct = new Set(values);
+    if (distinct.size <= 1) continue;
     findings.push(measured(
       "settings",
       input.jobs.map((job) => job.id),

@@ -330,6 +330,30 @@ describe("phase 2 tools", () => {
     }
   });
 
+  it("F3: a torn job file is present but invalid, and a missing id is not on disk", async () => {
+    const torn = "seq_phase2_torn";
+    const good = "seq_phase2_torn_ok";
+    await writeFile(path.join(JOBS_DIR, `${torn}.json`), '{ "id": "seq_phase2_torn", "startedAt": ');
+    await writeFile(path.join(JOBS_DIR, `${good}.json`), JSON.stringify({
+      id: good,
+      startedAt: 2,
+      state: "completed",
+      spentUsd: 0,
+      shots: [{ index: 1, title: "Ok" }],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "m", pin: "start" },
+    }));
+    const body = JSON.parse(toolText(await client.callTool({
+      name: "check_cross_film",
+      arguments: { jobIds: [torn, good, "seq_phase2_absent"] },
+    }))) as { findings: Array<{ summary: string; class: string; jobIds: string[] }> };
+    const tornFinding = body.findings.find((item) => item.jobIds.includes(torn));
+    const absent = body.findings.find((item) => item.jobIds.includes("seq_phase2_absent"));
+    expect(tornFinding?.class).toBe("unverified");
+    expect(tornFinding?.summary).toMatch(/present but could not be parsed: invalid JSON/);
+    expect(tornFinding?.summary).not.toMatch(/not on disk/);
+    expect(absent?.summary).toBe("Job file not on disk.");
+  });
+
   it("F3: a job file that fails the schema is present but not readable", async () => {
     const bad = "seq_phase2_malformed";
     const good = "seq_phase2_malformed_ok";
@@ -411,7 +435,7 @@ describe("phase 2 tools", () => {
     expect(names.filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
   });
 
-  it("P39: a remote reference URL is not hashed", async () => {
+  it("a remote reference URL is not stored as a hash of the URL text", async () => {
     const url = "https://example.test/remy.png";
     const folder = path.join(process.env.THESHOW_CHARACTERS_DIR!, "remy");
     await mkdir(folder, { recursive: true });
@@ -426,6 +450,18 @@ describe("phase 2 tools", () => {
     expect(snap?.references).toEqual([]);
     const hashedUrl = createHash("sha256").update(url).digest("hex");
     expect(JSON.stringify(snap)).not.toContain(hashedUrl);
+  });
+
+  it("P07: omitting usedBuiltInLadder does not compare the plan to the ladder", async () => {
+    const body = JSON.parse(toolText(await client.callTool({
+      name: "suggest_coverage",
+      arguments: {
+        plan: {
+          shots: [{ title: "Climax", shotType: "wide", locationId: "kitchen", durationSeconds: 8 }],
+        },
+      },
+    }))) as { suggestions: Array<{ kind: string }> };
+    expect(body.suggestions.filter((item) => item.kind === "structure")).toEqual([]);
   });
 
   it("P40: retry_shot stores a character snapshot on the new job", async () => {

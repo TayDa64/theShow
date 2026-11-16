@@ -45781,6 +45781,7 @@ function settingsDiffs(input2) {
       continue;
     }
     const distinct = new Set(values);
+    if (distinct.size <= 1) continue;
     findings.push(measured3(
       "settings",
       input2.jobs.map((job) => job.id),
@@ -51793,11 +51794,22 @@ async function filmsById(ids) {
     if (seen.has(id)) continue;
     seen.add(id);
     const full = join9(JOBS_DIR, `${id}.json`);
+    let raw;
+    try {
+      raw = await readFile6(full, "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        missing.push(id);
+        continue;
+      }
+      invalid.push({ id, reason: "unreadable" });
+      continue;
+    }
     let value;
     try {
-      value = JSON.parse(await readFile6(full, "utf8"));
+      value = JSON.parse(raw);
     } catch {
-      missing.push(id);
+      invalid.push({ id, reason: "invalid JSON" });
       continue;
     }
     const job = parseCrossFilmJob(value, full);

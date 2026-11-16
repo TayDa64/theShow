@@ -250,7 +250,7 @@ describe("suggest_coverage rules", () => {
     expect(sameClass[0]?.evidence?.values.shotType).toBe("wide");
   });
 
-  it("P04: framing wins over shotType", () => {
+  it("framing wins over shotType", () => {
     const framed = suggestionsFor(request([{
       index: 1,
       framing: "wide",
@@ -268,7 +268,7 @@ describe("suggest_coverage rules", () => {
     expect(shotWinsIfNoFraming.filter((item) => item.class === "measured")).toHaveLength(1);
   });
 
-  it("P07: a line that fits exactly does not fire, and one second under does", () => {
+  it("a line that fits exactly does not fire, and one second under does", () => {
     const exact = suggestionsFor(request([{
       index: 1,
       shotType: "medium",
@@ -287,7 +287,7 @@ describe("suggest_coverage rules", () => {
     expect(short).toHaveLength(1);
   });
 
-  it("P11: a sung line uses the sung pace", () => {
+  it("a sung line uses the sung pace", () => {
     const words = "one two three four five six seven eight nine ten";
     const sung = suggestionsFor(request([{
       index: 1,
@@ -307,6 +307,19 @@ describe("suggest_coverage rules", () => {
       line: { text: words, delivery: "spoken" },
     }]), "coverage.line-shorter-than-speech");
     expect(spoken).toEqual([]);
+  });
+
+  it("P04: shots with lines and no shot type abstain once as a group", () => {
+    const shots: CoverageShot[] = [
+      { index: 1, locationId: "kitchen", durationSeconds: 8, line: { text: "Hello there", delivery: "spoken" } },
+      { index: 2, locationId: "kitchen", durationSeconds: 8, line: { text: "Goodbye friend", delivery: "spoken" } },
+    ];
+    const result = suggestionsFor(request(shots), "coverage.line-without-person-coverage");
+    expect(result).toHaveLength(1);
+    expect(result[0]?.class).toBe("unverified");
+    expect(result[0]?.abstention).toBe("shot type was not supplied");
+    expect(result[0]?.shots).toEqual([1, 2]);
+    expect(result.filter((item) => item.class === "measured")).toEqual([]);
   });
 
   it("gives every suggestion evidence or an abstention and never a spend field", () => {
