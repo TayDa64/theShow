@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { hostKey, sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
+import { hostKey, exclusiveTempPath, sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
 import { noteReportedSpend, recordedSpendUsd, type SequenceJob } from "../mcp/server.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -143,16 +143,17 @@ describe("phase 1 recovery without a bot", () => {
 
   it("keeps both annotations when two processes write the same film", async () => {
     const jobs = await jobsDir();
+    const gate = await mkdtemp(path.join(tmpdir(), "theshow-claim-gate-"));
     const ids = Array.from({ length: 60 }, (_, round) => `seq_phase1_race_${round}`);
     for (const id of ids) {
       await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
     }
     const [review, repair] = await Promise.all([
-      runChild(jobs, ["annotate-batch", "review", ...ids]),
-      runChild(jobs, ["annotate-batch", "repair", ...ids]),
+      runChild(jobs, ["annotate-batch", "review", ...ids], { THESHOW_CLAIM_GATE: gate }),
+      runChild(jobs, ["annotate-after-pause", gate, "repair", ...ids]),
     ]);
-    expect(review.status, review.stderr).toBe(0);
-    expect(repair.status, repair.stderr).toBe(0);
+    expect(review.status, `${review.stderr}\n${review.stdout}`).toBe(0);
+    expect(repair.status, `${repair.stderr}\n${repair.stdout}`).toBe(0);
     expect(review.stdout).toContain("persisted");
     expect(repair.stdout).toContain("persisted");
     for (const id of ids) {
@@ -247,6 +248,72 @@ describe("phase 1 recovery without a bot", () => {
     expect(names.some((name) => name.includes("bbbbbb"))).toBe(true);
     expect(names.some((name) => name.includes("cccccc"))).toBe(false);
   });
+
+  it("sweeps a stale review-frame directory when the server loads jobs", async () => {
+    const jobs = await jobsDir();
+    const stale = path.join(jobs, `.review-frames-999999-${hostKey()}-m25sweep`);
+    await mkdir(stale);
+    const child = await runChild(jobs, ["load-jobs"]);
+    expect(child.status, child.stderr).toBe(0);
+    const names = await readdir(jobs);
+    expect(names.some((name) => name.startsWith(".review-frames-"))).toBe(false);
+  });
+
+  it("names a claim temp with the host hash so a dead local writer is swept", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "theshow-claim-tmp-"));
+    const named = exclusiveTempPath(path.join(dir, "film.claim"));
+    expect(named).toContain(`.${hostKey()}.`);
+    const dead = path.join(dir, `film.claim.999999.${hostKey()}.${"a".repeat(8)}-bbbb-cccc-dddd-eeeeeeeeeeee.tmp`);
+    const foreign = path.join(dir, `film.claim.999999.${"ab".repeat(32)}.${"b".repeat(8)}-bbbb-cccc-dddd-eeeeeeeeeeee.tmp`);
+    await writeFile(dead, "dead");
+    await writeFile(foreign, "foreign");
+    await sweepOrphanTemps(dir);
+    const names = await readdir(dir);
+    expect(names.some((name) => name.includes("999999") && name.includes(hostKey()))).toBe(false);
+    expect(names.some((name) => name.includes("ab".repeat(16)))).toBe(true);
+  });
+
+  it("queues a budget while another process is rendering and applies it on the next claim", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_deferred_budget";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
+    const holder = spawn(process.execPath, ["--import", "tsx", CHILD, "hold-running", id], {
+      cwd: ROOT,
+      env: childEnv(jobs),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let held = "";
+    holder.stdout?.setEncoding("utf8");
+    holder.stdout?.on("data", (chunk: string) => { held += chunk; });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`holder did not answer\n${held}`)), 10_000);
+      holder.stdout?.on("data", () => {
+        if (held.includes("holding")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    const estimate = await runChild(jobs, ["call-tool", "generate_controlled_clip", JSON.stringify({
+      prompt: "A lantern.", jobId: id, budgetUsd: 4, confirm: false,
+    })]);
+    holder.kill("SIGKILL");
+    expect(estimate.status, estimate.stderr).toBe(0);
+    const body = JSON.parse(estimate.stdout) as { budgetNote?: { deferred?: boolean; queued?: boolean; reason?: string } };
+    expect(body.budgetNote?.deferred).toBe(true);
+    expect(body.budgetNote?.queued).toBe(true);
+    expect(body.budgetNote?.reason).toMatch(/rendering/);
+    const during = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as { spendLedger?: { thresholdUsd?: number } };
+    expect(during.spendLedger?.thresholdUsd).toBeUndefined();
+    const merged = await runChild(jobs, ["annotate-review", id]);
+    expect(merged.status, merged.stderr).toBe(0);
+    const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
+      continuityReview?: { version?: number };
+      spendLedger?: { thresholdUsd?: number };
+    };
+    expect(saved.continuityReview?.version).toBe(1);
+    expect(saved.spendLedger?.thresholdUsd).toBe(4);
+  }, 30_000);
 
   it("does not let a clip, still, or extend estimate rewrite a film another process is rendering", async () => {
     const jobs = await jobsDir();

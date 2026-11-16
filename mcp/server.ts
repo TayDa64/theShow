@@ -37,6 +37,7 @@ import {
   generateGrokClip,
   generateGrokStill,
   localImageRefAllowed,
+  paidStubEnabled,
   type GrokClipResult,
 } from "./grokVideo.ts";
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
@@ -1170,9 +1171,10 @@ export function noteReportedSpend(
   job: SequenceJob,
   kind: SpendKind,
   usd: number,
-  flags?: { estimated?: boolean; derived?: boolean },
+  flags?: { estimated?: boolean; derived?: boolean; uncertain?: boolean; reason?: string },
 ): void {
-  if (!(usd > 0)) return;
+  const unbilled = flags?.reason !== undefined && !(usd > 0);
+  if (!(usd > 0) && !unbilled) return;
   const entries = [...(job.spendLedger?.entries ?? [])];
   if (entries.length === 0) {
     for (const shot of job.shots) {
@@ -1186,6 +1188,8 @@ export function noteReportedSpend(
     usd: Math.round(usd * 100) / 100,
     ...(flags?.estimated ? { estimated: true } : {}),
     ...(flags?.derived ? { derived: true } : {}),
+    ...(flags?.uncertain ? { uncertain: true } : {}),
+    ...(flags?.reason ? { reason: flags.reason } : {}),
   });
   const spentUsd = Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
   job.spendLedger = {
@@ -1220,16 +1224,165 @@ export function carrySpend(source: SequenceJob): PersistedSpend | undefined {
   };
 }
 
-async function writeFilmNote(jobId: string, patch: (job: SequenceJob) => void): Promise<void> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const saved = await saveJobAnnotation(jobId, patch);
-    if (saved.ok || !saved.message.includes("retry shortly")) return;
-    await sleep(5 + attempt);
-  }
+type SpendNote = {
+  op: "budget";
+  thresholdUsd: number;
+} | {
+  op: "spend";
+  kind: SpendKind;
+  usd: number;
+  estimated?: boolean;
+  uncertain?: boolean;
+  reason?: string;
+};
+
+export type NoteOutcome = { applied: true } | { applied: false; deferred: true; queued: true; reason: string };
+
+function spendJournalDir(jobId: string): string {
+  return join(JOBS_DIR, ".spend-journal", jobId);
 }
 
-async function rememberBudget(jobId: string, budgetUsd: number): Promise<void> {
-  await writeFilmNote(jobId, (job) => {
+function applySpendNote(job: SequenceJob, note: SpendNote): void {
+  if (note.op === "budget") {
+    const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
+    job.spendLedger = {
+      ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+      thresholdUsd: note.thresholdUsd,
+      spentUsd: spent,
+    };
+    return;
+  }
+  noteReportedSpend(job, note.kind, note.usd, {
+    estimated: note.estimated,
+    uncertain: note.uncertain,
+    reason: note.reason,
+  });
+}
+
+async function enqueueSpendNote(jobId: string, note: SpendNote): Promise<void> {
+  const dir = spendJournalDir(jobId);
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${Date.now()}-${process.pid}-${randomUUID()}.json`);
+  await writeFile(file, JSON.stringify(note));
+}
+
+const spendDrain = new Map<string, Promise<void>>();
+
+async function drainSpendJournal(job: SequenceJob): Promise<void> {
+  const previous = spendDrain.get(job.id) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(async () => {
+    let names: string[] = [];
+    const dir = spendJournalDir(job.id);
+    try {
+      names = await readdir(dir);
+    } catch {
+      return;
+    }
+    names.sort();
+    for (const name of names) {
+      const file = join(dir, name);
+      try {
+        const note = JSON.parse(await readFile(file, "utf8")) as SpendNote;
+        applySpendNote(job, note);
+        await unlink(file);
+      } catch {
+        // A torn note stays for the next drain.
+      }
+    }
+  });
+  spendDrain.set(job.id, run);
+  await run;
+}
+
+function thisProcessOwns(job: SequenceJob): boolean {
+  const owner = job.owner;
+  if (owner && owner.token === processToken && owner.pid === process.pid) return true;
+  const claim = job.claim;
+  return Boolean(claim && claim.token === processToken && claim.pid === process.pid);
+}
+
+function deferredField(outcome: NoteOutcome | undefined, key: "budgetNote" | "spendNote"): Record<string, unknown> {
+  if (!outcome || outcome.applied) return {};
+  return { [key]: { deferred: true, queued: true, reason: outcome.reason } };
+}
+
+/** What to record after a provider call. A refusal is $0. A missing bill on an accepted call is the quote. */
+export function chargeForProviderResult(
+  result: {
+    status?: string;
+    costUsd?: number;
+    code?: string;
+    fallback?: string;
+    requestId?: string;
+    error?: string;
+    videoUrl?: string;
+    localPath?: string;
+    imageUrl?: string;
+  },
+  quotedUsd: number,
+): { record: boolean; usd: number; estimated?: boolean; uncertain?: boolean; reason?: string } {
+  if (
+    result.fallback === "stub"
+    || result.code === "no-credential"
+    || result.code === "expired-credential"
+    || result.code === "prompt-rejected"
+  ) {
+    return { record: false, usd: 0 };
+  }
+  const reported = result.costUsd ?? 0;
+  if (reported > 0) return { record: true, usd: Math.round(reported * 100) / 100 };
+  const accepted = result.status === "completed"
+    || result.status === "submitted"
+    || Boolean(result.requestId)
+    || Boolean(result.videoUrl)
+    || Boolean(result.localPath)
+    || Boolean(result.imageUrl);
+  if (accepted) return { record: true, usd: quotedUsd, estimated: true };
+  if (result.status === "timeout" || result.code === "timeout") {
+    return {
+      record: true,
+      usd: quotedUsd,
+      estimated: true,
+      uncertain: true,
+      reason: result.error ?? "The provider did not say whether this was billed.",
+    };
+  }
+  if (
+    result.code === "rejected"
+    || result.code === "failed"
+    || result.code === "submit-failed"
+    || result.code === "no-request-id"
+    || result.status === "failed"
+  ) {
+    return {
+      record: true,
+      usd: 0,
+      reason: result.error ?? result.code ?? "The provider did not accept this request.",
+    };
+  }
+  return {
+    record: true,
+    usd: 0,
+    uncertain: true,
+    reason: result.error ?? "The provider did not say whether this was billed.",
+  };
+}
+
+async function writeFilmNote(jobId: string, note: SpendNote, patch: (job: SequenceJob) => void): Promise<NoteOutcome> {
+  let reason = "The note was not written.";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const saved = await saveJobAnnotation(jobId, patch);
+    if (saved.ok) return { applied: true };
+    reason = saved.message;
+    if (!saved.message.includes("retry shortly")) break;
+    await sleep(5 + attempt);
+  }
+  await enqueueSpendNote(jobId, note);
+  return { applied: false, deferred: true, queued: true, reason };
+}
+
+async function rememberBudget(jobId: string, budgetUsd: number): Promise<NoteOutcome> {
+  return writeFilmNote(jobId, { op: "budget", thresholdUsd: budgetUsd }, (job) => {
     const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
     job.spendLedger = {
       ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
@@ -1243,15 +1396,22 @@ async function recordFilmCost(
   jobId: string,
   kind: SpendKind,
   usd: number,
-  estimated: boolean,
-): Promise<void> {
-  await writeFilmNote(jobId, (job) => {
-    noteReportedSpend(job, kind, usd, estimated ? { estimated: true } : undefined);
+  flags?: { estimated?: boolean; uncertain?: boolean; reason?: string },
+): Promise<NoteOutcome> {
+  return writeFilmNote(jobId, {
+    op: "spend",
+    kind,
+    usd,
+    estimated: flags?.estimated,
+    uncertain: flags?.uncertain,
+    reason: flags?.reason,
+  }, (job) => {
+    noteReportedSpend(job, kind, usd, flags);
   });
 }
 
 async function refuseIfSessionWillNotLast(estimatedJobMs: number) {
-  if (process.env.THESHOW_STUB_VIDEO === "1") return undefined;
+  if (paidStubEnabled()) return undefined;
   const session = await ensureCredentialForJob(estimatedJobMs);
   if (session.ok) return undefined;
   return refusal({
@@ -1758,7 +1918,8 @@ server.registerTool(
       clipFingerprint,
       clipJob ? recordedSpendUsd(clipJob) : 0,
     );
-    if (jobId && budgetUsd !== undefined) await rememberBudget(jobId, budgetUsd);
+    let budgetNote: NoteOutcome | undefined;
+    if (jobId && budgetUsd !== undefined) budgetNote = await rememberBudget(jobId, budgetUsd);
     const clipCostRefusal = costRefusal(clipPaid);
     if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
@@ -1796,6 +1957,7 @@ server.registerTool(
         contract: clipContract,
         contractValidation: gate,
         ...costFields(clipPaid),
+        ...deferredField(budgetNote, "budgetNote"),
         message: decision === "estimate"
           ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves."
           : (gate.message ?? RENDER_BLOCKED_BY_CONTRACT),
@@ -1815,11 +1977,14 @@ server.registerTool(
     job.referenceImageUrls = prepared.length > 0 ? prepared : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
-    const reportedClip = result.costUsd;
-    const clipStub = result.fallback === "stub" || result.code === "no-credential";
-    if (jobId && !clipStub) {
-      const estimated = !((reportedClip ?? 0) > 0);
-      await recordFilmCost(jobId, "video", estimated ? clipPaid.quote.usd : (reportedClip ?? 0), estimated);
+    const clipCharge = chargeForProviderResult(result, clipPaid.quote.usd);
+    let spendNote: NoteOutcome | undefined;
+    if (jobId && clipCharge.record) {
+      spendNote = await recordFilmCost(jobId, "video", clipCharge.usd, {
+        estimated: clipCharge.estimated,
+        uncertain: clipCharge.uncertain,
+        reason: clipCharge.reason,
+      });
     }
     return {
       content: [{
@@ -1834,6 +1999,8 @@ server.registerTool(
           referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
           unknownCharacters: missing.length > 0 ? missing : undefined,
           ...costFields(clipPaid),
+          ...deferredField(budgetNote, "budgetNote"),
+          ...deferredField(spendNote, "spendNote"),
           args,
         }, null, 2)
       }]
@@ -1884,7 +2051,8 @@ server.registerTool(
       }),
       extensionJob ? recordedSpendUsd(extensionJob) : 0,
     );
-    if (args.jobId && args.budgetUsd !== undefined) await rememberBudget(args.jobId, args.budgetUsd);
+    let extensionBudget: NoteOutcome | undefined;
+    if (args.jobId && args.budgetUsd !== undefined) extensionBudget = await rememberBudget(args.jobId, args.budgetUsd);
     const extensionCostRefusal = costRefusal(extensionPaid);
     if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
@@ -1894,6 +2062,7 @@ server.registerTool(
         willRender: false,
         contractValidation: extensionGate,
         ...costFields(extensionPaid),
+        ...deferredField(extensionBudget, "budgetNote"),
         message: args.confirm
           ? (extensionGate.message ?? RENDER_UNCHECKED)
           : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation.",
@@ -1927,6 +2096,14 @@ server.registerTool(
       };
     }
 
+    if (paidStubEnabled()) {
+      let spendNote: NoteOutcome | undefined;
+      if (args.jobId) {
+        spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ requestId: "stub", status: "submitted", extendedBy: args.durationSeconds, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
+    }
+
     const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
     const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
       method: "POST",
@@ -1953,7 +2130,7 @@ server.registerTool(
     }
 
     if (!args.waitForCompletion) {
-      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
       return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
     }
 
@@ -1967,7 +2144,7 @@ server.registerTool(
         const extendCost = costUsdFromUsage(poll.usage);
         const estimated = !((extendCost ?? 0) > 0);
         if (args.jobId) {
-          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : (extendCost ?? 0), estimated);
+          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : (extendCost ?? 0), estimated ? { estimated: true } : undefined);
         }
         return {
           content: [{
@@ -1988,7 +2165,7 @@ server.registerTool(
         return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
     }
-    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
   }
 );
@@ -2162,7 +2339,8 @@ server.registerTool(
       stillFingerprint,
       stillJob ? recordedSpendUsd(stillJob) : 0,
     );
-    if (stillJob && args.budgetUsd !== undefined && args.jobId) await rememberBudget(args.jobId, args.budgetUsd);
+    let stillBudget: NoteOutcome | undefined;
+    if (stillJob && args.budgetUsd !== undefined && args.jobId) stillBudget = await rememberBudget(args.jobId, args.budgetUsd);
     const stillCostRefusal = costRefusal(stillPaid);
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
@@ -2179,6 +2357,7 @@ server.registerTool(
               basis: "One still at $0.02. Nothing is generated until confirm is true.",
             },
             ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
             next: "Show the estimate. Call again with confirm: true only after the user approves.",
           }, null, 2),
         }],
@@ -2198,11 +2377,14 @@ server.registerTool(
       { outputDir: OUTPUT_DIR },
     );
 
-    const reportedStill = result.costUsd;
-    const stillStub = result.code === "no-credential" || result.code === "expired-credential";
-    if (args.jobId && !stillStub) {
-      const estimated = !((reportedStill ?? 0) > 0);
-      await recordFilmCost(args.jobId, "still", estimated ? stillPaid.quote.usd : (reportedStill ?? 0), estimated);
+    const stillCharge = chargeForProviderResult(result, stillPaid.quote.usd);
+    let stillSpend: NoteOutcome | undefined;
+    if (args.jobId && stillCharge.record) {
+      stillSpend = await recordFilmCost(args.jobId, "still", stillCharge.usd, {
+        estimated: stillCharge.estimated,
+        uncertain: stillCharge.uncertain,
+        reason: stillCharge.reason,
+      });
     }
 
     if (!result.localPath) {
@@ -2219,6 +2401,8 @@ server.registerTool(
             referenceImagesUsed: urls.length,
             unknownCharacters: missing.length > 0 ? missing : undefined,
             ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
+            ...deferredField(stillSpend, "spendNote"),
           }, null, 2),
         }],
       };
@@ -2242,6 +2426,8 @@ server.registerTool(
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : undefined,
           ...costFields(stillPaid),
+          ...deferredField(stillBudget, "budgetNote"),
+          ...deferredField(stillSpend, "spendNote"),
           message:
             "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a " +
             "reference. board_film does a whole film's frames in one call.",
@@ -2549,6 +2735,7 @@ function noteRevision(job: SequenceJob): void {
  * later snapshot exists, so disk cannot go back to "running" and lose the film path.
  */
 export async function persistJob(job: SequenceJob): Promise<void> {
+  if (thisProcessOwns(job)) await drainSpendJournal(job);
   const revision = (jobRevision.get(job.id) ?? 0) + 1;
   job.revision = revision;
   jobRevision.set(job.id, revision);
@@ -2819,6 +3006,17 @@ async function commitClaimFromDisk(jobId: string, owner: JobOwner): Promise<bool
   return true;
 }
 
+/**
+ * Test seam. Unset in production. A probe runs after this process has read the
+ * film and before it takes the claim, which is the window a stale snapshot would
+ * overwrite.
+ */
+let beforeClaimProbe: ((jobId: string) => Promise<void>) | undefined;
+
+export function setBeforeClaimProbe(next: ((jobId: string) => Promise<void>) | undefined): void {
+  beforeClaimProbe = next;
+}
+
 export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
   await refreshJobsFromDisk();
   const job = sequenceJobs.get(jobId);
@@ -2829,6 +3027,9 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
   if (job.claim && !jobShouldStop(job.claim)) {
     return { ok: false, message: claimBusyMessage(job.claim) };
   }
+  // The in-memory film is from before this wait. commitClaimFromDisk re-reads
+  // so a note written while we wait is not overwritten by that snapshot.
+  if (beforeClaimProbe) await beforeClaimProbe(jobId);
 
   for (let attempt = 0; attempt < 40; attempt++) {
     const age = await claimFileAge(jobId);
@@ -3213,8 +3414,17 @@ async function runSequenceJob(
         sentPrompt: anchored,
         durationSeconds: shot.durationSeconds,
       };
-      job.spentUsd += result.costUsd ?? 0;
-      if ((result.costUsd ?? 0) > 0) noteReportedSpend(job, "video", result.costUsd ?? 0);
+      const quotedShot = Math.round(shot.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
+      const shotCharge = chargeForProviderResult(result, quotedShot);
+      entry.costUsd = shotCharge.record ? shotCharge.usd : result.costUsd;
+      if (shotCharge.record) {
+        job.spentUsd += shotCharge.usd;
+        noteReportedSpend(job, "video", shotCharge.usd, {
+          estimated: shotCharge.estimated,
+          uncertain: shotCharge.uncertain,
+          reason: shotCharge.reason,
+        });
+      }
       job.shots.push(entry);
 
       if (result.status !== "completed" || !result.videoUrl) {
@@ -4175,8 +4385,9 @@ server.registerTool(
         boardDeps,
       )
       : priced;
+    let boardSpend: NoteOutcome | undefined;
     if (boardJob && args.jobId && (board.estimate.spentUsd ?? 0) > 0) {
-      await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, false);
+      boardSpend = await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, undefined);
     }
 
     const boardFrames = Array.isArray(board.frames) ? board.frames : [];
@@ -4208,6 +4419,7 @@ server.registerTool(
         ? { renderShots: toRenderShots(board) }
         : {}),
       ...costFields(boardPaid),
+      ...deferredField(boardSpend, "spendNote"),
     };
 
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };

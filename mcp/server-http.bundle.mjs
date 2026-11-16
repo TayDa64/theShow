@@ -45279,9 +45279,12 @@ function linkUnsupported(err) {
 var exclusiveFs = {
   link: (existing, hardLink) => link(existing, hardLink)
 };
+function exclusiveTempPath(dest) {
+  return `${dest}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
+}
 async function publishExclusive(dest, body) {
   await mkdir2(dirname2(dest), { recursive: true });
-  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  const tmp = exclusiveTempPath(dest);
   await writeFile2(tmp, body, "utf8");
   try {
     try {
@@ -45974,12 +45977,19 @@ async function generateGrokClip(job, opts) {
   }
   return generateGrokClipNow(job, opts);
 }
+function paidStubEnabled() {
+  const flag = process.env.THESHOW_STUB_VIDEO;
+  if (flag !== "1" && flag !== "completed") return false;
+  return process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+}
+function paidStubClipResult() {
+  if (process.env.THESHOW_STUB_VIDEO === "completed") return { status: "completed" };
+  return { status: "failed", error: "stub", fallback: "stub" };
+}
 async function generateGrokClipNow(job, opts) {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
-  if (process.env.THESHOW_STUB_VIDEO === "1") {
-    return { status: "failed", error: "stub", fallback: "stub" };
-  }
+  if (paidStubEnabled()) return paidStubClipResult();
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -46139,6 +46149,9 @@ async function generateGrokStill(job, opts) {
 async function generateGrokStillNow(job, opts) {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
+  if (paidStubEnabled()) {
+    return { error: "stub", code: "failed", fallback: "stub" };
+  }
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
     return {
@@ -49522,7 +49535,8 @@ function recordedSpendUsd(job) {
   return Math.round(job.shots.reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100) / 100;
 }
 function noteReportedSpend(job, kind, usd, flags) {
-  if (!(usd > 0)) return;
+  const unbilled = flags?.reason !== void 0 && !(usd > 0);
+  if (!(usd > 0) && !unbilled) return;
   const entries = [...job.spendLedger?.entries ?? []];
   if (entries.length === 0) {
     for (const shot of job.shots) {
@@ -49535,7 +49549,9 @@ function noteReportedSpend(job, kind, usd, flags) {
     kind,
     usd: Math.round(usd * 100) / 100,
     ...flags?.estimated ? { estimated: true } : {},
-    ...flags?.derived ? { derived: true } : {}
+    ...flags?.derived ? { derived: true } : {},
+    ...flags?.uncertain ? { uncertain: true } : {},
+    ...flags?.reason ? { reason: flags.reason } : {}
   });
   const spentUsd = Math.round(entries.reduce((sum, entry2) => sum + entry2.usd, 0) * 100) / 100;
   job.spendLedger = {
@@ -49563,15 +49579,111 @@ function carrySpend(source) {
     entries: derived2
   };
 }
-async function writeFilmNote(jobId, patch) {
+function spendJournalDir(jobId) {
+  return join8(JOBS_DIR, ".spend-journal", jobId);
+}
+function applySpendNote(job, note) {
+  if (note.op === "budget") {
+    const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
+    job.spendLedger = {
+      ...job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 },
+      thresholdUsd: note.thresholdUsd,
+      spentUsd: spent
+    };
+    return;
+  }
+  noteReportedSpend(job, note.kind, note.usd, {
+    estimated: note.estimated,
+    uncertain: note.uncertain,
+    reason: note.reason
+  });
+}
+async function enqueueSpendNote(jobId, note) {
+  const dir = spendJournalDir(jobId);
+  await mkdir5(dir, { recursive: true });
+  const file2 = join8(dir, `${Date.now()}-${process.pid}-${randomUUID3()}.json`);
+  await writeFile5(file2, JSON.stringify(note));
+}
+var spendDrain = /* @__PURE__ */ new Map();
+async function drainSpendJournal(job) {
+  const previous = spendDrain.get(job.id) ?? Promise.resolve();
+  const run = previous.catch(() => void 0).then(async () => {
+    let names = [];
+    const dir = spendJournalDir(job.id);
+    try {
+      names = await readdir3(dir);
+    } catch {
+      return;
+    }
+    names.sort();
+    for (const name of names) {
+      const file2 = join8(dir, name);
+      try {
+        const note = JSON.parse(await readFile6(file2, "utf8"));
+        applySpendNote(job, note);
+        await unlink3(file2);
+      } catch {
+      }
+    }
+  });
+  spendDrain.set(job.id, run);
+  await run;
+}
+function thisProcessOwns(job) {
+  const owner = job.owner;
+  if (owner && owner.token === processToken && owner.pid === process.pid) return true;
+  const claim2 = job.claim;
+  return Boolean(claim2 && claim2.token === processToken && claim2.pid === process.pid);
+}
+function deferredField(outcome, key) {
+  if (!outcome || outcome.applied) return {};
+  return { [key]: { deferred: true, queued: true, reason: outcome.reason } };
+}
+function chargeForProviderResult(result, quotedUsd) {
+  if (result.fallback === "stub" || result.code === "no-credential" || result.code === "expired-credential" || result.code === "prompt-rejected") {
+    return { record: false, usd: 0 };
+  }
+  const reported = result.costUsd ?? 0;
+  if (reported > 0) return { record: true, usd: Math.round(reported * 100) / 100 };
+  const accepted = result.status === "completed" || result.status === "submitted" || Boolean(result.requestId) || Boolean(result.videoUrl) || Boolean(result.localPath) || Boolean(result.imageUrl);
+  if (accepted) return { record: true, usd: quotedUsd, estimated: true };
+  if (result.status === "timeout" || result.code === "timeout") {
+    return {
+      record: true,
+      usd: quotedUsd,
+      estimated: true,
+      uncertain: true,
+      reason: result.error ?? "The provider did not say whether this was billed."
+    };
+  }
+  if (result.code === "rejected" || result.code === "failed" || result.code === "submit-failed" || result.code === "no-request-id" || result.status === "failed") {
+    return {
+      record: true,
+      usd: 0,
+      reason: result.error ?? result.code ?? "The provider did not accept this request."
+    };
+  }
+  return {
+    record: true,
+    usd: 0,
+    uncertain: true,
+    reason: result.error ?? "The provider did not say whether this was billed."
+  };
+}
+async function writeFilmNote(jobId, note, patch) {
+  let reason = "The note was not written.";
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const saved = await saveJobAnnotation(jobId, patch);
-    if (saved.ok || !saved.message.includes("retry shortly")) return;
+    if (saved.ok) return { applied: true };
+    reason = saved.message;
+    if (!saved.message.includes("retry shortly")) break;
     await sleep2(5 + attempt);
   }
+  await enqueueSpendNote(jobId, note);
+  return { applied: false, deferred: true, queued: true, reason };
 }
 async function rememberBudget(jobId, budgetUsd) {
-  await writeFilmNote(jobId, (job) => {
+  return writeFilmNote(jobId, { op: "budget", thresholdUsd: budgetUsd }, (job) => {
     const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
     job.spendLedger = {
       ...job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 },
@@ -49580,13 +49692,20 @@ async function rememberBudget(jobId, budgetUsd) {
     };
   });
 }
-async function recordFilmCost(jobId, kind, usd, estimated) {
-  await writeFilmNote(jobId, (job) => {
-    noteReportedSpend(job, kind, usd, estimated ? { estimated: true } : void 0);
+async function recordFilmCost(jobId, kind, usd, flags) {
+  return writeFilmNote(jobId, {
+    op: "spend",
+    kind,
+    usd,
+    estimated: flags?.estimated,
+    uncertain: flags?.uncertain,
+    reason: flags?.reason
+  }, (job) => {
+    noteReportedSpend(job, kind, usd, flags);
   });
 }
 async function refuseIfSessionWillNotLast(estimatedJobMs) {
-  if (process.env.THESHOW_STUB_VIDEO === "1") return void 0;
+  if (paidStubEnabled()) return void 0;
   const session = await ensureCredentialForJob(estimatedJobMs);
   if (session.ok) return void 0;
   return refusal({
@@ -49980,7 +50099,8 @@ server.registerTool(
       clipFingerprint,
       clipJob ? recordedSpendUsd(clipJob) : 0
     );
-    if (jobId && budgetUsd !== void 0) await rememberBudget(jobId, budgetUsd);
+    let budgetNote;
+    if (jobId && budgetUsd !== void 0) budgetNote = await rememberBudget(jobId, budgetUsd);
     const clipCostRefusal = costRefusal(clipPaid);
     if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
@@ -50017,6 +50137,7 @@ server.registerTool(
         contract: clipContract,
         contractValidation: gate,
         ...costFields(clipPaid),
+        ...deferredField(budgetNote, "budgetNote"),
         message: decision === "estimate" ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves." : gate.message ?? RENDER_BLOCKED_BY_CONTRACT
       });
     }
@@ -50031,11 +50152,14 @@ server.registerTool(
     const prepared = await withPersonCutouts(characters, urls);
     job.referenceImageUrls = prepared.length > 0 ? prepared : void 0;
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
-    const reportedClip = result.costUsd;
-    const clipStub = result.fallback === "stub" || result.code === "no-credential";
-    if (jobId && !clipStub) {
-      const estimated = !((reportedClip ?? 0) > 0);
-      await recordFilmCost(jobId, "video", estimated ? clipPaid.quote.usd : reportedClip ?? 0, estimated);
+    const clipCharge = chargeForProviderResult(result, clipPaid.quote.usd);
+    let spendNote;
+    if (jobId && clipCharge.record) {
+      spendNote = await recordFilmCost(jobId, "video", clipCharge.usd, {
+        estimated: clipCharge.estimated,
+        uncertain: clipCharge.uncertain,
+        reason: clipCharge.reason
+      });
     }
     return {
       content: [{
@@ -50046,6 +50170,8 @@ server.registerTool(
           referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
           unknownCharacters: missing.length > 0 ? missing : void 0,
           ...costFields(clipPaid),
+          ...deferredField(budgetNote, "budgetNote"),
+          ...deferredField(spendNote, "spendNote"),
           args
         }, null, 2)
       }]
@@ -50089,7 +50215,8 @@ server.registerTool(
       }),
       extensionJob ? recordedSpendUsd(extensionJob) : 0
     );
-    if (args.jobId && args.budgetUsd !== void 0) await rememberBudget(args.jobId, args.budgetUsd);
+    let extensionBudget;
+    if (args.jobId && args.budgetUsd !== void 0) extensionBudget = await rememberBudget(args.jobId, args.budgetUsd);
     const extensionCostRefusal = costRefusal(extensionPaid);
     if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
@@ -50099,6 +50226,7 @@ server.registerTool(
         willRender: false,
         contractValidation: extensionGate,
         ...costFields(extensionPaid),
+        ...deferredField(extensionBudget, "budgetNote"),
         message: args.confirm ? extensionGate.message ?? RENDER_UNCHECKED : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation."
       });
     }
@@ -50121,6 +50249,13 @@ server.registerTool(
           }, null, 2)
         }]
       };
+    }
+    if (paidStubEnabled()) {
+      let spendNote;
+      if (args.jobId) {
+        spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ requestId: "stub", status: "submitted", extendedBy: args.durationSeconds, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
     }
     const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
     const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
@@ -50147,7 +50282,7 @@ server.registerTool(
       return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
     }
     if (!args.waitForCompletion) {
-      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
       return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
     }
     const deadline = Date.now() + args.timeoutSeconds * 1e3;
@@ -50160,7 +50295,7 @@ server.registerTool(
         const extendCost = costUsdFromUsage(poll.usage);
         const estimated = !((extendCost ?? 0) > 0);
         if (args.jobId) {
-          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : extendCost ?? 0, estimated);
+          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : extendCost ?? 0, estimated ? { estimated: true } : void 0);
         }
         return {
           content: [{
@@ -50181,7 +50316,7 @@ server.registerTool(
         return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
     }
-    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, true);
+    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
     return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
   }
 );
@@ -50305,7 +50440,8 @@ server.registerTool(
       stillFingerprint,
       stillJob ? recordedSpendUsd(stillJob) : 0
     );
-    if (stillJob && args.budgetUsd !== void 0 && args.jobId) await rememberBudget(args.jobId, args.budgetUsd);
+    let stillBudget;
+    if (stillJob && args.budgetUsd !== void 0 && args.jobId) stillBudget = await rememberBudget(args.jobId, args.budgetUsd);
     const stillCostRefusal = costRefusal(stillPaid);
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
@@ -50322,6 +50458,7 @@ server.registerTool(
               basis: "One still at $0.02. Nothing is generated until confirm is true."
             },
             ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
             next: "Show the estimate. Call again with confirm: true only after the user approves."
           }, null, 2)
         }]
@@ -50340,11 +50477,14 @@ server.registerTool(
       },
       { outputDir: OUTPUT_DIR }
     );
-    const reportedStill = result.costUsd;
-    const stillStub = result.code === "no-credential" || result.code === "expired-credential";
-    if (args.jobId && !stillStub) {
-      const estimated = !((reportedStill ?? 0) > 0);
-      await recordFilmCost(args.jobId, "still", estimated ? stillPaid.quote.usd : reportedStill ?? 0, estimated);
+    const stillCharge = chargeForProviderResult(result, stillPaid.quote.usd);
+    let stillSpend;
+    if (args.jobId && stillCharge.record) {
+      stillSpend = await recordFilmCost(args.jobId, "still", stillCharge.usd, {
+        estimated: stillCharge.estimated,
+        uncertain: stillCharge.uncertain,
+        reason: stillCharge.reason
+      });
     }
     if (!result.localPath) {
       return {
@@ -50357,7 +50497,9 @@ server.registerTool(
             costUsd: result.costUsd,
             referenceImagesUsed: urls.length,
             unknownCharacters: missing.length > 0 ? missing : void 0,
-            ...costFields(stillPaid)
+            ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
+            ...deferredField(stillSpend, "spendNote")
           }, null, 2)
         }]
       };
@@ -50380,6 +50522,8 @@ server.registerTool(
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : void 0,
           ...costFields(stillPaid),
+          ...deferredField(stillBudget, "budgetNote"),
+          ...deferredField(stillSpend, "spendNote"),
           message: "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a reference. board_film does a whole film's frames in one call."
         }, null, 2)
       }]
@@ -50482,6 +50626,7 @@ function noteRevision(job) {
   }
 }
 async function persistJob(job) {
+  if (thisProcessOwns(job)) await drainSpendJournal(job);
   const revision = (jobRevision.get(job.id) ?? 0) + 1;
   job.revision = revision;
   jobRevision.set(job.id, revision);
@@ -50704,6 +50849,7 @@ async function commitClaimFromDisk(jobId, owner) {
   await persistJob(disk);
   return true;
 }
+var beforeClaimProbe;
 async function claimFilm(jobId) {
   await refreshJobsFromDisk();
   const job = sequenceJobs.get(jobId);
@@ -50714,6 +50860,7 @@ async function claimFilm(jobId) {
   if (job.claim && !jobShouldStop(job.claim)) {
     return { ok: false, message: claimBusyMessage(job.claim) };
   }
+  if (beforeClaimProbe) await beforeClaimProbe(jobId);
   for (let attempt = 0; attempt < 40; attempt++) {
     const age = await claimFileAge(jobId);
     const existing = age === void 0 ? void 0 : await readClaim(jobId);
@@ -50979,8 +51126,17 @@ async function runSequenceJob(job, args) {
         sentPrompt: anchored,
         durationSeconds: shot.durationSeconds
       };
-      job.spentUsd += result.costUsd ?? 0;
-      if ((result.costUsd ?? 0) > 0) noteReportedSpend(job, "video", result.costUsd ?? 0);
+      const quotedShot = Math.round(shot.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
+      const shotCharge = chargeForProviderResult(result, quotedShot);
+      entry2.costUsd = shotCharge.record ? shotCharge.usd : result.costUsd;
+      if (shotCharge.record) {
+        job.spentUsd += shotCharge.usd;
+        noteReportedSpend(job, "video", shotCharge.usd, {
+          estimated: shotCharge.estimated,
+          uncertain: shotCharge.uncertain,
+          reason: shotCharge.reason
+        });
+      }
       job.shots.push(entry2);
       if (result.status !== "completed" || !result.videoUrl) {
         job.state = "stopped";
@@ -51759,8 +51915,9 @@ server.registerTool(
       },
       boardDeps
     ) : priced;
+    let boardSpend;
     if (boardJob && args.jobId && (board.estimate.spentUsd ?? 0) > 0) {
-      await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, false);
+      boardSpend = await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, void 0);
     }
     const boardFrames = Array.isArray(board.frames) ? board.frames : [];
     const payload = {
@@ -51785,7 +51942,8 @@ server.registerTool(
       ...snapshots.some((snapshot) => snapshot.warnings.length > 0) ? { continuityWarnings: snapshots.flatMap((snapshot) => snapshot.warnings) } : {},
       ...missing.length > 0 ? { unknownCharacters: missing } : {},
       ...board.action === "boarded" || board.action === "partial" ? { renderShots: toRenderShots(board) } : {},
-      ...costFields(boardPaid)
+      ...costFields(boardPaid),
+      ...deferredField(boardSpend, "spendNote")
     };
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   }

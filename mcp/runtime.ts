@@ -262,9 +262,14 @@ export const exclusiveFs = {
  * hard-link, fall back to an exclusive create of `dest` itself, then write and
  * fsync. Callers treat an empty or partial dest as unfinished for a short grace.
  */
+/** Temp name for an exclusive create. The host hash lets a restart sweep a dead writer's file. */
+export function exclusiveTempPath(dest: string): string {
+  return `${dest}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
+}
+
 export async function publishExclusive(dest: string, body: string): Promise<boolean> {
   await mkdir(dirname(dest), { recursive: true });
-  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  const tmp = exclusiveTempPath(dest);
   await writeFile(tmp, body, "utf8");
   try {
     try {

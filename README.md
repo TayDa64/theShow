@@ -356,6 +356,8 @@ npm run build:mcp    # mcp/server.bundle.mjs and mcp/server-http.bundle.mjs
 
 `npm test` is the suite CI runs. It does not call xAI. `npm run test:e2e` is Playwright. `npm run test:e2e:live` sets `RUN_LIVE_VEO=1` and is a paid path. CI does not run it.
 
+`THESHOW_STUB_VIDEO` is a Vitest-only seam. The shipped bundles ignore it unless `VITEST=true` or `NODE_ENV=test`, so setting it on a desktop or HTTP server does not skip the session check and does not fake a paid call. Under Vitest, `THESHOW_STUB_VIDEO=1` stubs clip, still, extend, and board instead of calling the provider. `THESHOW_STUB_VIDEO=completed` returns a completed clip with no reported cost, which is how the per-shot quote fallback is tested.
+
 After changing anything under `mcp/`, run `npm run build:mcp` and commit both bundles. CI's bundle job rebuilds them and fails if `git diff` is not empty.
 
 CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `main`:

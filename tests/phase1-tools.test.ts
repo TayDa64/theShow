@@ -10,7 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { videoQuote } from "../mcp/costGate.ts";
 import { JOBS_DIR, OUTPUT_DIR, resolveTools } from "../mcp/media.ts";
-import { server } from "../mcp/server.ts";
+import { chargeForProviderResult, server } from "../mcp/server.ts";
 
 const exec = promisify(execFile);
 
@@ -713,5 +713,125 @@ describe("phase 1 tools", () => {
     expect(after.filter((name) => name.startsWith("frame-first-") && !before.has(name))).toEqual([]);
     const jobs = await readdir(JOBS_DIR);
     expect(jobs.filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
+  });
+
+  it("records the quoted shot price when a completed render reports no usage", async () => {
+    process.env.THESHOW_STUB_VIDEO = "completed";
+    try {
+      const rendered = JSON.parse(toolText(await client.callTool({
+        name: "render_sequence",
+        arguments: { shots: [shot], confirm: true, overrideValidation: true, assemble: false },
+      })));
+      let ledger: { entries?: Array<{ kind: string; usd: number; estimated?: boolean }> } | undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const raw = await readFile(`${JOBS_DIR}/${rendered.jobId}.json`, "utf8");
+        ledger = JSON.parse(raw).spendLedger;
+        if (ledger?.entries?.some((entry) => entry.estimated)) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const estimated = ledger?.entries?.find((entry) => entry.estimated);
+      expect(estimated?.kind).toBe("video");
+      expect(estimated?.usd).toBe(1.12);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+    }
+  });
+
+  it("records a clip quote when the provider accepts the job and reports no cost", async () => {
+    const previous = globalThis.fetch;
+    const previousKey = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = "test-not-a-key";
+    const id = "seq_phase1_clip_quote";
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 0,
+      completed: 0,
+      estimateUsd: 0,
+      spentUsd: 0,
+      shots: [],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: false, pin: "start" },
+    }));
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({ request_id: "req-clip" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+      const body = JSON.parse(toolText(await client.callTool({
+        name: "generate_controlled_clip",
+        arguments: {
+          prompt: "A lantern.",
+          durationSeconds: 1,
+          confirm: true,
+          overrideValidation: true,
+          waitForCompletion: false,
+          jobId: id,
+        },
+      })));
+      expect(body.status).toBe("submitted");
+      const saved = JSON.parse(await readFile(`${JOBS_DIR}/${id}.json`, "utf8")) as {
+        spendLedger?: { spentUsd: number; entries: Array<{ usd: number; estimated?: boolean }> };
+      };
+      expect(saved.spendLedger?.spentUsd).toBe(0.14);
+      expect(saved.spendLedger?.entries).toEqual([{ kind: "video", usd: 0.14, estimated: true }]);
+    } finally {
+      globalThis.fetch = previous;
+      if (previousKey === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = previousKey;
+    }
+  });
+
+  it("records a refused clip or still as zero with the reason", async () => {
+    const previous = globalThis.fetch;
+    const previousKey = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = "test-not-a-key";
+    const id = "seq_phase1_unbilled";
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 0,
+      completed: 0,
+      estimateUsd: 0,
+      spentUsd: 0,
+      shots: [],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: false, pin: "start" },
+    }));
+    try {
+      globalThis.fetch = (async () => new Response("no", { status: 400 })) as typeof fetch;
+      await client.callTool({
+        name: "generate_controlled_clip",
+        arguments: { prompt: "A lantern.", durationSeconds: 1, confirm: true, overrideValidation: true, jobId: id },
+      });
+      await client.callTool({
+        name: "generate_still",
+        arguments: { prompt: "A lantern.", confirm: true, overrideValidation: true, jobId: id },
+      });
+      const saved = JSON.parse(await readFile(`${JOBS_DIR}/${id}.json`, "utf8")) as {
+        spendLedger?: { spentUsd: number; entries: Array<{ kind: string; usd: number; estimated?: boolean; reason?: string }> };
+      };
+      expect(saved.spendLedger?.spentUsd).toBe(0);
+      expect(saved.spendLedger?.entries?.map((entry) => entry.kind).sort()).toEqual(["still", "video"]);
+      expect(saved.spendLedger?.entries?.every((entry) => entry.usd === 0 && entry.reason && !entry.estimated)).toBe(true);
+    } finally {
+      globalThis.fetch = previous;
+      if (previousKey === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = previousKey;
+    }
+  });
+
+  it("marks an unknown bill as uncertain and leaves an unbilled refusal at zero", () => {
+    expect(chargeForProviderResult({ status: "timeout" }, 0.14)).toMatchObject({
+      record: true,
+      usd: 0.14,
+      estimated: true,
+      uncertain: true,
+    });
+    expect(chargeForProviderResult({ code: "submit-failed", status: "failed", error: "rejected by the proxy" }, 0.14)).toMatchObject({
+      record: true,
+      usd: 0,
+      reason: "rejected by the proxy",
+    });
   });
 });

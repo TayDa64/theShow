@@ -372,15 +372,29 @@ export async function generateGrokClip(
   return generateGrokClipNow(job, opts);
 }
 
+/**
+ * Test-only stand-in for a paid provider call.
+ * A production process, including the shipped bundles, ignores THESHOW_STUB_VIDEO.
+ * Vitest sets VITEST, and a test run may also set NODE_ENV=test.
+ */
+export function paidStubEnabled(): boolean {
+  const flag = process.env.THESHOW_STUB_VIDEO;
+  if (flag !== "1" && flag !== "completed") return false;
+  return process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+}
+
+export function paidStubClipResult(): GrokClipResult {
+  if (process.env.THESHOW_STUB_VIDEO === "completed") return { status: "completed" };
+  return { status: "failed", error: "stub", fallback: "stub" };
+}
+
 async function generateGrokClipNow(
   job: GrokClipJob,
   opts: { waitForCompletion: boolean; timeoutSeconds: number },
 ): Promise<GrokClipResult> {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
-  if (process.env.THESHOW_STUB_VIDEO === "1") {
-    return { status: "failed", error: "stub", fallback: "stub" };
-  }
+  if (paidStubEnabled()) return paidStubClipResult();
 
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {
@@ -622,6 +636,7 @@ export type GrokStillResult = {
   model?: string;
   usage?: Record<string, unknown>;
   costUsd?: number;
+  fallback?: string;
   /** Set when HTTP served a remembered still. The new cost is zero. */
   reused?: boolean;
   /** Which body key the API accepted for the shape, so a caller knows what happened. */
@@ -691,6 +706,9 @@ async function generateGrokStillNow(
 ): Promise<GrokStillResult> {
   const blocked = rejectedPrompt(job.prompt, job.negative);
   if (blocked) return blocked;
+  if (paidStubEnabled()) {
+    return { error: "stub", code: "failed", fallback: "stub" };
+  }
 
   const resolved = resolveVideoCredential();
   if (resolved.ok === false) {

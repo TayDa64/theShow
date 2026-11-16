@@ -68,6 +68,10 @@ export type SpendEntry = {
   estimated?: boolean;
   /** True when the figure was taken from shot costs on a film that had no ledger. */
   derived?: boolean;
+  /** True when the provider did not say whether the call was billed. */
+  uncertain?: boolean;
+  /** Why a zero entry was kept: the provider refused the call, or billing was unknown. */
+  reason?: string;
 };
 
 export type PersistedSpend = {

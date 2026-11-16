@@ -4,12 +4,26 @@
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { stat, writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { setBeforeRenameProbe, sweepOrphanTemps, thisOwner } from "../mcp/runtime.ts";
-import { claimFilm, persistJob, readPersistedJob, saveJobAnnotation, server } from "../mcp/server.ts";
+import { claimFilm, loadJobsFromDisk, persistJob, readPersistedJob, saveJobAnnotation, server, setBeforeClaimProbe } from "../mcp/server.ts";
+
+async function waitForFile(file: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    try {
+      await stat(file);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error(`timed out waiting for ${file}`);
+}
 
 async function main(): Promise<void> {
   const [mode, ...rest] = process.argv.slice(2);
@@ -69,6 +83,16 @@ async function main(): Promise<void> {
         await new Promise(() => undefined);
       });
     }
+    if (process.env.THESHOW_CLAIM_GATE) {
+      const gate = process.env.THESHOW_CLAIM_GATE;
+      const seen = new Set<string>();
+      setBeforeClaimProbe(async (jobId) => {
+        if (seen.has(jobId)) return;
+        seen.add(jobId);
+        await writeFile(path.join(gate, `${jobId}.paused`), "1");
+        await waitForFile(path.join(gate, `${jobId}.go`));
+      });
+    }
     for (const id of ids) {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const saved = await saveJobAnnotation(id, (job) => {
@@ -106,6 +130,48 @@ async function main(): Promise<void> {
       ? check?.repairProposal?.version
       : check?.continuityReview?.version;
     if (!wrote) throw new Error(`annotation gave up for ${id}`);
+    }
+    process.stdout.write("persisted\n");
+    return;
+  }
+  if (mode === "annotate-after-pause") {
+    const [gate, kind, ...ids] = rest;
+    if (!gate || !kind || ids.length === 0) throw new Error("annotate-after-pause needs a gate, kind, and ids");
+    for (const id of ids) {
+      await waitForFile(path.join(gate, `${id}.paused`));
+      let wrote = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const saved = await saveJobAnnotation(id, (job) => {
+          if (kind === "review") {
+            job.continuityReview = {
+              version: 1,
+              findings: [],
+              executed: false,
+              willRender: false,
+              willSpend: false,
+              mutatedPaths: [],
+            };
+          } else {
+            job.repairProposal = {
+              version: 1,
+              badShot: 1,
+              resolution: "720p",
+              options: [],
+              executed: false,
+              willRender: false,
+              willSpend: false,
+            };
+          }
+        });
+        if (saved.ok) {
+          wrote = true;
+          break;
+        }
+        if (!saved.message.includes("retry shortly")) throw new Error(saved.message);
+        await new Promise((resolve) => setTimeout(resolve, 5 + attempt));
+      }
+      if (!wrote) throw new Error(`annotation gave up for ${id}`);
+      await writeFile(path.join(gate, `${id}.go`), "1");
     }
     process.stdout.write("persisted\n");
     return;
@@ -148,6 +214,11 @@ async function main(): Promise<void> {
     const content = result.content;
     const text = Array.isArray(content) && content[0] && "text" in content[0] ? String(content[0].text) : "";
     process.stdout.write(`${text}\n`);
+    return;
+  }
+  if (mode === "load-jobs") {
+    await loadJobsFromDisk();
+    process.stdout.write("loaded\n");
     return;
   }
   if (mode === "show-job") {
