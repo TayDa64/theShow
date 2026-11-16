@@ -20,7 +20,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,6 +28,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveTools } from "../mcp/media.ts";
 import { sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
+import { assertGuardLog } from "./guard-log.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -784,8 +785,9 @@ describe("built bundle end to end", () => {
       for (const home of [stdioHome, httpHome]) {
         const unreadable = path.join(home, "jobs", "seq_e2e_unreadable.json");
         const invalid = path.join(home, "jobs", "seq_e2e_invalid.json");
-        await writeFile(unreadable, "{\"id\":\"seq_e2e_unreadable\"}\n");
-        await chmod(unreadable, 0);
+        // A directory is unreadable as a job file for every uid, including root.
+        // chmod 0 is not: root can still read the file.
+        await mkdir(unreadable);
         await writeFile(invalid, "{ \"id\": \"seq_e2e_invalid\", ");
       }
       for (const [client, home] of [[stdio, stdioHome], [http, httpHome]] as const) {
@@ -794,12 +796,12 @@ describe("built bundle end to end", () => {
         }));
         const findings = body.findings as Array<{ jobIds: string[]; evidence?: { artifactPaths: string[] }; summary: string }>;
         const cited = (id: string) => findings.find((item) => item.jobIds.includes(id));
+        expect(cited("seq_e2e_unreadable")?.summary).toMatch(/unreadable/);
         expect(cited("seq_e2e_unreadable")?.evidence?.artifactPaths).toEqual([path.join(home, "jobs", "seq_e2e_unreadable.json")]);
         expect(cited("seq_e2e_invalid")?.evidence?.artifactPaths).toEqual([path.join(home, "jobs", "seq_e2e_invalid.json")]);
         expect(cited("seq_e2e_absent")?.summary).toBe("Job file not on disk.");
         expect(cited("seq_e2e_absent")?.evidence?.artifactPaths).toEqual([]);
-        const guard = await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => "");
-        expect(guard).not.toMatch(/api\.x\.ai|provider network blocked/);
+        assertGuardLog(await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""), 1);
       }
     } finally {
       stdio.stop();
@@ -891,6 +893,8 @@ describe("built bundle end to end", () => {
         const reports = (await readdir(consistency)).filter((entry) => entry.endsWith(".json"));
         expect(reports.length).toBeGreaterThan(0);
         expect(reports.every((entry) => !entry.endsWith(".tmp"))).toBe(true);
+        // suggest kill, cross-film kill, and the restarted server each load the guard.
+        assertGuardLog(await readFile(path.join(home, "net-guard.log"), "utf8").catch(() => ""), 3);
       } finally {
         restarted.stop();
       }

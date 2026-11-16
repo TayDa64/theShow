@@ -14,11 +14,12 @@
 //   - It never calls live Veo.
 //   - It consumes ZERO daily video-generation quota.
 //
-// It drives the API directly (Playwright `request`) because the film pipeline is a
-// server-orchestrated flow; this is more reliable than UI seed/anchor timing and is
-// the same surface the UI ultimately calls.
+// It calls the film API from inside the page. The built server marks the session
+// cookie Secure, and a bare API request context does not send that cookie on
+// http://127.0.0.1. The assertions are the original sandbox checks.
 
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './hermetic.ts';
 import { browserFetch } from './browser-api.ts';
 
 // Requests run in the page so the built server's Secure session cookie is sent.

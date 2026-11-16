@@ -1,30 +1,25 @@
 /**
  * Preload for bundle processes in tests/e2e-bundles.test.ts.
- * Records outbound HTTP and refuses anything that is not the loopback MCP transport.
- * The production server has no provider-base override, so this is the proof
- * that a tool call did not reach api.x.ai.
+ * Records outbound HTTP and refuses anything that is not loopback.
+ * The production server has no provider base-URL override, so this log is the
+ * proof that a tool call did not reach a provider.
+ *
+ * A line is `guard-loaded` at startup, or `<kind> <target>` for each attempt.
+ * Loopback is an exact hostname: localhost, an address in 127.0.0.0/8, or ::1.
+ * Prefix matches such as localhost.example.com and 127.0.0.1.nip.io are not loopback.
  */
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { appendFileSync } from "node:fs";
+import { isLoopback } from "./loopback-host.mjs";
 
 const logFile = process.env.THESHOW_NET_GUARD_FILE;
+export const GUARD_MARKER = "guard-loaded";
 
-function isLoopback(target) {
-  const text = String(target);
-  return (
-    text === ""
-    || text === "127.0.0.1"
-    || text === "localhost"
-    || text === "::1"
-    || text.startsWith("http://127.0.0.1")
-    || text.startsWith("http://localhost")
-    || text.startsWith("http://[::1]")
-    || text.startsWith("https://127.0.0.1")
-    || text.startsWith("https://localhost")
-  );
-}
+if (logFile) appendFileSync(logFile, `${GUARD_MARKER}\n`);
+
+export { isLoopback };
 
 function note(kind, target) {
   const line = `${kind} ${target}\n`;

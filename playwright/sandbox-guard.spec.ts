@@ -4,7 +4,7 @@
  * this request 503 with code no-video-backend, because an unpinned server
  * with no credential refuses to pretend a mock clip is a render.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test } from './hermetic.ts';
 import { browserFetch } from './browser-api.ts';
 
 test('a lion shot reports the sandbox provider and never Grok or Gemini', async ({ page }) => {

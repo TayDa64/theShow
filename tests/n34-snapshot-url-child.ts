@@ -1,13 +1,16 @@
 /**
- * Child for the P39 test. cwd is the temp directory that holds
- * `https:/example.test/remy.png`, which is the relative path Node uses for
- * `readFile("https://example.test/remy.png")`.
+ * Child for the P39 tests. cwd holds a real file at the relative path Node
+ * uses for the reference string. https://… becomes https:/… . A data: string
+ * is used as the path, slashes included.
  */
 import { saveCharacter, snapshotCharacter } from "../mcp/characters.ts";
 
+const reference = process.env.N34_REFERENCE;
+if (!reference) throw new Error("N34_REFERENCE is required");
+
 const saved = await saveCharacter({
   name: "Remy",
-  referenceImageUrls: ["https://example.test/remy.png"],
+  referenceImageUrls: [reference],
 });
 const snap = await snapshotCharacter("Remy");
 process.stdout.write(`${JSON.stringify({

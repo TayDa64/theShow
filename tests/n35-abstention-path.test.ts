@@ -2,7 +2,7 @@
  * N35: a job file that is present but unreadable or invalid JSON is cited
  * by path. A missing file stays an empty artifactPaths list.
  */
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -53,13 +53,9 @@ describe("check_cross_film abstention paths", () => {
     const absent = "seq_n35_absent";
     const unreadablePath = path.join(JOBS_DIR, `${unreadable}.json`);
     const invalidPath = path.join(JOBS_DIR, `${invalid}.json`);
-    await writeFile(unreadablePath, JSON.stringify({
-      id: unreadable,
-      startedAt: 1,
-      state: "completed",
-      shots: [{ index: 1, title: "Kept" }],
-    }));
-    await chmod(unreadablePath, 0);
+    // A directory at the job path makes readFile throw EISDIR for every uid.
+    // chmod 0 does not: root still reads the file and the case stops being "unreadable".
+    await mkdir(unreadablePath);
     await writeFile(invalidPath, '{ "id": "seq_n35_invalid", "startedAt": ');
     await writeFile(path.join(JOBS_DIR, `${good}.json`), JSON.stringify({
       id: good,

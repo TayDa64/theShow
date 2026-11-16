@@ -47,6 +47,8 @@ Confirmed, and still true after this PR except for the new file.
 
 `extract_last_frame` and `assemble_film` call `probeDuration`, which runs `ffprobe` (`mcp/media.ts:89-102`). `@ffmpeg-installer/ffmpeg` ships ffmpeg and not ffprobe. `resolveTools` (`mcp/media.ts:60-80`) uses `/usr/bin/ffprobe` when `/usr/bin/ffmpeg` exists, and otherwise a sibling path that is not in the installer package. GitHub's `ubuntu-latest` image has neither binary, so the test job installs the `ffmpeg` apt package. That is a CI setup step, not a production change.
 
+R1 review, test-only: the preload writes `guard-loaded` and a `<kind> <target>` line for every outbound attempt. The suite fails unless the marker is present and every target is an exact loopback host (`localhost`, `127.0.0.0/8`, or `::1`). An unreadable N35 job is a directory at the job path, so `readFile` throws `EISDIR` for root as well as for other users. `snapshotCharacter` is also trapped with a `data:` string that is a real relative path. Playwright fulfills the Google Fonts CSS inside the page and does not change `src/index.css`. The Account button's accessible name is `${firstName} account` when signed in.
+
 ## Tool surface
 
 `registerTool` lines in `mcp/server.ts`, unchanged by N35:

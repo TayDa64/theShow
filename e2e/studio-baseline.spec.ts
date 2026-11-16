@@ -3,7 +3,8 @@
  * The Playwright project selects the dev server or the built server.
  */
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from '../playwright/hermetic.ts';
 
 const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
@@ -104,6 +105,7 @@ for (const viewport of viewports) {
     test('account popup signed out offers sign-in', async ({ page }) => {
       const watch = await openStudio(page);
       await openPopup(page, 'account-workspace-trigger', 'Account');
+      await expect(page.getByTestId('account-workspace-trigger')).toHaveAttribute('aria-label', 'Account');
       await expect(page.getByPlaceholder('operator@storyforge.dev')).toBeVisible();
       await expectAxe(page);
       await expectClean(watch);
@@ -123,6 +125,7 @@ for (const viewport of viewports) {
       await expect(page.getByTestId('timeline-shell')).toBeVisible();
       await page.waitForTimeout(1500);
       await openPopup(page, 'account-workspace-trigger', 'Account');
+      await expect(page.getByTestId('account-workspace-trigger')).toHaveAttribute('aria-label', 'Baseline account');
       await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
       await expectAxe(page);
       await expectClean(watch);

@@ -1,7 +1,8 @@
 /**
- * N34 kills P39: snapshotCharacter must not read a remote URL as a file.
- * `readFile("https://example.test/remy.png")` resolves that string as the
- * relative path `https:/example.test/remy.png`.
+ * N34 kills P39 and P39b. snapshotCharacter must not read a remote URL or a
+ * data: URI as a file. `readFile("https://example.test/remy.png")` uses the
+ * relative path `https:/example.test/remy.png`. `readFile("data:image/png;base64,AAAA")`
+ * uses that string itself, slash included.
  */
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -17,48 +18,76 @@ const PNG = Buffer.from(
   "base64",
 );
 
+const DATA_REFERENCE = "data:image/png;base64,AAAA";
+
+async function snapshotAgainstTrap(input: { cwd: string; reference: string }): Promise<{
+  stored: string[];
+  references: Array<{ path: string; sha256: string }> | null;
+  stderr: string;
+}> {
+  const characters = path.join(input.cwd, "characters");
+  await mkdir(characters, { recursive: true });
+  const tsxCli = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const child = spawn(process.execPath, [tsxCli, CHILD], {
+    cwd: input.cwd,
+    env: {
+      PATH: process.env.PATH,
+      HOME: input.cwd,
+      THESHOW_CHARACTERS_DIR: characters,
+      GROK_AUTH_FILE: "/nonexistent/theshow-test-auth.json",
+      THESHOW_FORBID_HOME_AUTH: "1",
+      N34_REFERENCE: input.reference,
+    },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+  child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`n34 child timed out\n${stderr}`));
+    }, 30_000);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve(status);
+    });
+  });
+  expect(code, stderr).toBe(0);
+  return {
+    ...(JSON.parse(stdout) as {
+      stored: string[];
+      references: Array<{ path: string; sha256: string }> | null;
+    }),
+    stderr,
+  };
+}
+
 describe("snapshotCharacter skips remote URLs", () => {
-  it("leaves references empty when the URL string is also a real relative file", async () => {
+  it("leaves references empty when the https string is also a real relative file", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "theshow-n34-"));
     const trap = path.join(cwd, "https:", "example.test", "remy.png");
     await mkdir(path.dirname(trap), { recursive: true });
     await writeFile(trap, PNG);
-    const characters = path.join(cwd, "characters");
-    await mkdir(characters, { recursive: true });
-    const tsxCli = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
-    const child = spawn(process.execPath, [tsxCli, CHILD], {
-      cwd,
-      env: {
-        PATH: process.env.PATH,
-        HOME: cwd,
-        THESHOW_CHARACTERS_DIR: characters,
-        GROK_AUTH_FILE: "/nonexistent/theshow-test-auth.json",
-        THESHOW_FORBID_HOME_AUTH: "1",
-      },
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    const code = await new Promise<number | null>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        reject(new Error(`n34 child timed out\n${stderr}`));
-      }, 30_000);
-      child.on("exit", (status) => {
-        clearTimeout(timer);
-        resolve(status);
-      });
-    });
     try {
-      expect(code, stderr).toBe(0);
-      const body = JSON.parse(stdout) as {
-        stored: string[];
-        references: Array<{ path: string; sha256: string }> | null;
-      };
+      const body = await snapshotAgainstTrap({ cwd, reference: "https://example.test/remy.png" });
       expect(body.stored).toEqual(["https://example.test/remy.png"]);
+      expect(body.references).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it("leaves references empty when a data URI string is also a real relative file", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "theshow-n34-data-"));
+    const trap = path.join(cwd, "data:image", "png;base64,AAAA");
+    await mkdir(path.dirname(trap), { recursive: true });
+    await writeFile(trap, PNG);
+    try {
+      const body = await snapshotAgainstTrap({ cwd, reference: DATA_REFERENCE });
+      expect(body.stored).toEqual([DATA_REFERENCE]);
       expect(body.references).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });

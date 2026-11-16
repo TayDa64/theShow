@@ -46,6 +46,11 @@ export default defineConfig({
     video: 'retain-on-failure',
     headless: true,
     reducedMotion: 'reduce',
+    // Proof run: the browser cannot reach anything but loopback. Font CSS is
+    // fulfilled inside the page fixture, so it never needs this proxy.
+    ...(process.env.THESHOW_BLOCK_EXTERNAL === '1'
+      ? { proxy: { server: 'http://127.0.0.1:9', bypass: '127.0.0.1,localhost' } }
+      : {}),
   },
   projects: [
     {
