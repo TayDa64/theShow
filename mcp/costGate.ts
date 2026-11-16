@@ -80,6 +80,8 @@ export type PersistedSpend = {
   spentUsd: number;
   pendingUsd: number;
   entries?: SpendEntry[];
+  /** Journal note ids already merged. A replay skips these, so a crash cannot double-count. */
+  appliedNoteIds?: string[];
 };
 
 function roundUsd(value: number): number {

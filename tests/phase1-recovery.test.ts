@@ -315,6 +315,137 @@ describe("phase 1 recovery without a bot", () => {
     expect(saved.spendLedger?.thresholdUsd).toBe(4);
   }, 30_000);
 
+  it("counts each queued note once after a restart, including a crash around the merge", async () => {
+    const pauses = ["before-merge", "before-rename", "before-delete"] as const;
+    for (const pause of pauses) {
+      const jobs = await jobsDir();
+      const id = `seq_phase1_journal_${pause}`;
+      await writeFile(path.join(jobs, `${id}.json`), JSON.stringify({
+        ...film(id),
+        estimateUsd: 0,
+        spentUsd: 0,
+        shots: [{ index: 1, title: "Old", status: "completed", prompt: "A lantern.", durationSeconds: 8 }],
+      }));
+      const seeded = await runChild(jobs, ["seed-notes", id, "0.14", "0.28", "0.42"]);
+      expect(seeded.status, seeded.stderr).toBe(0);
+      const child = spawn(process.execPath, ["--import", "tsx", CHILD, "drain-owned", id], {
+        cwd: ROOT,
+        env: childEnv(jobs, { THESHOW_JOURNAL_PAUSE: pause }),
+      });
+      let stdout = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${pause} did not pause\n${stdout}`)), 15_000);
+        child.stdout.on("data", () => {
+          if (stdout.includes("paused")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+      });
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.on("close", resolve));
+      const first = await runChild(jobs, ["drain-owned", id]);
+      const second = await runChild(jobs, ["drain-owned", id]);
+      expect(first.status, first.stderr).toBe(0);
+      expect(second.status, second.stderr).toBe(0);
+      const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
+        spendLedger?: { spentUsd: number; entries?: unknown[]; appliedNoteIds?: string[] };
+      };
+      expect(saved.spendLedger?.spentUsd, pause).toBe(0.84);
+      expect(saved.spendLedger?.entries, pause).toHaveLength(3);
+      expect(saved.spendLedger?.appliedNoteIds, pause).toHaveLength(3);
+      const left = await readdir(path.join(jobs, ".spend-journal", id)).catch(() => [] as string[]);
+      expect(left.filter((name) => name.endsWith(".json")), pause).toEqual([]);
+    }
+  }, 40_000);
+
+  it("keeps a queued total exact across two claims and drops a torn note", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_journal_exact";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify({
+      ...film(id),
+      estimateUsd: 0,
+      spentUsd: 0,
+      shots: [{ index: 1, title: "Old", status: "completed", prompt: "A lantern.", durationSeconds: 8 }],
+    }));
+    const seeded = await runChild(jobs, ["seed-notes", id, "0.14", "0.28", "0.42"]);
+    expect(seeded.status, seeded.stderr).toBe(0);
+    await writeFile(path.join(jobs, ".spend-journal", id, "0000000000000000-torn.json"), "{");
+    const first = await runChild(jobs, ["drain-owned", id]);
+    const second = await runChild(jobs, ["drain-owned", id]);
+    expect(first.status, first.stderr).toBe(0);
+    expect(second.status, second.stderr).toBe(0);
+    const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
+      spendLedger?: { spentUsd: number; entries?: unknown[] };
+    };
+    expect(saved.spendLedger?.spentUsd).toBe(0.84);
+    expect(saved.spendLedger?.entries).toHaveLength(3);
+    const left = await readdir(path.join(jobs, ".spend-journal", id)).catch(() => [] as string[]);
+    expect(left.filter((name) => name.endsWith(".json"))).toEqual([]);
+    expect(left.some((name) => name.includes("torn"))).toBe(false);
+  });
+
+  it("names a deferred extend spend and a deferred budget on a cost refusal", async () => {
+    const jobs = await jobsDir();
+    const id = "seq_phase1_extend_deferred";
+    await writeFile(path.join(jobs, `${id}.json`), JSON.stringify(film(id)));
+    const holder = spawn(process.execPath, ["--import", "tsx", CHILD, "hold-running", id], {
+      cwd: ROOT,
+      env: childEnv(jobs),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let held = "";
+    holder.stdout?.setEncoding("utf8");
+    holder.stdout?.on("data", (chunk: string) => { held += chunk; });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`holder did not answer\n${held}`)), 10_000);
+      holder.stdout?.on("data", () => {
+        if (held.includes("holding")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    const submitted = await runChild(jobs, ["call-tool", "extend_clip", JSON.stringify({
+      videoUrl: "https://example.test/clip.mp4",
+      prompt: "A lantern.",
+      confirm: true,
+      overrideValidation: true,
+      waitForCompletion: false,
+      jobId: id,
+    })], { THESHOW_MOCK_PAID: "1" });
+    const refused = await runChild(jobs, ["call-tool", "generate_controlled_clip", JSON.stringify({
+      prompt: "A lantern.",
+      confirm: true,
+      approvedUsd: 0.14,
+      budgetUsd: 2,
+      jobId: id,
+    })]);
+    const stillRefused = await runChild(jobs, ["call-tool", "generate_still", JSON.stringify({
+      prompt: "A lantern.",
+      confirm: true,
+      approvedUsd: 0.02,
+      budgetUsd: 2,
+      jobId: id,
+    })]);
+    holder.kill("SIGKILL");
+    expect(submitted.status, submitted.stderr).toBe(0);
+    expect(refused.status, refused.stderr).toBe(0);
+    expect(stillRefused.status, stillRefused.stderr).toBe(0);
+    const submittedBody = JSON.parse(submitted.stdout) as { status?: string; spendNote?: { deferred?: boolean; queued?: boolean } };
+    const refusedBody = JSON.parse(refused.stdout) as { action?: string; budgetNote?: { deferred?: boolean } };
+    const stillBody = JSON.parse(stillRefused.stdout) as { action?: string; budgetNote?: { deferred?: boolean } };
+    expect(submittedBody.status).toBe("submitted");
+    expect(submittedBody.spendNote?.deferred).toBe(true);
+    expect(submittedBody.spendNote?.queued).toBe(true);
+    expect(refusedBody.action).toBe("refused");
+    expect(refusedBody.budgetNote?.deferred).toBe(true);
+    expect(stillBody.action).toBe("refused");
+    expect(stillBody.budgetNote?.deferred).toBe(true);
+  }, 30_000);
+
   it("does not let a clip, still, or extend estimate rewrite a film another process is rendering", async () => {
     const jobs = await jobsDir();
     const id = "seq_phase1_budget_running";
@@ -347,8 +478,8 @@ describe("phase 1 recovery without a bot", () => {
         videoUrl: "https://example.test/clip.mp4", prompt: "A lantern.", jobId: id, budgetUsd: 2, confirm: false,
       })]),
     ]);
-    holder.kill("SIGKILL");
     for (const estimate of estimates) expect(estimate.status, estimate.stderr).toBe(0);
+    expect(holder.exitCode).toBe(null);
     const saved = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as {
       state: string;
       filmPath?: string;
@@ -357,6 +488,7 @@ describe("phase 1 recovery without a bot", () => {
     expect(saved.state).toBe("running");
     expect(saved.filmPath).toBe(`/keep/${id}.mp4`);
     expect(saved.spendLedger?.thresholdUsd).toBeUndefined();
+    holder.kill("SIGKILL");
   }, 30_000);
 
   it("keeps a review when a clip estimate and a paid clip record a budget on the same film", async () => {

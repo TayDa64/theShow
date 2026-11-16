@@ -47329,7 +47329,9 @@ var costApprovalFields = {
     "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved."
   )
 };
-function quoteGate(args, kind, usd, fingerprint, spentUsd = 0) {
+async function quoteGate(args, kind, usd, fingerprint, job) {
+  const queued = job ? await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds) : void 0;
+  const spentUsd = Math.round(((job ? recordedSpendUsd(job) : 0) + (queued?.pendingSpendUsd ?? 0)) * 100) / 100;
   return gatePaidAction({
     kind,
     usd,
@@ -47340,10 +47342,10 @@ function quoteGate(args, kind, usd, fingerprint, spentUsd = 0) {
     approvedFingerprint: args.approvedFingerprint,
     overrideValidation: args.overrideValidation,
     spentUsd,
-    budgetUsd: args.budgetUsd
+    budgetUsd: args.budgetUsd ?? queued?.pendingThresholdUsd
   });
 }
-function costRefusal(paid) {
+function costRefusal(paid, extra) {
   if (!paid || paid.decision !== "refused") return void 0;
   return refusal({
     action: "refused",
@@ -47352,7 +47354,8 @@ function costRefusal(paid) {
     reason: paid.reason,
     message: paid.reason,
     costQuote: paid.quote,
-    ...paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}
+    ...paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {},
+    ...extra
   });
 }
 function withCost(result, paid) {
@@ -47400,11 +47403,13 @@ function noteReportedSpend(job, kind, usd, flags) {
     ...flags?.reason ? { reason: flags.reason } : {}
   });
   const spentUsd = Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  const appliedNoteIds = job.spendLedger?.appliedNoteIds;
   job.spendLedger = {
     version: 1,
     spentUsd,
     pendingUsd: 0,
     ...job.spendLedger?.thresholdUsd !== void 0 ? { thresholdUsd: job.spendLedger.thresholdUsd } : {},
+    ...appliedNoteIds ? { appliedNoteIds } : {},
     entries
   };
 }
@@ -47422,11 +47427,72 @@ function carrySpend(source) {
     spentUsd,
     pendingUsd: 0,
     ...source.spendLedger?.thresholdUsd !== void 0 ? { thresholdUsd: source.spendLedger.thresholdUsd } : {},
+    ...source.spendLedger?.appliedNoteIds ? { appliedNoteIds: [...source.spendLedger.appliedNoteIds] } : {},
     entries: derived2
   };
 }
 function spendJournalDir(jobId) {
   return join8(JOBS_DIR, ".spend-journal", jobId);
+}
+function isSpendNote(value) {
+  if (!value || typeof value !== "object") return false;
+  const note = value;
+  if (typeof note.id !== "string" || note.id.length === 0) return false;
+  if (note.op === "budget") return typeof note.thresholdUsd === "number";
+  if (note.op === "spend") return typeof note.usd === "number";
+  return false;
+}
+async function listJournal(jobId) {
+  const dir = spendJournalDir(jobId);
+  let names = [];
+  try {
+    names = await readdir3(dir);
+  } catch {
+    return { valid: [], torn: [] };
+  }
+  names.sort();
+  const valid = [];
+  const torn = [];
+  for (const name of names) {
+    const file2 = join8(dir, name);
+    if (!name.endsWith(".json") || name.startsWith(".")) {
+      const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
+      if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
+      torn.push(file2);
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(await readFile6(file2, "utf8"));
+      if (!isSpendNote(parsed)) torn.push(file2);
+      else valid.push({ file: file2, note: parsed });
+    } catch {
+      torn.push(file2);
+    }
+  }
+  return { valid, torn };
+}
+async function readQueuedFilmSpend(jobId, appliedNoteIds) {
+  const { valid } = await listJournal(jobId);
+  const applied = new Set(appliedNoteIds ?? []);
+  let pendingSpendUsd = 0;
+  let pendingThresholdUsd;
+  for (const { note } of valid) {
+    if (applied.has(note.id)) continue;
+    if (note.op === "spend") pendingSpendUsd += note.usd;
+    else pendingThresholdUsd = note.thresholdUsd;
+  }
+  const rounded = Math.round(pendingSpendUsd * 100) / 100;
+  return {
+    pendingSpendUsd: rounded,
+    ...pendingThresholdUsd !== void 0 ? { pendingThresholdUsd } : {}
+  };
+}
+function queuedFields(queued) {
+  if (!queued) return {};
+  return {
+    ...queued.pendingSpendUsd > 0 ? { pendingSpendUsd: queued.pendingSpendUsd } : {},
+    ...queued.pendingThresholdUsd !== void 0 ? { pendingThresholdUsd: queued.pendingThresholdUsd } : {}
+  };
 }
 function applySpendNote(job, note) {
   if (note.op === "budget") {
@@ -47444,36 +47510,45 @@ function applySpendNote(job, note) {
     reason: note.reason
   });
 }
+function rememberAppliedNote(job, id) {
+  const ids = job.spendLedger?.appliedNoteIds ?? [];
+  if (ids.includes(id)) return;
+  const spent = job.spendLedger?.spentUsd ?? recordedSpendUsd(job);
+  job.spendLedger = {
+    version: 1,
+    spentUsd: spent,
+    pendingUsd: job.spendLedger?.pendingUsd ?? 0,
+    ...job.spendLedger?.thresholdUsd !== void 0 ? { thresholdUsd: job.spendLedger.thresholdUsd } : {},
+    ...job.spendLedger?.entries ? { entries: job.spendLedger.entries } : {},
+    appliedNoteIds: [...ids, id]
+  };
+}
 async function enqueueSpendNote(jobId, note) {
+  const full = { ...note, id: randomUUID3() };
   const dir = spendJournalDir(jobId);
   await mkdir5(dir, { recursive: true });
-  const file2 = join8(dir, `${Date.now()}-${process.pid}-${randomUUID3()}.json`);
-  await writeFile5(file2, JSON.stringify(note));
+  const finalName = `${String(Date.now()).padStart(16, "0")}-${full.id}.json`;
+  const dest = join8(dir, finalName);
+  const tmp = join8(dir, `.${finalName}.${process.pid}.tmp`);
+  await writeFile5(tmp, JSON.stringify(full));
+  await rename3(tmp, dest);
 }
-var spendDrain = /* @__PURE__ */ new Map();
-async function drainSpendJournal(job) {
-  const previous = spendDrain.get(job.id) ?? Promise.resolve();
-  const run = previous.catch(() => void 0).then(async () => {
-    let names = [];
-    const dir = spendJournalDir(job.id);
-    try {
-      names = await readdir3(dir);
-    } catch {
-      return;
+var beforeJournalMerge;
+var beforeJournalDelete;
+async function applyQueuedNotes(job) {
+  const { valid, torn } = await listJournal(job.id);
+  for (const file2 of torn) await unlink3(file2).catch(() => void 0);
+  const applied = new Set(job.spendLedger?.appliedNoteIds ?? []);
+  const consumed = [];
+  for (const { file: file2, note } of valid) {
+    if (!applied.has(note.id)) {
+      applySpendNote(job, note);
+      rememberAppliedNote(job, note.id);
+      applied.add(note.id);
     }
-    names.sort();
-    for (const name of names) {
-      const file2 = join8(dir, name);
-      try {
-        const note = JSON.parse(await readFile6(file2, "utf8"));
-        applySpendNote(job, note);
-        await unlink3(file2);
-      } catch {
-      }
-    }
-  });
-  spendDrain.set(job.id, run);
-  await run;
+    consumed.push(file2);
+  }
+  return consumed;
 }
 function thisProcessOwns(job) {
   const owner = job.owner;
@@ -47938,16 +48013,16 @@ server.registerTool(
       durations: [args.durationSeconds]
     });
     const clipJob = jobId ? sequenceJobs.get(jobId) : void 0;
-    const clipPaid = quoteGate(
+    const clipPaid = await quoteGate(
       { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd: budgetUsd ?? clipJob?.spendLedger?.thresholdUsd },
       "video",
       clipEstimate,
       clipFingerprint,
-      clipJob ? recordedSpendUsd(clipJob) : 0
+      clipJob
     );
     let budgetNote;
     if (jobId && budgetUsd !== void 0) budgetNote = await rememberBudget(jobId, budgetUsd);
-    const clipCostRefusal = costRefusal(clipPaid);
+    const clipCostRefusal = costRefusal(clipPaid, deferredField(budgetNote, "budgetNote"));
     if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
       sentPrompt: args.prompt,
@@ -48049,7 +48124,7 @@ server.registerTool(
     if (args.jobId) await refreshJobsFromDisk();
     const extensionUsd = Math.round(args.durationSeconds * ratePerSecond("720p") * 100) / 100;
     const extensionJob = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
-    const extensionPaid = quoteGate(
+    const extensionPaid = await quoteGate(
       { ...args, budgetUsd: args.budgetUsd ?? extensionJob?.spendLedger?.thresholdUsd },
       "extend",
       extensionUsd,
@@ -48059,7 +48134,7 @@ server.registerTool(
         durationSeconds: args.durationSeconds,
         resolution: "720p"
       }),
-      extensionJob ? recordedSpendUsd(extensionJob) : 0
+      extensionJob
     );
     let extensionBudget;
     if (args.jobId && args.budgetUsd !== void 0) extensionBudget = await rememberBudget(args.jobId, args.budgetUsd);
@@ -48078,6 +48153,13 @@ server.registerTool(
     }
     const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1e3);
     if (extensionSession) return withCost(extensionSession, extensionPaid);
+    if (paidStubEnabled()) {
+      let spendNote2;
+      if (args.jobId) {
+        spendNote2 = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ requestId: "stub", status: "submitted", extendedBy: args.durationSeconds, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote2, "spendNote") }, null, 2) }] };
+    }
     const resolved = resolveVideoCredential();
     if (resolved.ok === false) {
       return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason, ...costFields(extensionPaid) }, null, 2) }] };
@@ -48095,13 +48177,6 @@ server.registerTool(
           }, null, 2)
         }]
       };
-    }
-    if (paidStubEnabled()) {
-      let spendNote;
-      if (args.jobId) {
-        spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
-      }
-      return { content: [{ type: "text", text: JSON.stringify({ requestId: "stub", status: "submitted", extendedBy: args.durationSeconds, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
     }
     const headers = { "Authorization": `Bearer ${credential.token}`, "Content-Type": "application/json" };
     const submitRes = await fetch(`${credential.baseUrl}/v1/videos/extensions`, {
@@ -48128,8 +48203,9 @@ server.registerTool(
       return { content: [{ type: "text", text: JSON.stringify({ error: "No request_id returned" }, null, 2) }] };
     }
     if (!args.waitForCompletion) {
-      if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
-      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
+      let spendNote2;
+      if (args.jobId) spendNote2 = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote2, "spendNote") }, null, 2) }] };
     }
     const deadline = Date.now() + args.timeoutSeconds * 1e3;
     while (Date.now() < deadline) {
@@ -48140,8 +48216,9 @@ server.registerTool(
       if (poll.status === "done" || poll.status === "completed") {
         const extendCost = costUsdFromUsage(poll.usage);
         const estimated = !((extendCost ?? 0) > 0);
+        let spendNote2;
         if (args.jobId) {
-          await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : extendCost ?? 0, estimated ? { estimated: true } : void 0);
+          spendNote2 = await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : extendCost ?? 0, estimated ? { estimated: true } : void 0);
         }
         return {
           content: [{
@@ -48153,7 +48230,9 @@ server.registerTool(
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
               auth: toolAuth(credential.source),
-              ...costFields(extensionPaid)
+              ...costFields(extensionPaid),
+              ...deferredField(extensionBudget, "budgetNote"),
+              ...deferredField(spendNote2, "spendNote")
             }, null, 2)
           }]
         };
@@ -48162,8 +48241,9 @@ server.registerTool(
         return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
     }
-    if (args.jobId) await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
-    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid) }, null, 2) }] };
+    let spendNote;
+    if (args.jobId) spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
   }
 );
 var DOWNLOAD_DIR = OUTPUT_DIR;
@@ -48279,16 +48359,16 @@ server.registerTool(
       referenceImageUrls: args.referenceImageUrls ?? []
     });
     const stillJob = args.jobId ? sequenceJobs.get(args.jobId) : void 0;
-    const stillPaid = quoteGate(
+    const stillPaid = await quoteGate(
       { ...args, budgetUsd: args.budgetUsd ?? stillJob?.spendLedger?.thresholdUsd },
       "still",
       STILL_USD,
       stillFingerprint,
-      stillJob ? recordedSpendUsd(stillJob) : 0
+      stillJob
     );
     let stillBudget;
     if (stillJob && args.budgetUsd !== void 0 && args.jobId) stillBudget = await rememberBudget(args.jobId, args.budgetUsd);
-    const stillCostRefusal = costRefusal(stillPaid);
+    const stillCostRefusal = costRefusal(stillPaid, deferredField(stillBudget, "budgetNote"));
     if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
       return {
@@ -48489,7 +48569,11 @@ function noteRevision(job) {
   }
 }
 async function persistJob(job) {
-  if (thisProcessOwns(job)) await drainSpendJournal(job);
+  let consumed = [];
+  if (thisProcessOwns(job)) {
+    if (beforeJournalMerge) await beforeJournalMerge();
+    consumed = await applyQueuedNotes(job);
+  }
   const revision = (jobRevision.get(job.id) ?? 0) + 1;
   job.revision = revision;
   jobRevision.set(job.id, revision);
@@ -48501,6 +48585,8 @@ async function persistJob(job) {
       await atomicWriteFile(join8(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
       if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
       else await unlink3(claimPath(job.id)).catch(() => void 0);
+      if (beforeJournalDelete) await beforeJournalDelete();
+      for (const file2 of consumed) await unlink3(file2).catch(() => void 0);
     } catch (err) {
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
@@ -49269,12 +49355,12 @@ server.registerTool(
       lastFrames: args.shots.map((shot) => shot.lastFrameUrl)
     });
     const sequenceBudget = args.budgetUsd ?? resumeJob?.spendLedger?.thresholdUsd;
-    const sequencePaid = quoteGate(
+    const sequencePaid = await quoteGate(
       { ...args, budgetUsd: sequenceBudget },
       "video",
       estimate,
       sequenceQuote.fingerprint,
-      resumeJob ? recordedSpendUsd(resumeJob) : 0
+      resumeJob
     );
     const sequenceCostRefusal = costRefusal(sequencePaid);
     if (sequenceCostRefusal) return sequenceCostRefusal;
@@ -49753,12 +49839,12 @@ server.registerTool(
       },
       boardDeps
     );
-    const boardPaid = quoteGate(
+    const boardPaid = await quoteGate(
       { ...args, budgetUsd: args.budgetUsd ?? boardJob?.spendLedger?.thresholdUsd },
       "board",
       priced.estimate.estimatedUsd,
       boardFingerprint,
-      boardJob ? recordedSpendUsd(boardJob) : 0
+      boardJob
     );
     const boardCostRefusal = costRefusal(boardPaid);
     if (boardCostRefusal) return boardCostRefusal;
@@ -49908,12 +49994,12 @@ server.registerTool(
       prompt
     });
     const retryBudget = args.budgetUsd ?? original.spendLedger?.thresholdUsd;
-    const retryPaid = quoteGate(
+    const retryPaid = await quoteGate(
       { ...args, budgetUsd: retryBudget },
       "retry",
       estimateUsd,
       retryFingerprint,
-      recordedSpendUsd(original)
+      original
     );
     const retryCostRefusal = costRefusal(retryPaid);
     if (retryCostRefusal) return retryCostRefusal;
@@ -50103,17 +50189,22 @@ server.registerTool(
   async (args) => {
     await refreshJobsFromDisk();
     const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
-    const shown = all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map((job) => ({
-      jobId: job.id,
-      state: job.state,
-      startedAt: new Date(job.startedAt).toISOString(),
-      shots: job.shots.length,
-      durationSeconds: job.filmDurationSeconds,
-      spentUsd: Math.round(job.spentUsd * 100) / 100,
-      filmPath: job.filmPath,
-      firstShot: job.shots[0]?.title,
-      repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
-      error: job.error
+    const shown = await Promise.all(all.filter((job) => args.includeUnfinished || job.state === "completed").slice(0, args.limit).map(async (job) => {
+      const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
+      return {
+        jobId: job.id,
+        state: job.state,
+        startedAt: new Date(job.startedAt).toISOString(),
+        shots: job.shots.length,
+        durationSeconds: job.filmDurationSeconds,
+        spentUsd: Math.round(job.spentUsd * 100) / 100,
+        ...queued.pendingSpendUsd > 0 ? { pendingSpendUsd: queued.pendingSpendUsd } : {},
+        ...queued.pendingThresholdUsd !== void 0 ? { pendingThresholdUsd: queued.pendingThresholdUsd } : {},
+        filmPath: job.filmPath,
+        firstShot: job.shots[0]?.title,
+        repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : void 0,
+        error: job.error
+      };
     }));
     return {
       content: [{
@@ -50151,8 +50242,9 @@ server.registerTool(
         }]
       };
     }
+    const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
     return {
-      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }]
+      content: [{ type: "text", text: JSON.stringify({ ...jobPayload(job), ...queuedFields(queued) }, null, 2) }]
     };
   }
 );

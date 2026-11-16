@@ -120,4 +120,107 @@ describe("shipped bundle stub seam", () => {
       await rm(home, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("does not let THESHOW_STUB_VIDEO skip the session check on the HTTP bundle", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "theshow-stub-http-"));
+    await writeFile(path.join(home, "no-auth.json"), "{}\n");
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      HOME: home,
+      THESHOW_TRANSPORT: "http",
+      THESHOW_HTTP_HOST: "127.0.0.1",
+      THESHOW_HTTP_PORT: "0",
+      THESHOW_HTTP_TOKEN: "test-token-not-a-secret",
+      THESHOW_JOBS_DIR: path.join(home, "jobs"),
+      THESHOW_OUTPUT_DIR: path.join(home, "media"),
+      THESHOW_CHARACTERS_DIR: path.join(home, "characters"),
+      GROK_AUTH_FILE: path.join(home, "no-auth.json"),
+      THESHOW_FORBID_HOME_AUTH: "1",
+      THESHOW_STUB_VIDEO: "1",
+    };
+    delete env.VITEST;
+    delete env.NODE_ENV;
+    delete env.XAI_API_KEY;
+    const child = spawn(process.execPath, [LAUNCH], {
+      cwd: ROOT,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    let stderr = "";
+    const endpoint = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`HTTP server did not start\n${stderr}`)), 20_000);
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+        const match = stderr.match(/theShow MCP server running on (http:\/\/\S+)/);
+        if (match?.[1]) {
+          clearTimeout(timer);
+          resolve(match[1]);
+        }
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        reject(new Error(`HTTP server exited ${code}\n${stderr}`));
+      });
+    });
+    const post = async (body: unknown, headers: Record<string, string>) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: "application/json, text/event-stream",
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      return { status: response.status, sessionId: response.headers.get("mcp-session-id"), json: text ? JSON.parse(text) as JsonRpcMessage : undefined };
+    };
+    try {
+      const initialized = await post({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "stub-http", version: "0.0.0" },
+        },
+      }, { Authorization: "Bearer test-token-not-a-secret" });
+      expect(initialized.status).toBe(200);
+      const sessionId = initialized.sessionId ?? "";
+      const authed = {
+        Authorization: "Bearer test-token-not-a-secret",
+        "Mcp-Session-Id": sessionId,
+        "MCP-Protocol-Version": "2025-11-25",
+      };
+      await post({ jsonrpc: "2.0", method: "notifications/initialized" }, authed);
+      const called = await post({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "render_sequence",
+          arguments: {
+            shots: [{ prompt: "A lantern.", durationSeconds: 8, title: "Walk" }],
+            confirm: true,
+            overrideValidation: true,
+            assemble: false,
+          },
+        },
+      }, authed);
+      const text = called.json?.result?.content?.[0]?.text ?? "";
+      const body = JSON.parse(text) as { jobId?: string; action?: string; error?: string; code?: string };
+      expect(body.jobId).toBeUndefined();
+      expect(body.action).not.toBe("started");
+      expect(`${body.error ?? ""} ${body.code ?? ""}`).toMatch(/credential|session/i);
+      expect(text).not.toMatch(/"error": "stub"/);
+    } finally {
+      const pid = child.pid;
+      if (pid) {
+        try { process.kill(-pid, "SIGTERM"); } catch { child.kill("SIGTERM"); }
+      }
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

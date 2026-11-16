@@ -10,7 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { setBeforeRenameProbe, sweepOrphanTemps, thisOwner } from "../mcp/runtime.ts";
-import { claimFilm, loadJobsFromDisk, persistJob, readPersistedJob, saveJobAnnotation, server, setBeforeClaimProbe } from "../mcp/server.ts";
+import { claimFilm, enqueueSpendNote, loadJobsFromDisk, persistJob, readPersistedJob, saveJobAnnotation, server, setBeforeClaimProbe, setJournalProbes } from "../mcp/server.ts";
 
 async function waitForFile(file: string): Promise<void> {
   const deadline = Date.now() + 20_000;
@@ -214,6 +214,42 @@ async function main(): Promise<void> {
     const content = result.content;
     const text = Array.isArray(content) && content[0] && "text" in content[0] ? String(content[0].text) : "";
     process.stdout.write(`${text}\n`);
+    return;
+  }
+  if (mode === "seed-notes") {
+    const id = rest[0];
+    const amounts = rest.slice(1);
+    if (!id || amounts.length === 0) throw new Error("seed-notes needs a job id and amounts");
+    for (const amount of amounts) {
+      await enqueueSpendNote(id, { op: "spend", kind: "video", usd: Number(amount), estimated: true });
+    }
+    process.stdout.write("seeded\n");
+    return;
+  }
+  if (mode === "drain-owned") {
+    const id = rest[0];
+    if (!id) throw new Error("drain-owned needs a job id");
+    const pause = process.env.THESHOW_JOURNAL_PAUSE;
+    if (pause === "before-rename") {
+      setBeforeRenameProbe(async () => {
+        process.stdout.write("paused\n");
+        await new Promise(() => undefined);
+      });
+    } else if (pause === "before-merge" || pause === "before-delete") {
+      const hang = async () => {
+        process.stdout.write("paused\n");
+        await new Promise(() => undefined);
+      };
+      setJournalProbes({
+        ...(pause === "before-merge" ? { beforeMerge: hang } : {}),
+        ...(pause === "before-delete" ? { beforeDelete: hang } : {}),
+      });
+    }
+    const job = await readPersistedJob(id);
+    if (!job) throw new Error("missing job");
+    job.owner = thisOwner();
+    await persistJob(job);
+    process.stdout.write("drained\n");
     return;
   }
   if (mode === "load-jobs") {

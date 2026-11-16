@@ -4,13 +4,14 @@
  */
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { videoQuote } from "../mcp/costGate.ts";
 import { JOBS_DIR, OUTPUT_DIR, resolveTools } from "../mcp/media.ts";
-import { chargeForProviderResult, server } from "../mcp/server.ts";
+import { chargeForProviderResult, enqueueSpendNote, server } from "../mcp/server.ts";
 
 const exec = promisify(execFile);
 
@@ -833,5 +834,44 @@ describe("phase 1 tools", () => {
       usd: 0,
       reason: "rejected by the proxy",
     });
+  });
+
+  it("shows queued spend before a claim, and warns from that total", async () => {
+    const id = `seq_phase1_queued_${randomUUID()}`;
+    await writeFile(`${JOBS_DIR}/${id}.json`, JSON.stringify({
+      id,
+      startedAt: Date.now(),
+      state: "completed",
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1.12,
+      spentUsd: 1.12,
+      filmPath: "/keep/queued.mp4",
+      spendLedger: { version: 1, spentUsd: 1.12, pendingUsd: 0, thresholdUsd: 1.2, entries: [{ kind: "video", usd: 1.12 }] },
+      shots: [{ index: 1, title: "Old", status: "completed", costUsd: 1.12, prompt: "A lantern.", durationSeconds: 8 }],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", fadeDuration: 0, assemble: false, pin: "start" },
+    }));
+    await enqueueSpendNote(id, { op: "spend", kind: "video", usd: 0.56, estimated: true });
+    const checked = JSON.parse(toolText(await client.callTool({
+      name: "check_sequence",
+      arguments: { jobId: id },
+    })));
+    expect(checked.pendingSpendUsd).toBe(0.56);
+    expect(checked.spendLedger.spentUsd).toBe(1.12);
+    const listed = JSON.parse(toolText(await client.callTool({
+      name: "list_films",
+      arguments: { includeUnfinished: true, limit: 50 },
+    })));
+    const film = listed.films.find((entry: { jobId: string }) => entry.jobId === id);
+    expect(film.pendingSpendUsd).toBe(0.56);
+    expect(film.spentUsd).toBe(1.12);
+    const estimate = JSON.parse(toolText(await client.callTool({
+      name: "generate_still",
+      arguments: { prompt: "A lantern.", confirm: false, jobId: id },
+    })));
+    expect(estimate.budgetWarning).toMatch(/1\.68/);
+    const raw = JSON.parse(await readFile(`${JOBS_DIR}/${id}.json`, "utf8")) as { spendLedger?: { spentUsd?: number; appliedNoteIds?: string[] } };
+    expect(raw.spendLedger?.spentUsd).toBe(1.12);
+    expect(raw.spendLedger?.appliedNoteIds).toBeUndefined();
   });
 });
