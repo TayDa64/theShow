@@ -2,6 +2,12 @@
  * A killed advisory call leaves the films as they were. No bot is running.
  * The pause waits for the child's own signal, then a ceiling, the same way
  * the Phase 1 recovery handshake does.
+ *
+ * N36: at R2 this file passed 9/10, and the miss was the 60s signal ceiling
+ * while the machine's load average was about 9. The wait is still the child's
+ * own line (`child-ready`, then `paused-*`). The ceiling is only the backstop,
+ * raised to 180s so a loaded tsx start can still print that line. Assertions
+ * are unchanged.
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -13,6 +19,8 @@ import { describe, expect, it } from "vitest";
 import { sweepOrphanTemps, sweepStaleReviewFrames } from "../mcp/runtime.ts";
 import { waitForChildClose, waitForChildSignal } from "./child-signal.ts";
 
+const SIGNAL_CEILING_MS = 180_000;
+const RECOVERY_TEST_MS = 300_000;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CHILD = path.join(ROOT, "tests/mcp-multi-child.ts");
 
@@ -95,13 +103,13 @@ describe("phase 2 recovery", () => {
     const payload = path.join(jobs, "suggest.json");
     await writeFile(payload, JSON.stringify({ jobId: id }));
     const { child, text } = spawnAdvisory(jobs, "suggest_coverage", payload, { THESHOW_PAUSE_ADVISORY: "1" });
-    await waitForChildSignal(child, text, "child-ready", 60_000);
-    await waitForChildSignal(child, text, "paused-advisory", 60_000);
+    await waitForChildSignal(child, text, "child-ready", SIGNAL_CEILING_MS);
+    await waitForChildSignal(child, text, "paused-advisory", SIGNAL_CEILING_MS);
     child.kill("SIGKILL");
     await waitForChildClose(child);
     expect(await readFile(file, "utf8")).toBe(body);
     expect((await readdir(jobs)).filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
-  }, 120_000);
+  }, RECOVERY_TEST_MS);
 
   it("kills check_cross_film after the frame directory is created and the sweep removes it", async () => {
     const { jobs } = await homeDir();
@@ -120,8 +128,8 @@ describe("phase 2 recovery", () => {
     const payload = path.join(jobs, "frames.json");
     await writeFile(payload, JSON.stringify({ jobIds: ids }));
     const { child, text } = spawnAdvisory(jobs, "check_cross_film", payload, { THESHOW_PAUSE_FRAMES: "1" });
-    await waitForChildSignal(child, text, "child-ready", 60_000);
-    await waitForChildSignal(child, text, "paused-frames", 60_000);
+    await waitForChildSignal(child, text, "child-ready", SIGNAL_CEILING_MS);
+    await waitForChildSignal(child, text, "paused-frames", SIGNAL_CEILING_MS);
     child.kill("SIGKILL");
     await waitForChildClose(child);
     const stray = (await readdir(jobs)).filter((name) => name.startsWith(".review-frames-"));
@@ -129,7 +137,7 @@ describe("phase 2 recovery", () => {
     await sweepStaleReviewFrames(jobs);
     expect((await readdir(jobs)).filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
     for (const [file, body] of originals) expect(await readFile(file, "utf8")).toBe(body);
-  }, 120_000);
+  }, RECOVERY_TEST_MS);
 
   it("kills an opt-in report before rename and sweeps the temp file", async () => {
     const { jobs, consistency } = await homeDir();
@@ -143,8 +151,8 @@ describe("phase 2 recovery", () => {
     const payload = path.join(jobs, "persist.json");
     await writeFile(payload, JSON.stringify({ jobIds: ids, persist: true }));
     const { child, text } = spawnAdvisory(jobs, "check_cross_film", payload, { THESHOW_PAUSE_BEFORE_RENAME: "1" });
-    await waitForChildSignal(child, text, "child-ready", 60_000);
-    await waitForChildSignal(child, text, "paused-before-rename", 60_000);
+    await waitForChildSignal(child, text, "child-ready", SIGNAL_CEILING_MS);
+    await waitForChildSignal(child, text, "paused-before-rename", SIGNAL_CEILING_MS);
     child.kill("SIGKILL");
     await waitForChildClose(child);
     const reports = (await readdir(consistency)).filter((name) => name.endsWith(".json") && !name.endsWith(".tmp"));
@@ -155,7 +163,7 @@ describe("phase 2 recovery", () => {
     expect(await readdir(consistency)).toEqual([]);
     for (const [file, digest] of before) expect(await sha(file)).toBe(digest);
     expect(await stat(path.join(jobs, `${ids[0]}.json`))).toBeTruthy();
-  }, 120_000);
+  }, RECOVERY_TEST_MS);
 
   it("shows the same advisory result to two processes and does not start a bot", async () => {
     const { jobs } = await homeDir();
@@ -183,5 +191,5 @@ describe("phase 2 recovery", () => {
     ]);
     expect(JSON.parse(left)).toEqual(JSON.parse(right));
     expect(left).not.toContain("costQuote");
-  }, 120_000);
+  }, RECOVERY_TEST_MS);
 });

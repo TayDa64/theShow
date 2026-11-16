@@ -5545,11 +5545,11 @@ async function filmsMatchingCharacter(name: string): Promise<CrossFilmJob[]> {
 async function filmsById(ids: string[]): Promise<{
   jobs: CrossFilmJob[];
   missing: string[];
-  invalid: Array<{ id: string; reason: string }>;
+  invalid: Array<{ id: string; reason: string; path: string }>;
 }> {
   const jobs: CrossFilmJob[] = [];
   const missing: string[] = [];
-  const invalid: Array<{ id: string; reason: string }> = [];
+  const invalid: Array<{ id: string; reason: string; path: string }> = [];
   const seen = new Set<string>();
   for (const id of ids) {
     if (seen.has(id)) continue;
@@ -5563,19 +5563,19 @@ async function filmsById(ids: string[]): Promise<{
         missing.push(id);
         continue;
       }
-      invalid.push({ id, reason: "unreadable" });
+      invalid.push({ id, reason: "unreadable", path: full });
       continue;
     }
     let value: unknown;
     try {
       value = JSON.parse(raw) as unknown;
     } catch {
-      invalid.push({ id, reason: "invalid JSON" });
+      invalid.push({ id, reason: "invalid JSON", path: full });
       continue;
     }
     const job = parseCrossFilmJob(value, full);
     if (!job || !value || typeof value !== "object" || (value as { id?: unknown }).id !== id) {
-      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file" });
+      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file", path: full });
       continue;
     }
     jobs.push(job);
@@ -5625,7 +5625,7 @@ server.registerTool(
     }
     let jobs: CrossFilmJob[];
     let missing: string[] = [];
-    let invalidJobs: Array<{ id: string; reason: string }> = [];
+    let invalidJobs: Array<{ id: string; reason: string; path?: string }> = [];
     if (args.jobIds) {
       const loaded = await filmsById(args.jobIds);
       jobs = loaded.jobs;

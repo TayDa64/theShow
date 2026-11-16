@@ -4,6 +4,9 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  /* zinc-500 is the muted label color on zinc-950/900. The default #71717b
+     measured 3.67:1 on #18181b. #8a8a94 is 5.18:1 there and 5.82:1 on #09090b. */
+  --color-zinc-500: #8a8a94;
 }
 
 .storyforge-progress {

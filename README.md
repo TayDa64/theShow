@@ -357,7 +357,7 @@ npm run build        # Vite app plus dist/server.cjs
 npm run build:mcp    # mcp/server.bundle.mjs and mcp/server-http.bundle.mjs
 ```
 
-`npm test` is the suite CI runs. It does not call xAI. `npm run test:e2e` is Playwright. `npm run test:e2e:live` sets `RUN_LIVE_VEO=1` and is a paid path. CI does not run it.
+`npm test` is the Vitest suite CI's `test` job runs, including the built-bundle end-to-end calls in `tests/e2e-bundles.test.ts`. It does not call xAI. `npm run test:e2e` is Playwright against the dev server and the built Studio (`studio-dev` on port 3100, `studio-built` on port 3101). Both are pinned to `THESHOW_VIDEO_BACKEND=sandbox`. `npm run test:e2e:live` sets `RUN_LIVE_VEO=1` and is a paid path. CI's `e2e` job runs `npm run test:e2e` and fails if `RUN_LIVE_VEO` is set, so the live spec stays skipped.
 
 `THESHOW_STUB_VIDEO` is a Vitest-only seam. The shipped bundles ignore it unless `VITEST=true` or `NODE_ENV=test`, so setting it on a desktop or HTTP server does not skip the session check and does not fake a paid call. Under Vitest it stubs clip, still, board, and extend, and the extend stub returns before the provider credential check. `THESHOW_STUB_VIDEO=completed` returns a completed clip with no reported cost, which is how the per-shot quote fallback is tested.
 
@@ -372,7 +372,8 @@ CI (`.github/workflows/ci.yml`) runs on pull requests and on pushes to `main`:
 | `build` | `npm run build`, then checks `dist/assets` for `GEMINI_API_KEY` |
 | `test` | `npm test`, with paid keys refused and `GROK_AUTH_FILE` pointed at a missing file |
 | `bundle` | `npm run build:mcp`, then `git diff --exit-code` on both bundles |
-| `all-green` | waits for the five jobs above |
+| `e2e` | Playwright against the dev server and the built Studio, with the sandbox pin and the same paid-key refusals |
+| `all-green` | waits for the six jobs above |
 
 ```
 mcp/            the MCP server

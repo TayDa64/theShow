@@ -481,6 +481,7 @@ export default function App() {
                 type="button"
                 onClick={() => openWorkspace('account')}
                 data-testid="account-workspace-trigger"
+                aria-label={isAuthenticated ? (user?.name.split(' ')[0] || 'Account') : 'Account'}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${activePopupView === 'account'
                   ? 'bg-indigo-600/15 border-indigo-500/30 text-indigo-300'
                   : 'bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:text-zinc-100'}`}

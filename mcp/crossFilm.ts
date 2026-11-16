@@ -149,8 +149,8 @@ export type ResolvedFrame = {
 export type CrossFilmInput = {
   jobs: CrossFilmJob[];
   missingJobIds?: string[];
-  /** A file was on disk and was not a readable film record. */
-  invalidJobs?: Array<{ id: string; reason: string }>;
+  /** A file was on disk and was not a readable film record. `path` is that file. */
+  invalidJobs?: Array<{ id: string; reason: string; path?: string }>;
   characters: Map<string, CharacterFact | undefined>;
   pendingSpendUsd: Map<string, number>;
   intentionalWardrobeDifference: boolean;
@@ -625,7 +625,7 @@ export async function checkCrossFilm(input: CrossFilmInput): Promise<CrossFilmRe
       "lineage",
       [entry.id],
       `Job file is present but could not be parsed: ${entry.reason}`,
-      [],
+      entry.path ? [entry.path] : [],
     )),
   ];
   if (input.jobs.length < CROSS_FILM_MIN) {
