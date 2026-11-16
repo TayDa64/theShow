@@ -29,6 +29,7 @@ import {
   closingFrameAgreement,
   extractFirstFrame,
   extractLastFrame,
+  grayscaleStillCorrelation,
   pathToDataUrl,
   probeDuration,
 } from "./media.ts";
@@ -55,13 +56,30 @@ import {
   type ReviewShot,
 } from "./continuityReview.ts";
 import {
+  coverageShotsFromJob,
+  suggestCoverage,
+  type CoverageShot,
+} from "./coverageSuggestions.ts";
+import {
+  checkCrossFilm,
+  consistencyDirIsSafe,
+  consistencyDirectory,
+  crossFilmParseError,
+  namesMatch,
+  parseCrossFilmJob,
+  CROSS_FILM_MAX,
+  CROSS_FILM_MIN,
+  type CrossFilmJob,
+  type CrossFilmReport,
+} from "./crossFilm.ts";
+import {
   buildDependencyGraph,
   proposeRepair,
   type DependencyGraph,
   type DependencyShot,
   type RepairProposal,
 } from "./repairPlan.ts";
-import { charactersRoot, loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
+import { charactersRoot, loadCharacter, loadCharacterSync, loadAllCharacters, saveCharacter, snapshotCharacter } from "./characters.ts";
 import {
   annotateAction,
   characterFromRecord,
@@ -445,7 +463,7 @@ function findLocationBase(characters: string[] | undefined): string | undefined 
  * Beat ladder: the story shape a shot sequence follows, independent of length.
  * Positions are fractions through the film, so any shotCount scales sanely.
  */
-const BEAT_LADDER = [
+export const BEAT_LADDER = [
   {
     at: 0.0,
     title: "Establishing",
@@ -2742,6 +2760,10 @@ export type SequenceJob = {
     /** The opening frame actually sent for this shot. Absent on jobs rendered before it was recorded. */
     openingFramePath?: string;
     pinUsed?: "start" | "both";
+    /** Present only when the caller sent shotType on a job created after it was stored. */
+    shotType?: string;
+    /** Present only when a stored shot already carries framing. render_sequence does not ask for it. */
+    framing?: string;
   }>;
   /** Set when this job continued an earlier one, so cost and provenance stay honest. */
   resumedFrom?: { jobId: string; fromShot: number };
@@ -2804,6 +2826,15 @@ export type SequenceJob = {
   dependencies?: DependencyGraph;
   /** Versioned repair quote. Absent on older jobs. Approving it does not render. */
   repairProposal?: RepairProposal;
+  /**
+   * Character name, updatedAt, and reference hashes at the moment this job was
+   * created. Absent on jobs written before it was stored. Legacy jobs are not backfilled.
+   */
+  characterSnapshots?: Array<{
+    name: string;
+    updatedAt: string;
+    references: Array<{ path: string; sha256: string }>;
+  }>;
 };
 
 /**
@@ -3520,6 +3551,7 @@ async function runSequenceJob(
         prompt: shot.prompt,
         sentPrompt: anchored,
         durationSeconds: shot.durationSeconds,
+        ...(shot.shotType?.trim() ? { shotType: shot.shotType.trim() } : {}),
       };
       const quotedShot = Math.round(shot.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
       const shotCharge = chargeForProviderResult(result, quotedShot);
@@ -4150,6 +4182,7 @@ server.registerTool(
         thresholdUsd: sequenceBudget,
       };
     }
+    await attachCharacterSnapshots(job, args.characters);
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
@@ -4825,6 +4858,7 @@ server.registerTool(
         thresholdUsd: retryBudget,
       };
     }
+    await attachCharacterSnapshots(job, settings?.characters);
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
@@ -5281,5 +5315,400 @@ server.registerTool(
       persisted,
       ...(persistError ? { persistError } : {}),
     });
+  },
+);
+
+let beforeAdvisory: (() => Promise<void>) | undefined;
+let beforeAdvisoryFrames: (() => Promise<void>) | undefined;
+
+/** Test seam. A probe can pause a free tool before it reads or writes. */
+export function setBeforeAdvisoryProbe(next: (() => Promise<void>) | undefined): void {
+  beforeAdvisory = next;
+}
+
+/** Test seam. A probe can pause after a review-frame directory is created and before it is removed. */
+export function setBeforeAdvisoryFramesProbe(next: (() => Promise<void>) | undefined): void {
+  beforeAdvisoryFrames = next;
+}
+
+async function attachCharacterSnapshots(job: SequenceJob, names: string[] | undefined): Promise<void> {
+  if (!names || names.length === 0) return;
+  const snapshots: NonNullable<SequenceJob["characterSnapshots"]> = [];
+  for (const name of names) {
+    try {
+      const snap = await snapshotCharacter(name);
+      if (snap) snapshots.push(snap);
+    } catch {
+      // A snapshot is advisory metadata. It must not stop a render that was already approved.
+    }
+  }
+  if (snapshots.length > 0) job.characterSnapshots = snapshots;
+}
+
+const coverageLineSchema = z.object({
+  text: z.string().optional(),
+  delivery: z.enum(["spoken", "sung"]).optional(),
+});
+
+const coverageShotSchema = z.object({
+  index: z.number().optional(),
+  shotNumber: z.number().optional(),
+  title: z.string().optional(),
+  action: z.string().optional(),
+  shotType: z.string().optional(),
+  framing: z.string().optional(),
+  durationSeconds: z.number().optional(),
+  locationId: z.string().optional(),
+  line: coverageLineSchema.optional(),
+});
+
+function toCoverageShot(
+  raw: z.infer<typeof coverageShotSchema>,
+  position: number,
+): CoverageShot {
+  const index = raw.index ?? raw.shotNumber ?? position + 1;
+  const text = raw.line?.text?.trim();
+  return {
+    index,
+    ...(raw.title ? { title: raw.title } : {}),
+    ...(raw.shotType?.trim() ? { shotType: raw.shotType } : {}),
+    ...(raw.framing?.trim() ? { framing: raw.framing } : {}),
+    ...(typeof raw.durationSeconds === "number" ? { durationSeconds: raw.durationSeconds } : {}),
+    ...(raw.locationId?.trim() ? { locationId: raw.locationId } : {}),
+    ...(text
+      ? {
+        line: {
+          text,
+          ...(raw.line?.delivery ? { delivery: raw.line.delivery } : {}),
+        },
+        lineSource: "caller" as const,
+      }
+      : {}),
+  };
+}
+
+function mergePlanShots(args: {
+  plan?: {
+    shots?: z.infer<typeof coverageShotSchema>[];
+    continuity?: {
+      shots?: Array<{ shot?: number; locationId?: string }>;
+    };
+  };
+  beats?: z.infer<typeof coverageShotSchema>[];
+  shots?: z.infer<typeof coverageShotSchema>[];
+}): CoverageShot[] {
+  const base = args.plan?.shots ?? args.shots ?? args.beats ?? [];
+  return base.map((shot, position) => {
+    const beat = args.beats?.[position];
+    const merged = toCoverageShot({
+      ...shot,
+      ...(beat?.title && !shot.title ? { title: beat.title } : {}),
+      ...(beat?.shotType && !shot.shotType ? { shotType: beat.shotType } : {}),
+      ...(beat?.framing && !shot.framing ? { framing: beat.framing } : {}),
+      ...(beat?.durationSeconds !== undefined && shot.durationSeconds === undefined
+        ? { durationSeconds: beat.durationSeconds }
+        : {}),
+      ...(beat?.locationId && !shot.locationId ? { locationId: beat.locationId } : {}),
+      ...(beat?.line && !shot.line ? { line: beat.line } : {}),
+    }, position);
+    if (!merged.locationId) {
+      const fromLedger = args.plan?.continuity?.shots?.find((entry) => entry.shot === merged.index)?.locationId;
+      if (fromLedger?.trim()) merged.locationId = fromLedger;
+    }
+    return merged;
+  });
+}
+
+server.registerTool(
+  "suggest_coverage",
+  {
+    description:
+      "Suggest coverage, pacing, and ladder-order notes for a plan or a finished film. " +
+      "Free and advisory: it does not render, spend, reorder shots, or approve anything. " +
+      "A plan is the useful input, before anything is rendered. Shot type is never inferred from prompt text. " +
+      "Caller-supplied beats are never corrected toward the built-in ladder. " +
+      "Pass usedBuiltInLadder only when plan_storyboard built the plan from that ladder.",
+    inputSchema: z.object({
+      jobId: z.string().optional().describe("Read this film from disk. Ignored when a plan, shots, or beats are also passed."),
+      usedBuiltInLadder: z.boolean().optional().describe(
+        "True only when this plan came from the built-in ladder. Caller beats are never compared to that ladder.",
+      ),
+      targetDurationSeconds: z.number().positive().optional(),
+      beats: z.array(coverageShotSchema).optional().describe(
+        "Caller-supplied beats, in the caller's order. They are not reordered toward the built-in ladder.",
+      ),
+      shots: z.array(coverageShotSchema).optional(),
+      plan: z.object({
+        shots: z.array(coverageShotSchema).optional(),
+        totalDurationSeconds: z.number().optional(),
+        continuity: z.object({
+          shots: z.array(z.object({
+            shot: z.number().optional(),
+            locationId: z.string().optional(),
+          })).optional(),
+        }).optional(),
+      }).optional(),
+    }),
+  },
+  async (args) => {
+    if (beforeAdvisory) await beforeAdvisory();
+    const callerPlan = Boolean(args.plan || args.shots || args.beats);
+    if (!callerPlan && !args.jobId) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        suggestions: [],
+        error: "Pass a plan, shots, beats, or a jobId.",
+      });
+    }
+    let shots: CoverageShot[];
+    let source: "plan" | "job";
+    let artifactPaths: string[];
+    if (callerPlan) {
+      shots = mergePlanShots(args);
+      source = "plan";
+      artifactPaths = ["caller-supplied"];
+    } else {
+      const job = await readPersistedJob(args.jobId ?? "");
+      if (!job) {
+        return refusal({
+          version: 1,
+          executed: false,
+          willRender: false,
+          willSpend: false,
+          mutatedPaths: [],
+          source: "job",
+          suggestions: [],
+          error: "Unknown jobId",
+        });
+      }
+      shots = coverageShotsFromJob(job);
+      source = "job";
+      artifactPaths = [join(JOBS_DIR, `${job.id}.json`)];
+    }
+    if (shots.length === 0) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        source,
+        suggestions: [],
+        error: "No shots to read.",
+      });
+    }
+    const callerBeats = Boolean(args.beats && args.beats.length > 0);
+    const report = suggestCoverage({
+      shots,
+      source,
+      usedBuiltInLadder: args.usedBuiltInLadder === true && !callerBeats,
+      callerSuppliedBeats: callerBeats,
+      ...(args.targetDurationSeconds !== undefined ? { targetDurationSeconds: args.targetDurationSeconds } : {}),
+      artifactPaths,
+      ladder: BEAT_LADDER.map((beat) => ({ at: beat.at, title: beat.title })),
+    });
+    return refusal(report);
+  },
+);
+
+async function filmsMatchingCharacter(name: string): Promise<CrossFilmJob[]> {
+  let fileNames: string[] = [];
+  try {
+    fileNames = await readdir(JOBS_DIR);
+  } catch {
+    return [];
+  }
+  const found: CrossFilmJob[] = [];
+  for (const fileName of fileNames) {
+    if (!fileName.endsWith(".json") || fileName.startsWith(".")) continue;
+    const full = join(JOBS_DIR, fileName);
+    let value: unknown;
+    try {
+      value = JSON.parse(await readFile(full, "utf8")) as unknown;
+    } catch {
+      continue;
+    }
+    const job = parseCrossFilmJob(value, full);
+    if (!job) continue;
+    const listed = job.settings?.characters?.some((entry) => namesMatch(entry, name)) ?? false;
+    if (!listed) continue;
+    found.push(job);
+  }
+  found.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  return found;
+}
+
+async function filmsById(ids: string[]): Promise<{
+  jobs: CrossFilmJob[];
+  missing: string[];
+  invalid: Array<{ id: string; reason: string }>;
+}> {
+  const jobs: CrossFilmJob[] = [];
+  const missing: string[] = [];
+  const invalid: Array<{ id: string; reason: string }> = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const full = join(JOBS_DIR, `${id}.json`);
+    let raw: string;
+    try {
+      raw = await readFile(full, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        missing.push(id);
+        continue;
+      }
+      invalid.push({ id, reason: "unreadable" });
+      continue;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(raw) as unknown;
+    } catch {
+      invalid.push({ id, reason: "invalid JSON" });
+      continue;
+    }
+    const job = parseCrossFilmJob(value, full);
+    if (!job || !value || typeof value !== "object" || (value as { id?: unknown }).id !== id) {
+      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file" });
+      continue;
+    }
+    jobs.push(job);
+  }
+  return { jobs, missing, invalid };
+}
+
+server.registerTool(
+  "check_cross_film",
+  {
+    description:
+      "Compare two to twenty films already on disk: character timestamps, first-shot wardrobe, " +
+      "settings, location props, reference hashes, first frames, and resume or repair lineage. " +
+      "Free and read-only. It does not render, spend, claim a film, or write a job file. " +
+      "There is no series id. Pass jobIds, or a character name to select films that list that character. " +
+      "A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory " +
+      "and lists that report path in mutatedPaths. The default writes nothing, and mutatedPaths is empty.",
+    inputSchema: z.object({
+      jobIds: z.array(z.string().min(1)).min(CROSS_FILM_MIN).max(CROSS_FILM_MAX).optional().describe(
+        "Films to compare, 2 to 20. The order is the caller's.",
+      ),
+      character: z.string().min(1).optional().describe(
+        "Select films whose settings.characters include this name. There is no series id.",
+      ),
+      persist: z.boolean().default(false).describe(
+        "When true, write one report under the consistency directory. The default writes nothing.",
+      ),
+      intentionalWardrobeDifference: z.boolean().default(false).describe(
+        "When true, a first-shot wardrobe difference is marked planned. It still does not change the films.",
+      ),
+    }),
+  },
+  async (args) => {
+    if (beforeAdvisory) await beforeAdvisory();
+    if (!args.jobIds && !args.character) {
+      return refusal({
+        version: 1,
+        executed: false,
+        willRender: false,
+        willSpend: false,
+        mutatedPaths: [],
+        findings: [],
+        films: [],
+        persisted: false,
+        error: "Pass jobIds or a character name.",
+      });
+    }
+    let jobs: CrossFilmJob[];
+    let missing: string[] = [];
+    let invalidJobs: Array<{ id: string; reason: string }> = [];
+    if (args.jobIds) {
+      const loaded = await filmsById(args.jobIds);
+      jobs = loaded.jobs;
+      missing = loaded.missing;
+      invalidJobs = loaded.invalid;
+      if (args.character) {
+        jobs = jobs.filter((job) => job.settings?.characters?.some((name) => namesMatch(name, args.character ?? "")) ?? false);
+      }
+    } else {
+      jobs = await filmsMatchingCharacter(args.character ?? "");
+    }
+    const characters = new Map<string, { name: string; updatedAt: string; path: string } | undefined>();
+    for (const job of jobs) {
+      for (const name of job.settings?.characters ?? []) {
+        const key = name.trim().toLowerCase();
+        if (characters.has(key)) continue;
+        const record = await loadCharacter(name);
+        characters.set(key, record
+          ? { name: record.name, updatedAt: record.updatedAt, path: join(record.folder, "character.json") }
+          : undefined);
+      }
+    }
+    const pendingSpendUsd = new Map<string, number>();
+    for (const job of jobs) {
+      const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
+      pendingSpendUsd.set(job.id, queued.pendingSpendUsd);
+    }
+    const withinRange = jobs.length >= CROSS_FILM_MIN && jobs.length <= CROSS_FILM_MAX;
+    let frameDir: string | undefined;
+    const needsFrames = withinRange && jobs.some((job) => {
+      const shot = job.shots?.[0];
+      if (!shot?.localPath || !existsSync(shot.localPath)) return false;
+      return !(shot.openingFramePath && existsSync(shot.openingFramePath));
+    });
+    if (needsFrames) {
+      frameDir = await mkdtemp(join(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`));
+      if (beforeAdvisoryFrames) await beforeAdvisoryFrames();
+    }
+    try {
+      const report = await checkCrossFilm({
+        jobs,
+        missingJobIds: missing,
+        invalidJobs,
+        characters,
+        pendingSpendUsd,
+        intentionalWardrobeDifference: args.intentionalWardrobeDifference,
+        fileExists: (file) => existsSync(file),
+        filesIdentical,
+        correlate: (left, right) => grayscaleStillCorrelation(left, right),
+        resolveFirstFrame: async (job) => {
+          const shot = job.shots?.[0];
+          if (shot?.openingFramePath && existsSync(shot.openingFramePath)) {
+            return { path: shot.openingFramePath, cited: shot.openingFramePath, ephemeral: false };
+          }
+          if (shot?.localPath && existsSync(shot.localPath) && frameDir) {
+            const extracted = await extractFirstFrame(shot.localPath, frameDir);
+            if (extracted) return { path: extracted, cited: shot.localPath, ephemeral: true };
+          }
+          return { cited: job.path, ephemeral: false };
+        },
+      });
+      if (!args.persist || report.error) return refusal(report);
+      const dir = consistencyDirectory();
+      if (!consistencyDirIsSafe(dir, JOBS_DIR)) {
+        return refusal({
+          ...report,
+          persisted: false,
+          persistError: "Refusing to write a cross-film report inside the jobs directory.",
+        });
+      }
+      const reportId = `cxf_${randomUUID()}`;
+      const reportPath = join(dir, `${reportId}.json`);
+      const body: CrossFilmReport & { reportId: string; reportPath: string } = {
+        ...report,
+        reportId,
+        reportPath,
+        persisted: true,
+        mutatedPaths: [reportPath],
+      };
+      await atomicWriteFile(reportPath, JSON.stringify(body, null, 2));
+      return refusal(body);
+    } finally {
+      if (frameDir) await rm(frameDir, { recursive: true, force: true });
+    }
   },
 );

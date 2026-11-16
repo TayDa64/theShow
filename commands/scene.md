@@ -12,3 +12,6 @@ id). Return the numbered shots with their prompts, durations and continuity chec
 can edit them before anything costs money.
 
 This spends nothing. Do not continue to `board_film` or `render_sequence` unless the user asks.
+
+`suggest_coverage` can read the plan you just made. It is free and does not reorder beats the user
+described. Show its notes. Do not treat them as a quote.

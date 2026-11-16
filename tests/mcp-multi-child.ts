@@ -4,13 +4,20 @@
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { stat, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { saveCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { setBeforeRenameProbe, sweepOrphanTemps, thisOwner } from "../mcp/runtime.ts";
-import { claimFilm, enqueueSpendNote, loadJobsFromDisk, persistJob, readPersistedJob, saveJobAnnotation, server, setBeforeClaimProbe, setJournalProbes } from "../mcp/server.ts";
+import { claimFilm, enqueueSpendNote, loadJobsFromDisk, persistJob, readPersistedJob, saveJobAnnotation, server, setBeforeAdvisoryFramesProbe, setBeforeAdvisoryProbe, setBeforeClaimProbe, setJournalProbes } from "../mcp/server.ts";
+
+/** A pending promise does not keep Node alive. A timer does, until SIGKILL. */
+function hangUntilKilled(): Promise<void> {
+  return new Promise(() => {
+    setInterval(() => undefined, 1_000);
+  });
+}
 
 async function waitForFile(file: string): Promise<void> {
   const deadline = Date.now() + 20_000;
@@ -77,10 +84,13 @@ async function main(): Promise<void> {
     const ids = mode === "annotate-batch" ? rest.slice(1) : rest;
     const kind = mode === "annotate-batch" ? rest[0] : mode;
     if (!kind || ids.length === 0 || ids.some((id) => !id)) throw new Error("annotate needs a job id");
+    if (process.env.THESHOW_PAUSE_BEFORE_RENAME === "1" || process.env.THESHOW_CLAIM_GATE) {
+      process.stdout.write("child-ready\n");
+    }
     if (process.env.THESHOW_PAUSE_BEFORE_RENAME === "1") {
       setBeforeRenameProbe(async () => {
         process.stdout.write("paused-before-rename\n");
-        await new Promise(() => undefined);
+        await hangUntilKilled();
       });
     }
     if (process.env.THESHOW_CLAIM_GATE) {
@@ -230,15 +240,16 @@ async function main(): Promise<void> {
     const id = rest[0];
     if (!id) throw new Error("drain-owned needs a job id");
     const pause = process.env.THESHOW_JOURNAL_PAUSE;
+    if (pause) process.stdout.write("child-ready\n");
     if (pause === "before-rename") {
       setBeforeRenameProbe(async () => {
         process.stdout.write("paused\n");
-        await new Promise(() => undefined);
+        await hangUntilKilled();
       });
     } else if (pause === "before-merge" || pause === "before-delete") {
       const hang = async () => {
         process.stdout.write("paused\n");
-        await new Promise(() => undefined);
+        await hangUntilKilled();
       };
       setJournalProbes({
         ...(pause === "before-merge" ? { beforeMerge: hang } : {}),
@@ -289,6 +300,42 @@ async function main(): Promise<void> {
       process.stdin.on("end", () => resolve());
       process.stdin.resume();
     });
+    return;
+  }
+  if (mode === "advisory") {
+    const [name, payloadPath] = rest;
+    if (!name || !payloadPath) throw new Error("advisory needs a tool name and a payload file");
+    const pauseAdvisory = process.env.THESHOW_PAUSE_ADVISORY === "1";
+    const pauseFrames = process.env.THESHOW_PAUSE_FRAMES === "1";
+    const pauseRename = process.env.THESHOW_PAUSE_BEFORE_RENAME === "1";
+    if (pauseAdvisory || pauseFrames || pauseRename) process.stdout.write("child-ready\n");
+    if (pauseAdvisory) {
+      setBeforeAdvisoryProbe(async () => {
+        process.stdout.write("paused-advisory\n");
+        await hangUntilKilled();
+      });
+    }
+    if (pauseFrames) {
+      setBeforeAdvisoryFramesProbe(async () => {
+        process.stdout.write("paused-frames\n");
+        await hangUntilKilled();
+      });
+    }
+    if (pauseRename) {
+      setBeforeRenameProbe(async () => {
+        process.stdout.write("paused-before-rename\n");
+        await hangUntilKilled();
+      });
+    }
+    const args = JSON.parse(await readFile(payloadPath, "utf8")) as Record<string, unknown>;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const toolClient = new Client({ name: "phase2-child", version: "0.0.0" });
+    await toolClient.connect(clientTransport);
+    const result = await toolClient.callTool({ name, arguments: args });
+    const content = result.content;
+    const text = Array.isArray(content) && content[0] && "text" in content[0] ? String(content[0].text) : "";
+    process.stdout.write(`${text}\n`);
     return;
   }
   throw new Error(`unknown mode ${mode ?? ""}`);

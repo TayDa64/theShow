@@ -224,7 +224,12 @@ describe("desktop stdio launch", () => {
         description: tool.description,
         inputSchema: tool.inputSchema,
       }));
-      expect(actual).toEqual(fixture.tools);
+      expect(actual.slice(0, fixture.tools.length)).toEqual(fixture.tools);
+      expect(actual.map((tool) => tool.name)).toEqual([
+        ...fixture.tools.map((tool) => tool.name),
+        "suggest_coverage",
+        "check_cross_film",
+      ]);
     },
     20_000,
   );

@@ -28,7 +28,7 @@ The server ships pre-bundled, so there is no `npm install` step and startup need
 grok mcp doctor
 ```
 
-You should see `theshow` healthy with **fifteen tools** discovered.
+You should see `theshow` healthy with **seventeen tools** discovered.
 
 Startup used to fail during initialize for two reasons, both now fixed. It ran `npm install` inside the handshake, about thirteen seconds of work that overran the client's initialize window; and Grok resolves a relative path in `.mcp.json` from the user's home directory rather than the plugin folder, so the entry point is `${GROK_PLUGIN_ROOT}/mcp/launch.mjs`. Updating an existing install needs an uninstall first:
 
@@ -76,6 +76,8 @@ Or start from a command. `/theshow` is the primary start. The file is `commands/
 | `extend_clip` | per call | Continues an existing take. API-key backends only |
 | `review_continuity` | free | Evidence review of each cut. It does not render or spend |
 | `propose_repair` | free | Repair options and their prices. It does not render |
+| `suggest_coverage` | free | Coverage and pacing notes. It does not render or spend |
+| `check_cross_film` | free | Read-only comparison of films already on disk. It does not render or spend |
 
 ## Continuity, in one paragraph
 

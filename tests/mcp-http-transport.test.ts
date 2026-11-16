@@ -285,11 +285,17 @@ describe("streamable HTTP transport", () => {
         expect(listed.status).toBe(200);
         const tools = (listed.json?.result as { tools?: ListedTool[] } | undefined)?.tools ?? [];
         expect(tools.map((tool) => tool.name).slice(0, TOOL_NAMES.length)).toEqual([...TOOL_NAMES]);
-        expect(tools.map((tool) => ({
+        const actual = tools.map((tool) => ({
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
-        }))).toEqual(fixture.tools);
+        }));
+        expect(actual.slice(0, fixture.tools.length)).toEqual(fixture.tools);
+        expect(actual.map((tool) => tool.name)).toEqual([
+          ...fixture.tools.map((tool) => tool.name),
+          "suggest_coverage",
+          "check_cross_film",
+        ]);
 
         const unknown = await postJson(endpoint, createCharacterBody(), {
           ...authed,

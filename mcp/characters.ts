@@ -608,6 +608,36 @@ export async function saveCharacter(input: CharacterInput): Promise<CharacterRec
   });
 }
 
+export type CharacterSnapshot = {
+  name: string;
+  updatedAt: string;
+  references: Array<{ path: string; sha256: string }>;
+};
+
+/**
+ * Name, updatedAt, and sha256 of each local reference image.
+ * Remote URLs are skipped. A missing file is skipped rather than hashed as empty.
+ * The character file itself is not rewritten.
+ */
+export async function snapshotCharacter(name: string): Promise<CharacterSnapshot | undefined> {
+  const record = await loadCharacter(name);
+  if (!record) return undefined;
+  const references: Array<{ path: string; sha256: string }> = [];
+  for (const ref of record.referenceImageUrls) {
+    if (!ref || /^https?:\/\//i.test(ref) || ref.startsWith("data:")) continue;
+    try {
+      const bytes = await readFile(ref);
+      references.push({
+        path: ref,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    } catch {
+      continue;
+    }
+  }
+  return { name: record.name, updatedAt: record.updatedAt, references };
+}
+
 /** A character by name, or undefined when there is no such character on disk. */
 export async function loadCharacter(name: string): Promise<CharacterRecord | undefined> {
   const root = charactersRoot();

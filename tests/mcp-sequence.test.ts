@@ -262,7 +262,8 @@ describe('the skill names every tool that exists', () => {
     );
     const registered = [...serverSource.matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]);
     // 13 before Phase 1. review_continuity and propose_repair are free and do not render.
-    expect(registered.length).toBe(15);
+    // suggest_coverage and check_cross_film are free and do not render.
+    expect(registered.length).toBe(17);
     for (const name of registered) {
       expect(skill, `${name} is registered but the skill never mentions it`).toContain(name);
     }
