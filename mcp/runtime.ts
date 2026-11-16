@@ -6,9 +6,9 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { JOBS_DIR } from "./media";
 
@@ -151,10 +151,95 @@ export function bearerMatches(authorization: string | undefined, token: string):
   return authorization?.startsWith(prefix) === true && presented.length > 0 && same;
 }
 
+/**
+ * Test seam. Production leaves this unset. A probe can wait until the process
+ * is killed, which is how a crash mid-write is exercised.
+ */
+let beforeRename: (() => Promise<void>) | undefined;
+
+export function setBeforeRenameProbe(next: (() => Promise<void>) | undefined): void {
+  beforeRename = next;
+}
+
+const TEMP_SAFE_AGE_MS = 15 * 60 * 1000;
+
+export function hostKey(): string {
+  return createHash("sha256").update(processHost).digest("hex");
+}
+
+/**
+ * Delete a temp file only when this machine's writer is gone, or when the file
+ * is old enough that no live writer can still own it. A young file from another
+ * host is left alone.
+ */
+export async function sweepOrphanTemps(dir: string): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  const ours = hostKey();
+  for (const name of names) {
+    if (!name.endsWith(".tmp")) continue;
+    const full = join(dir, name);
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - (await stat(full)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age >= TEMP_SAFE_AGE_MS) {
+      await unlink(full).catch(() => undefined);
+      continue;
+    }
+    const match = name.match(/\.(\d+)\.([A-Za-z0-9_]+)\.[0-9a-f-]+\.tmp$/i);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const host = match[2];
+    if (host !== ours) continue;
+    if (pid === process.pid || pidAlive(pid)) continue;
+    await unlink(full).catch(() => undefined);
+  }
+}
+
+export async function sweepStaleReviewFrames(dir: string): Promise<void> {
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  const ours = hostKey();
+  for (const name of names) {
+    if (!name.startsWith(".review-frames-")) continue;
+    const full = join(dir, name);
+    let age = Number.POSITIVE_INFINITY;
+    try {
+      age = Date.now() - (await stat(full)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (age >= TEMP_SAFE_AGE_MS) {
+      await rm(full, { recursive: true, force: true }).catch(() => undefined);
+      continue;
+    }
+    const match = name.match(/^\.review-frames-(\d+)-([a-f0-9]{64})-/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const host = match[2];
+    if (host !== ours) continue;
+    if (pid === process.pid || pidAlive(pid)) continue;
+    await rm(full, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 export async function atomicWriteFile(path: string, data: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await sweepOrphanTemps(dirname(path));
+  const tmp = `${path}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
+  if (beforeRename) await beforeRename();
   await rename(tmp, path);
 }
 
@@ -177,9 +262,14 @@ export const exclusiveFs = {
  * hard-link, fall back to an exclusive create of `dest` itself, then write and
  * fsync. Callers treat an empty or partial dest as unfinished for a short grace.
  */
+/** Temp name for an exclusive create. The host hash lets a restart sweep a dead writer's file. */
+export function exclusiveTempPath(dest: string): string {
+  return `${dest}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
+}
+
 export async function publishExclusive(dest: string, body: string): Promise<boolean> {
   await mkdir(dirname(dest), { recursive: true });
-  const tmp = `${dest}.${process.pid}.${randomUUID()}.tmp`;
+  const tmp = exclusiveTempPath(dest);
   await writeFile(tmp, body, "utf8");
   try {
     try {

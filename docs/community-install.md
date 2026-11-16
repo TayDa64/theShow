@@ -20,7 +20,7 @@ Confirm it worked:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with thirteen tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `board_film`, `generate_still`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, `retry_shot`, `list_films`, and `check_sequence`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
+You want `theshow` reported healthy with fifteen tools discovered: `configure_film`, `create_character`, `plan_storyboard`, `board_film`, `generate_still`, `generate_controlled_clip`, `extend_clip`, `extract_last_frame`, `assemble_film`, `render_sequence`, `retry_shot`, `list_films`, `check_sequence`, `review_continuity`, and `propose_repair`. Run that check on the machine the session is using. If the session's tool list has no `plan_storyboard`, the plugin is not loaded there, and the skill tells the model to stop and say so.
 
 An early build died during initialize for one of two reasons, both fixed in the launcher. Startup used to install dependencies, about 13 seconds of work, which overran the client's initialize window, or the client resolved the script from the home directory instead of the plugin folder. The launcher now runs the bundle and resolves paths from its own file. Update with:
 

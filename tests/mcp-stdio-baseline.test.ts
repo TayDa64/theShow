@@ -204,7 +204,7 @@ describe("desktop stdio launch", () => {
   const fixture = JSON.parse(readFileSync(FIXTURE, "utf8")) as { tools: ListedTool[] };
 
   it.each(["bundle", "source"] as const)(
-    "discovers all 13 tools through node mcp/launch.mjs (%s)",
+    "discovers the original 13 tools plus the free review tools through node mcp/launch.mjs (%s)",
     async (mode) => {
       const { tools, stderr, methods } = await listTools(mode);
 
@@ -217,9 +217,8 @@ describe("desktop stdio launch", () => {
       expect(stderr).toContain("theShow MCP server running on stdio");
       expect(stderr).not.toContain("running on http");
 
-      expect(tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
-      expect(fixture.tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
-
+      expect(tools.map((tool) => tool.name).slice(0, TOOL_NAMES.length)).toEqual([...TOOL_NAMES]);
+      expect(fixture.tools.map((tool) => tool.name).slice(0, TOOL_NAMES.length)).toEqual([...TOOL_NAMES]);
       const actual = tools.map((tool) => ({
         name: tool.name,
         description: tool.description,

@@ -4,7 +4,6 @@
       "name": "configure_film",
       "description": "Collect the whole film brief as an interactive form in one turn: scene, characters, style, shot count and length, aspect ratio, audio, hard constraints, and an optional reference image. Cheaper than asking the same questions conversationally, because it costs one turn instead of many. Returns the answers as JSON ready for plan_storyboard and generate_controlled_clip, plus a cost estimate. It renders nothing and spends nothing.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "scene": {
@@ -15,14 +14,14 @@
             "description": "Card heading shown to the user.",
             "type": "string"
           }
-        }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "create_character",
       "description": "Create or update a character with optional reference images for continuity.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "name": {
@@ -157,14 +156,14 @@
         },
         "required": [
           "name"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "plan_storyboard",
       "description": "Plan multi-shot storyboard for a scene. Accepts optional wardrobe events and a per-location prop ledger so each shot's prompt describes only what is worn and the props that belong in that room.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "sceneDescription": {
@@ -646,14 +645,14 @@
         "required": [
           "sceneDescription",
           "characters"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "generate_controlled_clip",
       "description": "Generate a single video clip with reference images and optional first-frame continuity. Uses a real Grok Imagine Video backend, authenticating with XAI_API_KEY when present or falling back to the Grok CLI session in ~/.grok/auth.json so calls bill to the Grok subscription. Spends only after confirm, and only when the continuity gate passes. Pin defaults to the start frame: an end-frame pin holds the pose and has to be asked for.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "prompt": {
@@ -1147,18 +1146,46 @@
             "type": "number",
             "minimum": 10,
             "maximum": 600
+          },
+          "jobId": {
+            "description": "Film whose cumulative spend this clip counts toward.",
+            "type": "string"
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "prompt"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "extend_clip",
       "description": "Extend an existing clip from its last frame, producing one longer continuous take. Requires a clip of 2-15 seconds and an extension of 2-10 seconds. Only available with an XAI_API_KEY: the subscription session proxy does not expose the extensions route, so on the session path this reports that clearly instead of guessing. There is no continuity ledger on an extension, so confirm spends only when overrideValidation is set. Otherwise the gate is unchecked and nothing is bought.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "videoUrl": {
@@ -1195,19 +1222,47 @@
           "overrideValidation": {
             "default": false,
             "type": "boolean"
+          },
+          "jobId": {
+            "description": "Film whose cumulative spend this extension counts toward.",
+            "type": "string"
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "videoUrl",
           "prompt"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "extract_last_frame",
       "description": "Extract the last frame of a video as a PNG for use as firstFrameUrl or lastFrameUrl on the next shot. Returns a local file path plus a data URI, either of which can be passed straight to generate_controlled_clip as firstFrameUrl to carry continuity across a cut.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "videoUrl": {
@@ -1221,14 +1276,14 @@
         },
         "required": [
           "videoUrl"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "generate_still",
       "description": "Generate a single image with Grok Imagine Image and save it locally. About $0.02 per still, against $0.14 a second for video, which is what makes it worth boarding a film as pictures first. Returns the image URL, a local path, and the cost actually billed. Use it for storyboard frames, or call board_film to do a whole film at once. Character references are merged exactly as on a clip, so a portrait registered with create_character keeps the face consistent from the board through to the render.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "prompt": {
@@ -1344,18 +1399,46 @@
             "items": {
               "type": "string"
             }
+          },
+          "jobId": {
+            "description": "Film whose cumulative spend this still counts toward. Omit it and the still is not added to a film.",
+            "type": "string"
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "prompt"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "assemble_film",
       "description": "Assemble ordered clips into a single film with real FFmpeg, normalising size, frame rate and audio so chained generations stitch cleanly. Accepts public https URLs, file:// paths, or local paths from earlier tool calls. Joins are hard cuts by default: on real chained clips a cross-fade double-exposes drifting textures, while a cut stays sharp. Use a short fade only when two shots continue one camera move with the same framing.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "clips": {
@@ -1421,14 +1504,14 @@
         },
         "required": [
           "clips"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "render_sequence",
       "description": "Render a multi-shot sequence with automatic continuity: each shot starts from the previous shot's last frame, so faces, wardrobe, lighting, and set carry through the whole film. Optionally assembles the result into one film. This is how you make something longer than a single 15-second clip. Spends real money per shot, so call once without confirm for an estimate and only pass confirm after the user approves it. Returns a jobId immediately; a long sequence keeps running, so poll check_sequence for the film rather than re-rendering.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "shots": {
@@ -2086,18 +2169,42 @@
             "type": "number",
             "minimum": 10,
             "maximum": 600
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "shots"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "board_film",
       "description": "Board a film as stills before rendering it: generate one image per shot boundary, so consecutive shots share a picture. render_sequence sends that closing frame only when pin is \"both\"; the default pin is start, so the cut is not pixel-pinned unless you ask. A portrait with no location photo is part of every frame's name, so changing it buys every still again. A hero built from a portrait and a room is bought again with every confirmed board, and a new hero buys every shot frame too. Two cents a still against fourteen a second of video, so an eight-shot board costs about eighteen cents and lets the user approve the look before the expensive half runs. Call without confirm for a cost estimate; pass maxCostUsd to make it refuse rather than overspend. Frames already on disk are reused free, so it is safe to re-run after a partial board. Returns `shots` ready to paste into render_sequence with firstFrameUrl and lastFrameUrl already filled in. Renders no video.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "shots": {
@@ -2436,18 +2543,46 @@
             "default": false,
             "description": "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. confirm alone does not unblock a refusal.",
             "type": "boolean"
+          },
+          "jobId": {
+            "description": "Film whose cumulative spend this board counts toward.",
+            "type": "string"
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "shots"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "retry_shot",
       "description": "Re-render a single shot of a finished render_sequence film and splice it back in, keeping every other shot exactly as it was. Only the one shot costs money. Use it when a shot came back wrong: wrong action, a face drifted, an unwanted object appeared. Call without confirm for the price of that one render, then again with confirm: true after the user approves. Read the warnings: the shot is re-chained from the previous shot's frame, but the shots after it were built from the old frame, so that next join becomes a cut.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "jobId": {
@@ -2482,19 +2617,43 @@
             "type": "number",
             "minimum": 10,
             "maximum": 600
+          },
+          "approvedUsd": {
+            "description": "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+            "type": "number"
+          },
+          "approvedKind": {
+            "description": "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "description": "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+            "type": "string"
+          },
+          "budgetUsd": {
+            "description": "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
           "jobId",
           "shotIndex"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "list_films",
       "description": "List films rendered with this plugin, newest first: job id, state, shot count, duration, cost and file path. Read-only and free. Use it to find a film to continue with resumeFromJobId or to repair with retry_shot, including one made in an earlier session.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "limit": {
@@ -2508,14 +2667,14 @@
             "description": "Also list films that stopped or failed, which still hold every shot they paid for.",
             "type": "boolean"
           }
-        }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     },
     {
       "name": "check_sequence",
       "description": "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
       "inputSchema": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
           "jobId": {
@@ -2525,7 +2684,263 @@
         },
         "required": [
           "jobId"
-        ]
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "review_continuity",
+      "description": "Review what crosses each cut in a film: wardrobe, props, pose at the seam, lighting, and identity. Each finding is measured, visually flagged, or unverified, and each one carries evidence or an abstention. Free. It does not render, delete, reorder, or spend, and it does not call a vision API. Style and story notes are ignored.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "description": "Persist the review on this film. A running render is not stopped.",
+            "type": "string"
+          },
+          "shots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "worn": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "props": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "locationId": {
+                        "type": "string"
+                      },
+                      "placement": {
+                        "type": "string"
+                      },
+                      "holder": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "locationId",
+                      "placement"
+                    ]
+                  }
+                },
+                "lastFramePath": {
+                  "type": "string"
+                },
+                "firstFramePath": {
+                  "type": "string"
+                },
+                "referencePath": {
+                  "type": "string"
+                },
+                "durationSeconds": {
+                  "type": "number"
+                },
+                "pin": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "both"
+                  ]
+                },
+                "boardStillPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "extendedFrom": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index"
+              ]
+            }
+          },
+          "measurements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "afterShot": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "agreement": {
+                  "type": "number"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "meanLumaDelta": {
+                  "type": "number"
+                },
+                "identityAgreement": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "afterShot"
+              ]
+            }
+          },
+          "styleNotes": {
+            "description": "Ignored. Not a boundary finding.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "narrativeSuggestions": {
+            "description": "Ignored. Not a boundary finding.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "propose_repair",
+      "description": "Propose least-cost repairs for one bad shot from the frames that were actually used. Free and advisory: it does not approve and it does not render. When a job id is given, retry-alone includes the costQuote retry_shot accepts. The other options are advice only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "badShot": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "resolution": {
+            "description": "Quote the options at this resolution. Omitted means 720p, the same default as a render.",
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "shots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "durationSeconds": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 15
+                },
+                "pin": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "both"
+                  ]
+                },
+                "framePath": {
+                  "type": "string"
+                },
+                "firstFramePath": {
+                  "type": "string"
+                },
+                "lastFramePath": {
+                  "type": "string"
+                },
+                "boardStillPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "extendedFrom": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index",
+                "durationSeconds"
+              ]
+            }
+          },
+          "strategyId": {
+            "type": "string",
+            "enum": [
+              "retry-alone",
+              "retry-dependents",
+              "reboard-boundary",
+              "accept-note"
+            ]
+          },
+          "budgetUsd": {
+            "description": "Film budget recorded with the proposal. Crossing it warns. It does not render.",
+            "type": "number",
+            "minimum": 0
+          },
+          "confirm": {
+            "default": false,
+            "description": "Ignored. This tool never approves and never renders.",
+            "type": "boolean"
+          },
+          "approvedUsd": {
+            "type": "number"
+          },
+          "approvedKind": {
+            "type": "string",
+            "enum": [
+              "board",
+              "video",
+              "still",
+              "extend",
+              "retry"
+            ]
+          },
+          "approvedFingerprint": {
+            "type": "string"
+          },
+          "overrideValidation": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "badShot"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#"
       }
     }
   ]

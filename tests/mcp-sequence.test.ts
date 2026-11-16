@@ -261,9 +261,8 @@ describe('the skill names every tool that exists', () => {
       'utf8',
     );
     const registered = [...serverSource.matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]);
-    // 11 before bookending and stills-first boarding: generate_still and
-    // board_film are the two additions.
-    expect(registered.length).toBe(13);
+    // 13 before Phase 1. review_continuity and propose_repair are free and do not render.
+    expect(registered.length).toBe(15);
     for (const name of registered) {
       expect(skill, `${name} is registered but the skill never mentions it`).toContain(name);
     }

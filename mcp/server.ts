@@ -27,17 +27,40 @@ import {
   OUTPUT_DIR,
   assembleClips,
   closingFrameAgreement,
+  extractFirstFrame,
   extractLastFrame,
   pathToDataUrl,
   probeDuration,
 } from "./media.ts";
 import {
+  costUsdFromUsage,
   generateGrokClip,
   generateGrokStill,
   localImageRefAllowed,
+  paidStubEnabled,
   type GrokClipResult,
 } from "./grokVideo.ts";
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
+import {
+  gatePaidAction,
+  quoteFingerprint,
+  videoQuote,
+  type PaidAction,
+  type PersistedSpend,
+  type SpendKind,
+} from "./costGate.ts";
+import {
+  reviewContinuity,
+  type ContinuityReview,
+  type ReviewShot,
+} from "./continuityReview.ts";
+import {
+  buildDependencyGraph,
+  proposeRepair,
+  type DependencyGraph,
+  type DependencyShot,
+  type RepairProposal,
+} from "./repairPlan.ts";
 import { charactersRoot, loadCharacterSync, loadAllCharacters, saveCharacter } from "./characters.ts";
 import {
   annotateAction,
@@ -63,13 +86,17 @@ import {
   type RenderGateResult,
   type ShotContract,
 } from "./contracts.ts";
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { runResumeClaimProbe } from "./resume-claim-probe.ts";
 import {
   atomicWriteFile,
   currentMcpServer,
+  sweepOrphanTemps,
+  sweepStaleReviewFrames,
+  hostKey,
   elicitTimeoutMs,
   flushJobWrites,
   installShutdown,
@@ -1048,7 +1075,439 @@ function refusal(payload: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
+const costApprovalFields = {
+  approvedUsd: z.number().optional().describe(
+    "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
+  ),
+  approvedKind: z.enum(["board", "video", "still", "extend", "retry"]).optional().describe(
+    "Which quote this confirm is for. A board approval does not authorize video, and a video approval does not authorize a board.",
+  ),
+  approvedFingerprint: z.string().optional().describe(
+    "Fingerprint of the approved estimate. It covers the prompts, frames, resolution, duration, shot count, and pin. A change invalidates the confirm.",
+  ),
+  budgetUsd: z.number().min(0).optional().describe(
+    "Cumulative film budget. Crossing it adds a warning. It never authorizes spending and never stops a render that was already approved.",
+  ),
+};
+
+type CostArgs = {
+  confirm: boolean;
+  approvedUsd?: number;
+  approvedKind?: SpendKind;
+  approvedFingerprint?: string;
+  overrideValidation?: boolean;
+  budgetUsd?: number;
+};
+
+async function quoteGate(
+  args: CostArgs,
+  kind: SpendKind,
+  usd: number,
+  fingerprint: string,
+  job?: SequenceJob,
+): Promise<PaidAction> {
+  const queued = job ? await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds) : undefined;
+  const spentUsd = Math.round(((job ? recordedSpendUsd(job) : 0) + (queued?.pendingSpendUsd ?? 0)) * 100) / 100;
+  return gatePaidAction({
+    kind,
+    usd,
+    fingerprint,
+    confirm: args.confirm,
+    approvedUsd: args.approvedUsd,
+    approvedKind: args.approvedKind,
+    approvedFingerprint: args.approvedFingerprint,
+    overrideValidation: args.overrideValidation,
+    spentUsd,
+    budgetUsd: args.budgetUsd ?? queued?.pendingThresholdUsd,
+  });
+}
+
+function costRefusal(paid: PaidAction | undefined, extra?: Record<string, unknown>) {
+  if (!paid || paid.decision !== "refused") return undefined;
+  return refusal({
+    action: "refused",
+    willRender: false,
+    willSpend: false,
+    reason: paid.reason,
+    message: paid.reason,
+    costQuote: paid.quote,
+    ...(paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}),
+    ...extra,
+  });
+}
+
+function withCost(
+  result: { content: Array<{ type: "text"; text: string }> },
+  paid: PaidAction,
+) {
+  const text = result.content[0]?.text ?? "{}";
+  let body: Record<string, unknown> = {};
+  try {
+    body = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    body = { message: text };
+  }
+  return refusal({ ...body, ...costFields(paid) });
+}
+
+function costFields(paid: PaidAction | undefined): Record<string, unknown> {
+  if (!paid) return {};
+  return {
+    costQuote: paid.quote,
+    ...(paid.budgetWarning ? { budgetWarning: paid.budgetWarning } : {}),
+    ...(paid.unboundApproval ? { unboundApproval: paid.unboundApproval } : {}),
+  };
+}
+
+export function recordedSpendUsd(job: {
+  shots: Array<{ costUsd?: number }>;
+  spendLedger?: PersistedSpend;
+}): number {
+  const entries = job.spendLedger?.entries ?? [];
+  if (entries.length > 0) {
+    return Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  }
+  return Math.round(job.shots.reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0) * 100) / 100;
+}
+
+export function noteReportedSpend(
+  job: SequenceJob,
+  kind: SpendKind,
+  usd: number,
+  flags?: { estimated?: boolean; derived?: boolean; uncertain?: boolean; reason?: string },
+): void {
+  const unbilled = flags?.reason !== undefined && !(usd > 0);
+  if (!(usd > 0) && !unbilled) return;
+  const entries = [...(job.spendLedger?.entries ?? [])];
+  if (entries.length === 0) {
+    for (const shot of job.shots) {
+      if ((shot.costUsd ?? 0) > 0) {
+        entries.push({ kind: "video", usd: shot.costUsd ?? 0, derived: true });
+      }
+    }
+  }
+  entries.push({
+    kind,
+    usd: Math.round(usd * 100) / 100,
+    ...(flags?.estimated ? { estimated: true } : {}),
+    ...(flags?.derived ? { derived: true } : {}),
+    ...(flags?.uncertain ? { uncertain: true } : {}),
+    ...(flags?.reason ? { reason: flags.reason } : {}),
+  });
+  const spentUsd = Math.round(entries.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  const appliedNoteIds = job.spendLedger?.appliedNoteIds;
+  job.spendLedger = {
+    version: 1,
+    spentUsd,
+    pendingUsd: 0,
+    ...(job.spendLedger?.thresholdUsd !== undefined ? { thresholdUsd: job.spendLedger.thresholdUsd } : {}),
+    ...(appliedNoteIds ? { appliedNoteIds } : {}),
+    entries,
+  };
+}
+
+/** Keep a film's recorded spend. A pre-ledger film is derived from its shot costs. */
+export function carrySpend(source: SequenceJob): PersistedSpend | undefined {
+  if (source.spendLedger?.entries && source.spendLedger.entries.length > 0) {
+    return structuredClone(source.spendLedger);
+  }
+  const derived = source.shots.flatMap((shot) => (
+    (shot.costUsd ?? 0) > 0
+      ? [{ kind: "video" as const, usd: Math.round((shot.costUsd ?? 0) * 100) / 100, derived: true }]
+      : []
+  ));
+  if (derived.length === 0) {
+    return source.spendLedger ? structuredClone(source.spendLedger) : undefined;
+  }
+  const spentUsd = Math.round(derived.reduce((sum, entry) => sum + entry.usd, 0) * 100) / 100;
+  return {
+    version: 1,
+    spentUsd,
+    pendingUsd: 0,
+    ...(source.spendLedger?.thresholdUsd !== undefined ? { thresholdUsd: source.spendLedger.thresholdUsd } : {}),
+    ...(source.spendLedger?.appliedNoteIds ? { appliedNoteIds: [...source.spendLedger.appliedNoteIds] } : {}),
+    entries: derived,
+  };
+}
+
+type SpendNoteInput = {
+  op: "budget";
+  thresholdUsd: number;
+} | {
+  op: "spend";
+  kind: SpendKind;
+  usd: number;
+  estimated?: boolean;
+  uncertain?: boolean;
+  reason?: string;
+};
+
+type SpendNote = SpendNoteInput & { id: string };
+
+export type NoteOutcome = { applied: true } | { applied: false; deferred: true; queued: true; reason: string };
+
+export type QueuedFilmSpend = {
+  pendingSpendUsd: number;
+  pendingThresholdUsd?: number;
+};
+
+function spendJournalDir(jobId: string): string {
+  return join(JOBS_DIR, ".spend-journal", jobId);
+}
+
+function isSpendNote(value: unknown): value is SpendNote {
+  if (!value || typeof value !== "object") return false;
+  const note = value as { id?: unknown; op?: unknown; usd?: unknown; thresholdUsd?: unknown };
+  if (typeof note.id !== "string" || note.id.length === 0) return false;
+  if (note.op === "budget") return typeof note.thresholdUsd === "number";
+  if (note.op === "spend") return typeof note.usd === "number";
+  return false;
+}
+
+async function listJournal(jobId: string): Promise<{ valid: { file: string; note: SpendNote }[]; torn: string[] }> {
+  const dir = spendJournalDir(jobId);
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return { valid: [], torn: [] };
+  }
+  names.sort();
+  const valid: { file: string; note: SpendNote }[] = [];
+  const torn: string[] = [];
+  for (const name of names) {
+    const file = join(dir, name);
+    if (!name.endsWith(".json") || name.startsWith(".")) {
+      const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
+      if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
+      torn.push(file);
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as unknown;
+      if (!isSpendNote(parsed)) torn.push(file);
+      else valid.push({ file, note: parsed });
+    } catch {
+      torn.push(file);
+    }
+  }
+  return { valid, torn };
+}
+
+/** Read queued notes without merging them and without deleting anything. */
+export async function readQueuedFilmSpend(jobId: string, appliedNoteIds?: string[]): Promise<QueuedFilmSpend> {
+  const { valid } = await listJournal(jobId);
+  const applied = new Set(appliedNoteIds ?? []);
+  let pendingSpendUsd = 0;
+  let pendingThresholdUsd: number | undefined;
+  for (const { note } of valid) {
+    if (applied.has(note.id)) continue;
+    if (note.op === "spend") pendingSpendUsd += note.usd;
+    else pendingThresholdUsd = note.thresholdUsd;
+  }
+  const rounded = Math.round(pendingSpendUsd * 100) / 100;
+  return {
+    pendingSpendUsd: rounded,
+    ...(pendingThresholdUsd !== undefined ? { pendingThresholdUsd } : {}),
+  };
+}
+
+function queuedFields(queued: QueuedFilmSpend | undefined): Record<string, unknown> {
+  if (!queued) return {};
+  return {
+    ...(queued.pendingSpendUsd > 0 ? { pendingSpendUsd: queued.pendingSpendUsd } : {}),
+    ...(queued.pendingThresholdUsd !== undefined ? { pendingThresholdUsd: queued.pendingThresholdUsd } : {}),
+  };
+}
+
+function applySpendNote(job: SequenceJob, note: SpendNote): void {
+  if (note.op === "budget") {
+    const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
+    job.spendLedger = {
+      ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+      thresholdUsd: note.thresholdUsd,
+      spentUsd: spent,
+    };
+    return;
+  }
+  noteReportedSpend(job, note.kind, note.usd, {
+    estimated: note.estimated,
+    uncertain: note.uncertain,
+    reason: note.reason,
+  });
+}
+
+function rememberAppliedNote(job: SequenceJob, id: string): void {
+  const ids = job.spendLedger?.appliedNoteIds ?? [];
+  if (ids.includes(id)) return;
+  const spent = job.spendLedger?.spentUsd ?? recordedSpendUsd(job);
+  job.spendLedger = {
+    version: 1,
+    spentUsd: spent,
+    pendingUsd: job.spendLedger?.pendingUsd ?? 0,
+    ...(job.spendLedger?.thresholdUsd !== undefined ? { thresholdUsd: job.spendLedger.thresholdUsd } : {}),
+    ...(job.spendLedger?.entries ? { entries: job.spendLedger.entries } : {}),
+    appliedNoteIds: [...ids, id],
+  };
+}
+
+export async function enqueueSpendNote(jobId: string, note: SpendNoteInput): Promise<void> {
+  const full: SpendNote = { ...note, id: randomUUID() };
+  const dir = spendJournalDir(jobId);
+  await mkdir(dir, { recursive: true });
+  const finalName = `${String(Date.now()).padStart(16, "0")}-${full.id}.json`;
+  const dest = join(dir, finalName);
+  const tmp = join(dir, `.${finalName}.${process.pid}.tmp`);
+  await writeFile(tmp, JSON.stringify(full));
+  await rename(tmp, dest);
+}
+
+let beforeJournalMerge: (() => Promise<void>) | undefined;
+let beforeJournalDelete: (() => Promise<void>) | undefined;
+
+export function setJournalProbes(next: {
+  beforeMerge?: () => Promise<void>;
+  beforeDelete?: () => Promise<void>;
+} | undefined): void {
+  beforeJournalMerge = next?.beforeMerge;
+  beforeJournalDelete = next?.beforeDelete;
+}
+
+/** Apply notes that are not already in the ledger. The files stay until the job rename succeeds. */
+async function applyQueuedNotes(job: SequenceJob): Promise<string[]> {
+  const { valid, torn } = await listJournal(job.id);
+  for (const file of torn) await unlink(file).catch(() => undefined);
+  const applied = new Set(job.spendLedger?.appliedNoteIds ?? []);
+  const consumed: string[] = [];
+  for (const { file, note } of valid) {
+    if (!applied.has(note.id)) {
+      applySpendNote(job, note);
+      rememberAppliedNote(job, note.id);
+      applied.add(note.id);
+    }
+    consumed.push(file);
+  }
+  return consumed;
+}
+
+function thisProcessOwns(job: SequenceJob): boolean {
+  const owner = job.owner;
+  if (owner && owner.token === processToken && owner.pid === process.pid) return true;
+  const claim = job.claim;
+  return Boolean(claim && claim.token === processToken && claim.pid === process.pid);
+}
+
+function deferredField(outcome: NoteOutcome | undefined, key: "budgetNote" | "spendNote"): Record<string, unknown> {
+  if (!outcome || outcome.applied) return {};
+  return { [key]: { deferred: true, queued: true, reason: outcome.reason } };
+}
+
+/** What to record after a provider call. A refusal is $0. A missing bill on an accepted call is the quote. */
+export function chargeForProviderResult(
+  result: {
+    status?: string;
+    costUsd?: number;
+    code?: string;
+    fallback?: string;
+    requestId?: string;
+    error?: string;
+    videoUrl?: string;
+    localPath?: string;
+    imageUrl?: string;
+  },
+  quotedUsd: number,
+): { record: boolean; usd: number; estimated?: boolean; uncertain?: boolean; reason?: string } {
+  if (
+    result.fallback === "stub"
+    || result.code === "no-credential"
+    || result.code === "expired-credential"
+    || result.code === "prompt-rejected"
+  ) {
+    return { record: false, usd: 0 };
+  }
+  const reported = result.costUsd ?? 0;
+  if (reported > 0) return { record: true, usd: Math.round(reported * 100) / 100 };
+  const accepted = result.status === "completed"
+    || result.status === "submitted"
+    || Boolean(result.requestId)
+    || Boolean(result.videoUrl)
+    || Boolean(result.localPath)
+    || Boolean(result.imageUrl);
+  if (accepted) return { record: true, usd: quotedUsd, estimated: true };
+  if (result.status === "timeout" || result.code === "timeout") {
+    return {
+      record: true,
+      usd: quotedUsd,
+      estimated: true,
+      uncertain: true,
+      reason: result.error ?? "The provider did not say whether this was billed.",
+    };
+  }
+  if (
+    result.code === "rejected"
+    || result.code === "failed"
+    || result.code === "submit-failed"
+    || result.code === "no-request-id"
+    || result.status === "failed"
+  ) {
+    return {
+      record: true,
+      usd: 0,
+      reason: result.error ?? result.code ?? "The provider did not accept this request.",
+    };
+  }
+  return {
+    record: true,
+    usd: 0,
+    uncertain: true,
+    reason: result.error ?? "The provider did not say whether this was billed.",
+  };
+}
+
+async function writeFilmNote(jobId: string, note: SpendNoteInput, patch: (job: SequenceJob) => void): Promise<NoteOutcome> {
+  let reason = "The note was not written.";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const saved = await saveJobAnnotation(jobId, patch);
+    if (saved.ok) return { applied: true };
+    reason = saved.message;
+    if (!saved.message.includes("retry shortly")) break;
+    await sleep(5 + attempt);
+  }
+  await enqueueSpendNote(jobId, note);
+  return { applied: false, deferred: true, queued: true, reason };
+}
+
+async function rememberBudget(jobId: string, budgetUsd: number): Promise<NoteOutcome> {
+  return writeFilmNote(jobId, { op: "budget", thresholdUsd: budgetUsd }, (job) => {
+    const spent = job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : recordedSpendUsd(job);
+    job.spendLedger = {
+      ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+      thresholdUsd: budgetUsd,
+      spentUsd: spent,
+    };
+  });
+}
+
+async function recordFilmCost(
+  jobId: string,
+  kind: SpendKind,
+  usd: number,
+  flags?: { estimated?: boolean; uncertain?: boolean; reason?: string },
+): Promise<NoteOutcome> {
+  return writeFilmNote(jobId, {
+    op: "spend",
+    kind,
+    usd,
+    estimated: flags?.estimated,
+    uncertain: flags?.uncertain,
+    reason: flags?.reason,
+  }, (job) => {
+    noteReportedSpend(job, kind, usd, flags);
+  });
+}
+
 async function refuseIfSessionWillNotLast(estimatedJobMs: number) {
+  if (paidStubEnabled()) return undefined;
   const session = await ensureCredentialForJob(estimatedJobMs);
   if (session.ok) return undefined;
   return refusal({
@@ -1500,11 +1959,16 @@ server.registerTool(
       model: z.string().default("grok-imagine-video-1.5"),
       waitForCompletion: z.boolean().default(true),
       timeoutSeconds: z.number().min(10).max(600).default(240),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this clip counts toward.",
+      ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    if (args.jobId) await refreshJobsFromDisk();
     const {
       waitForCompletion,
       timeoutSeconds,
@@ -1515,6 +1979,11 @@ server.registerTool(
       confirm,
       pin,
       voiceId,
+      approvedUsd,
+      approvedKind,
+      approvedFingerprint,
+      budgetUsd,
+      jobId,
       ...rest
     } = args;
     const gate = gateRenderSequence({
@@ -1530,6 +1999,25 @@ server.registerTool(
     const clipLint = lintSentPrompt(args.prompt, args.negative);
     const clipRate = ratePerSecond(args.resolution);
     const clipEstimate = Math.round(args.durationSeconds * clipRate * 100) / 100;
+    const clipFingerprint = quoteFingerprint({
+      kind: "video",
+      prompt: args.prompt,
+      resolution: args.resolution,
+      pin: pin ?? "start",
+      durations: [args.durationSeconds],
+    });
+    const clipJob = jobId ? sequenceJobs.get(jobId) : undefined;
+    const clipPaid = await quoteGate(
+      { confirm, approvedUsd, approvedKind, approvedFingerprint, overrideValidation, budgetUsd: budgetUsd ?? clipJob?.spendLedger?.thresholdUsd },
+      "video",
+      clipEstimate,
+      clipFingerprint,
+      clipJob,
+    );
+    let budgetNote: NoteOutcome | undefined;
+    if (jobId && budgetUsd !== undefined) budgetNote = await rememberBudget(jobId, budgetUsd);
+    const clipCostRefusal = costRefusal(clipPaid, deferredField(budgetNote, "budgetNote"));
+    if (clipCostRefusal) return clipCostRefusal;
     const clipContract = {
       sentPrompt: args.prompt,
       lintHits: clipLint,
@@ -1564,6 +2052,8 @@ server.registerTool(
         estimate: { totalUsd: clipEstimate, resolution: args.resolution, isEstimate: true },
         contract: clipContract,
         contractValidation: gate,
+        ...costFields(clipPaid),
+        ...deferredField(budgetNote, "budgetNote"),
         message: decision === "estimate"
           ? "Nothing was spent. Show the sent prompt, lint hits, pin, voice, duration, resolution, and the quote. Call again with confirm: true only after the gate passes and the user approves."
           : (gate.message ?? RENDER_BLOCKED_BY_CONTRACT),
@@ -1583,6 +2073,15 @@ server.registerTool(
     job.referenceImageUrls = prepared.length > 0 ? prepared : undefined;
 
     const result = await generateGrokClip(job, { waitForCompletion, timeoutSeconds });
+    const clipCharge = chargeForProviderResult(result, clipPaid.quote.usd);
+    let spendNote: NoteOutcome | undefined;
+    if (jobId && clipCharge.record) {
+      spendNote = await recordFilmCost(jobId, "video", clipCharge.usd, {
+        estimated: clipCharge.estimated,
+        uncertain: clipCharge.uncertain,
+        reason: clipCharge.reason,
+      });
+    }
     return {
       content: [{
         type: "text",
@@ -1595,6 +2094,9 @@ server.registerTool(
               : "Stub response: no credential available, so nothing was generated.",
           referenceImagesUsed: job.referenceImageUrls?.length ?? 0,
           unknownCharacters: missing.length > 0 ? missing : undefined,
+          ...costFields(clipPaid),
+          ...deferredField(budgetNote, "budgetNote"),
+          ...deferredField(spendNote, "spendNote"),
           args,
         }, null, 2)
       }]
@@ -1621,28 +2123,61 @@ server.registerTool(
       timeoutSeconds: z.number().min(10).max(600).default(240),
       confirm: z.boolean().default(false),
       overrideValidation: z.boolean().default(false),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this extension counts toward.",
+      ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    if (args.jobId) await refreshJobsFromDisk();
+    const extensionUsd = Math.round(args.durationSeconds * ratePerSecond("720p") * 100) / 100;
+    const extensionJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    const extensionPaid = await quoteGate(
+      { ...args, budgetUsd: args.budgetUsd ?? extensionJob?.spendLedger?.thresholdUsd },
+      "extend",
+      extensionUsd,
+      quoteFingerprint({
+        kind: "extend",
+        prompt: args.prompt,
+        durationSeconds: args.durationSeconds,
+        resolution: "720p",
+      }),
+      extensionJob,
+    );
+    let extensionBudget: NoteOutcome | undefined;
+    if (args.jobId && args.budgetUsd !== undefined) extensionBudget = await rememberBudget(args.jobId, args.budgetUsd);
+    const extensionCostRefusal = costRefusal(extensionPaid);
+    if (extensionCostRefusal) return extensionCostRefusal;
     const extensionGate = gateRenderSequence({ overrideValidation: args.overrideValidation });
     if (decideSpend(args.confirm, extensionGate) !== "spend") {
       return refusal({
         action: args.confirm ? "refused" : "estimate-only",
         willRender: false,
         contractValidation: extensionGate,
+        ...costFields(extensionPaid),
+        ...deferredField(extensionBudget, "budgetNote"),
         message: args.confirm
           ? (extensionGate.message ?? RENDER_UNCHECKED)
           : "Nothing was spent. An extension has no ledger, so confirm also needs overrideValidation.",
       });
     }
     const extensionSession = await refuseIfSessionWillNotLast(args.durationSeconds * 1000);
-    if (extensionSession) return extensionSession;
+    if (extensionSession) return withCost(extensionSession, extensionPaid);
+
+    if (paidStubEnabled()) {
+      let spendNote: NoteOutcome | undefined;
+      if (args.jobId) {
+        spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ requestId: "stub", status: "submitted", extendedBy: args.durationSeconds, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
+    }
 
     const resolved = resolveVideoCredential();
     if (resolved.ok === false) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason }, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "No credential", reason: resolved.reason, ...costFields(extensionPaid) }, null, 2) }] };
     }
     const credential = resolved.credential;
 
@@ -1691,7 +2226,9 @@ server.registerTool(
     }
 
     if (!args.waitForCompletion) {
-      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+      let spendNote: NoteOutcome | undefined;
+      if (args.jobId) spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+      return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "submitted", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
     }
 
     const deadline = Date.now() + args.timeoutSeconds * 1000;
@@ -1699,8 +2236,14 @@ server.registerTool(
       await sleep(5000);
       const statusRes = await fetch(`${credential.baseUrl}/v1/videos/${requestId}`, { headers });
       if (!statusRes.ok) continue;
-      const poll = (await statusRes.json()) as { status?: string; video?: { url?: string; duration?: number } };
+      const poll = (await statusRes.json()) as { status?: string; video?: { url?: string; duration?: number }; usage?: Record<string, unknown> };
       if (poll.status === "done" || poll.status === "completed") {
+        const extendCost = costUsdFromUsage(poll.usage);
+        const estimated = !((extendCost ?? 0) > 0);
+        let spendNote: NoteOutcome | undefined;
+        if (args.jobId) {
+          spendNote = await recordFilmCost(args.jobId, "extend", estimated ? extensionPaid.quote.usd : (extendCost ?? 0), estimated ? { estimated: true } : undefined);
+        }
         return {
           content: [{
             type: "text",
@@ -1711,6 +2254,9 @@ server.registerTool(
               durationSeconds: poll.video?.duration,
               extendedBy: args.durationSeconds,
               auth: toolAuth(credential.source),
+              ...costFields(extensionPaid),
+              ...deferredField(extensionBudget, "budgetNote"),
+              ...deferredField(spendNote, "spendNote"),
             }, null, 2),
           }],
         };
@@ -1719,7 +2265,9 @@ server.registerTool(
         return { content: [{ type: "text", text: JSON.stringify({ requestId, status: poll.status, detail: poll }, null, 2) }] };
       }
     }
-    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}` }, null, 2) }] };
+    let spendNote: NoteOutcome | undefined;
+    if (args.jobId) spendNote = await recordFilmCost(args.jobId, "extend", extensionPaid.quote.usd, { estimated: true });
+    return { content: [{ type: "text", text: JSON.stringify({ requestId, status: "timeout", statusUrl: `${credential.baseUrl}/v1/videos/${requestId}`, costUsd: extensionPaid.quote.usd, costEstimated: true, ...costFields(extensionPaid), ...deferredField(extensionBudget, "budgetNote"), ...deferredField(spendNote, "spendNote") }, null, 2) }] };
   }
 );
 
@@ -1848,6 +2396,10 @@ server.registerTool(
         "Names of characters created with create_character. Their reference images are merged " +
         "into referenceImageUrls automatically.",
       ),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this still counts toward. Omit it and the still is not added to a film.",
+      ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -1872,6 +2424,26 @@ server.registerTool(
         }],
       };
     }
+    if (args.jobId) await refreshJobsFromDisk();
+    const stillFingerprint = quoteFingerprint({
+      kind: "still",
+      prompt: args.prompt,
+      aspectRatio: args.aspectRatio,
+      baseImageUrl: args.baseImageUrl ?? "",
+      referenceImageUrls: args.referenceImageUrls ?? [],
+    });
+    const stillJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    const stillPaid = await quoteGate(
+      { ...args, budgetUsd: args.budgetUsd ?? stillJob?.spendLedger?.thresholdUsd },
+      "still",
+      STILL_USD,
+      stillFingerprint,
+      stillJob,
+    );
+    let stillBudget: NoteOutcome | undefined;
+    if (stillJob && args.budgetUsd !== undefined && args.jobId) stillBudget = await rememberBudget(args.jobId, args.budgetUsd);
+    const stillCostRefusal = costRefusal(stillPaid, deferredField(stillBudget, "budgetNote"));
+    if (stillCostRefusal) return stillCostRefusal;
     if (args.confirm !== true) {
       return {
         content: [{
@@ -1885,6 +2457,8 @@ server.registerTool(
               isEstimate: true,
               basis: "One still at $0.02. Nothing is generated until confirm is true.",
             },
+            ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
             next: "Show the estimate. Call again with confirm: true only after the user approves.",
           }, null, 2),
         }],
@@ -1904,6 +2478,16 @@ server.registerTool(
       { outputDir: OUTPUT_DIR },
     );
 
+    const stillCharge = chargeForProviderResult(result, stillPaid.quote.usd);
+    let stillSpend: NoteOutcome | undefined;
+    if (args.jobId && stillCharge.record) {
+      stillSpend = await recordFilmCost(args.jobId, "still", stillCharge.usd, {
+        estimated: stillCharge.estimated,
+        uncertain: stillCharge.uncertain,
+        reason: stillCharge.reason,
+      });
+    }
+
     if (!result.localPath) {
       // Never a fabricated URL: a board built on an invented path is worse than
       // no board, because the failure only shows up when the video is rendered.
@@ -1917,6 +2501,9 @@ server.registerTool(
             costUsd: result.costUsd,
             referenceImagesUsed: urls.length,
             unknownCharacters: missing.length > 0 ? missing : undefined,
+            ...costFields(stillPaid),
+            ...deferredField(stillBudget, "budgetNote"),
+            ...deferredField(stillSpend, "spendNote"),
           }, null, 2),
         }],
       };
@@ -1939,6 +2526,9 @@ server.registerTool(
           auth: toolAuth(result.auth),
           referenceImagesUsed: urls.length,
           unknownCharacters: missing.length > 0 ? missing : undefined,
+          ...costFields(stillPaid),
+          ...deferredField(stillBudget, "budgetNote"),
+          ...deferredField(stillSpend, "spendNote"),
           message:
             "Pass imagePath as firstFrameUrl or lastFrameUrl on generate_controlled_clip, or as a " +
             "reference. board_film does a whole film's frames in one call.",
@@ -2149,6 +2739,9 @@ export type SequenceJob = {
     /** The prompt that produced it, so a repair can re-render the same beat. */
     prompt?: string;
     durationSeconds?: number;
+    /** The opening frame actually sent for this shot. Absent on jobs rendered before it was recorded. */
+    openingFramePath?: string;
+    pinUsed?: "start" | "both";
   }>;
   /** Set when this job continued an earlier one, so cost and provenance stay honest. */
   resumedFrom?: { jobId: string; fromShot: number };
@@ -2203,6 +2796,14 @@ export type SequenceJob = {
     bodyClearance?: ContinuityPlan["bodyClearance"];
     tier1?: ContinuityPlan["tier1"];
   };
+  /** Versioned continuity review. Absent on jobs written before Phase 1. */
+  continuityReview?: ContinuityReview;
+  /** Versioned spend totals. Absent on older jobs. */
+  spendLedger?: PersistedSpend;
+  /** Versioned shot graph. Absent on older jobs. */
+  dependencies?: DependencyGraph;
+  /** Versioned repair quote. Absent on older jobs. Approving it does not render. */
+  repairProposal?: RepairProposal;
 };
 
 /**
@@ -2235,6 +2836,11 @@ function noteRevision(job: SequenceJob): void {
  * later snapshot exists, so disk cannot go back to "running" and lose the film path.
  */
 export async function persistJob(job: SequenceJob): Promise<void> {
+  let consumed: string[] = [];
+  if (thisProcessOwns(job)) {
+    if (beforeJournalMerge) await beforeJournalMerge();
+    consumed = await applyQueuedNotes(job);
+  }
   const revision = (jobRevision.get(job.id) ?? 0) + 1;
   job.revision = revision;
   jobRevision.set(job.id, revision);
@@ -2246,9 +2852,11 @@ export async function persistJob(job: SequenceJob): Promise<void> {
       await atomicWriteFile(join(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
       if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
       else await unlink(claimPath(job.id)).catch(() => undefined);
+      if (beforeJournalDelete) await beforeJournalDelete();
+      for (const file of consumed) await unlink(file).catch(() => undefined);
     } catch (err) {
-      // A failed write must never lose the render. The job is already in memory,
-      // and the next state change tries again.
+      // A failed write must never lose the render or the queued notes. The notes
+      // stay on disk until a later rename of this ledger succeeds.
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
   });
@@ -2327,6 +2935,8 @@ export async function refreshJobsFromDisk(): Promise<void> {
 }
 
 export async function loadJobsFromDisk() {
+  await sweepOrphanTemps(JOBS_DIR);
+  await sweepStaleReviewFrames(JOBS_DIR);
   await refreshJobsFromDisk();
 }
 
@@ -2488,6 +3098,32 @@ async function releaseClaimTurn(jobId: string, token: string): Promise<void> {
  * only while this process holds the turn file, and only if the bytes moved
  * aside are still the stale bytes we decided to replace.
  */
+/**
+ * The claim file is already ours. Read the job JSON again and write only that
+ * copy plus the claim, so a snapshot taken before the claim cannot overwrite
+ * the other process's annotation.
+ */
+async function commitClaimFromDisk(jobId: string, owner: JobOwner): Promise<boolean> {
+  const disk = await readPersistedJob(jobId);
+  if (!disk) return false;
+  noteRevision(disk);
+  disk.claim = owner;
+  sequenceJobs.set(jobId, disk);
+  await persistJob(disk);
+  return true;
+}
+
+/**
+ * Test seam. Unset in production. A probe runs after this process has read the
+ * film and before it takes the claim, which is the window a stale snapshot would
+ * overwrite.
+ */
+let beforeClaimProbe: ((jobId: string) => Promise<void>) | undefined;
+
+export function setBeforeClaimProbe(next: ((jobId: string) => Promise<void>) | undefined): void {
+  beforeClaimProbe = next;
+}
+
 export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: false; message: string }> {
   await refreshJobsFromDisk();
   const job = sequenceJobs.get(jobId);
@@ -2498,6 +3134,9 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
   if (job.claim && !jobShouldStop(job.claim)) {
     return { ok: false, message: claimBusyMessage(job.claim) };
   }
+  // The in-memory film is from before this wait. commitClaimFromDisk re-reads
+  // so a note written while we wait is not overwritten by that snapshot.
+  if (beforeClaimProbe) await beforeClaimProbe(jobId);
 
   for (let attempt = 0; attempt < 40; attempt++) {
     const age = await claimFileAge(jobId);
@@ -2519,10 +3158,8 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
       const owner = thisOwner();
       if (heldAge === undefined) {
         if (await placeClaim(jobId, owner)) {
-          job.claim = owner;
-          sequenceJobs.set(job.id, job);
-          await persistJob(job);
-          return { ok: true };
+          if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+          await unlink(claimPath(jobId)).catch(() => undefined);
         }
         continue;
       }
@@ -2531,19 +3168,16 @@ export async function claimFilm(jobId: string): Promise<{ ok: true } | { ok: fal
         raw = await readFile(claimPath(jobId), "utf8");
       } catch {
         if (await placeClaim(jobId, owner)) {
-          job.claim = owner;
-          sequenceJobs.set(job.id, job);
-          await persistJob(job);
-          return { ok: true };
+          if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+          await unlink(claimPath(jobId)).catch(() => undefined);
         }
         continue;
       }
       if (!await discardIfUnchanged(claimPath(jobId), raw)) continue;
       if (!await placeClaim(jobId, owner)) continue;
-      job.claim = owner;
-      sequenceJobs.set(job.id, job);
-      await persistJob(job);
-      return { ok: true };
+      if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
+      await unlink(claimPath(jobId)).catch(() => undefined);
+      continue;
     } finally {
       await releaseClaimTurn(jobId, turn);
     }
@@ -2570,14 +3204,85 @@ async function liveTurnWithoutClaim(jobId: string): Promise<boolean> {
   return age === undefined || claimIsStale(existing, age);
 }
 
-export async function releaseFilmClaim(jobId: string): Promise<void> {
-  const job = sequenceJobs.get(jobId);
-  if (job?.claim?.token === processToken) {
-    job.claim = undefined;
-    await persistJob(job);
-  } else {
-    await unlink(claimPath(jobId)).catch(() => undefined);
+export async function readPersistedJob(jobId: string): Promise<SequenceJob | undefined> {
+  try {
+    const raw = await readFile(join(JOBS_DIR, `${jobId}.json`), "utf8");
+    const job = JSON.parse(raw) as SequenceJob;
+    if (!job || job.id !== jobId) return undefined;
+    return job;
+  } catch {
+    return undefined;
   }
+}
+
+export function rememberedJob(jobId: string): SequenceJob | undefined {
+  return sequenceJobs.get(jobId);
+}
+
+/**
+ * Write one optional Phase 1 field onto a finished film.
+ * A running render is left alone. The claim is released before this returns.
+ */
+export const CLAIM_CONTENTION = "Another process is writing this film; retry shortly.";
+
+export async function saveJobAnnotation(
+  jobId: string,
+  patch: (job: SequenceJob) => void,
+): Promise<{ ok: true; job: SequenceJob } | { ok: false; message: string }> {
+  await refreshJobsFromDisk();
+  const existing = sequenceJobs.get(jobId);
+  if (!existing) return { ok: false, message: "Unknown job" };
+  if (existing.state === "running") {
+    return {
+      ok: false,
+      message: "This film is rendering. The note was not written and the render was not stopped.",
+    };
+  }
+  const claim = await claimFilm(jobId);
+  if (!claim.ok) {
+    const latest = sequenceJobs.get(jobId);
+    if (latest && latest.state !== "running") {
+      return { ok: false, message: CLAIM_CONTENTION };
+    }
+    return claim;
+  }
+  try {
+    const disk = await readPersistedJob(jobId);
+    if (!disk) return { ok: false, message: "Unknown job" };
+    if (disk.state === "running") {
+      return {
+        ok: false,
+        message: "This film is rendering. The note was not written and the render was not stopped.",
+      };
+    }
+    const held = sequenceJobs.get(jobId)?.claim;
+    noteRevision(disk);
+    const fresh: SequenceJob = { ...disk, claim: held };
+    sequenceJobs.set(jobId, fresh);
+    patch(fresh);
+    await persistJob(fresh);
+    return { ok: true, job: fresh };
+  } finally {
+    await releaseFilmClaim(jobId);
+  }
+}
+
+export async function releaseFilmClaim(jobId: string): Promise<void> {
+  const disk = await readPersistedJob(jobId);
+  const memory = sequenceJobs.get(jobId);
+  const job = disk ?? memory;
+  if (!job) {
+    await unlink(claimPath(jobId)).catch(() => undefined);
+    return;
+  }
+  if ((disk?.claim?.token ?? memory?.claim?.token) !== processToken && memory?.claim?.token !== processToken) {
+    await unlink(claimPath(jobId)).catch(() => undefined);
+    return;
+  }
+  noteRevision(job);
+  job.claim = undefined;
+  sequenceJobs.set(jobId, job);
+  await persistJob(job);
 }
 
 function sequenceJobId(): string {
@@ -2619,6 +3324,10 @@ function jobPayload(job: SequenceJob) {
       warnings: job.warnings?.length ? job.warnings : undefined,
       error: job.error,
       ledger: job.ledger,
+      ...(job.continuityReview ? { continuityReview: job.continuityReview } : {}),
+      ...(job.spendLedger ? { spendLedger: job.spendLedger } : {}),
+      ...(job.dependencies ? { dependencies: job.dependencies } : {}),
+      ...(job.repairProposal ? { repairProposal: job.repairProposal } : {}),
     } : {
       spentUsdSoFar: Math.round(job.spentUsd * 100) / 100,
       message: "Still rendering. Poll check_sequence with this jobId.",
@@ -2803,6 +3512,8 @@ async function runSequenceJob(
         error: result.error,
         localPath: undefined as string | undefined,
         framePath: undefined as string | undefined,
+        openingFramePath: shotFirstFrame,
+        pinUsed: args.pin ?? "start",
         lastFrameUrl: shot.lastFrameUrl,
         lastFramePath: localImagePath(shot.lastFrameUrl),
         closingFrameAgreement: undefined as number | undefined,
@@ -2810,7 +3521,17 @@ async function runSequenceJob(
         sentPrompt: anchored,
         durationSeconds: shot.durationSeconds,
       };
-      job.spentUsd += result.costUsd ?? 0;
+      const quotedShot = Math.round(shot.durationSeconds * ratePerSecond(args.resolution) * 100) / 100;
+      const shotCharge = chargeForProviderResult(result, quotedShot);
+      entry.costUsd = shotCharge.record ? shotCharge.usd : result.costUsd;
+      if (shotCharge.record) {
+        job.spentUsd += shotCharge.usd;
+        noteReportedSpend(job, "video", shotCharge.usd, {
+          estimated: shotCharge.estimated,
+          uncertain: shotCharge.uncertain,
+          reason: shotCharge.reason,
+        });
+      }
       job.shots.push(entry);
 
       if (result.status !== "completed" || !result.videoUrl) {
@@ -3044,6 +3765,7 @@ server.registerTool(
         "call again with true only after they approve.",
       ),
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3123,6 +3845,27 @@ server.registerTool(
     const estimate = Math.round(
       args.shots.reduce((sum, s) => sum + s.durationSeconds * ratePerSecond(args.resolution), 0) * 100,
     ) / 100;
+    const sequenceQuote = videoQuote({
+      resolution: args.resolution,
+      pin: args.pin ?? "start",
+      durations: args.shots.map((shot) => shot.durationSeconds),
+      prompts: args.shots.map((shot) => shot.prompt),
+      continuity: args.continuity,
+      model: args.model,
+      aspectRatio: args.aspectRatio,
+      firstFrames: args.shots.map((shot) => shot.firstFrameUrl),
+      lastFrames: args.shots.map((shot) => shot.lastFrameUrl),
+    });
+    const sequenceBudget = args.budgetUsd ?? resumeJob?.spendLedger?.thresholdUsd;
+    const sequencePaid = await quoteGate(
+      { ...args, budgetUsd: sequenceBudget },
+      "video",
+      estimate,
+      sequenceQuote.fingerprint,
+      resumeJob,
+    );
+    const sequenceCostRefusal = costRefusal(sequencePaid);
+    if (sequenceCostRefusal) return sequenceCostRefusal;
 
     // A resumed film is the one place a stale cast hides, because the shots it
     // joins to were paid for in an earlier session and cannot be re-checked by
@@ -3263,6 +4006,7 @@ server.registerTool(
             },
             contract: { shots: outgoing },
             ...(resumeWarnings.length > 0 ? { warnings: resumeWarnings } : {}),
+            ...costFields(sequencePaid),
             next: lintBlocked
               ? "The prompts fail the check. Show the sent prompts and the lint hits. Rewrite them " +
                 "before confirm. Nothing was spent, and a retry is an edit of that prompt."
@@ -3292,7 +4036,7 @@ server.registerTool(
     }
 
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
-    if (sessionRefusal) return sessionRefusal;
+    if (sessionRefusal) return withCost(sessionRefusal, sequencePaid);
 
     // Downloads and other fallible prep happen before the film is claimed, so a
     // bad audio URL cannot leave a claim that the heartbeat keeps fresh.
@@ -3356,6 +4100,7 @@ server.registerTool(
         // of the whole film still chains from where the film actually began.
         startFramePath: resumeJob.startFramePath,
         warnings: resumeJob.warnings ? [...resumeJob.warnings] : undefined,
+        ...(resumeJob ? { spendLedger: carrySpend(resumeJob) } : {}),
         ledger: args.ledger
           ? {
               locations: args.ledger.locations ?? resumeJob.ledger?.locations ?? [],
@@ -3396,6 +4141,15 @@ server.registerTool(
         } : {}),
       }),
     };
+    if (sequencePaid.budgetWarning) {
+      job.warnings = [...(job.warnings ?? []), sequencePaid.budgetWarning];
+    }
+    if (sequenceBudget !== undefined) {
+      job.spendLedger = {
+        ...(job.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(job), pendingUsd: 0 }),
+        thresholdUsd: sequenceBudget,
+      };
+    }
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
@@ -3437,6 +4191,7 @@ server.registerTool(
       content: [{ type: "text", text: JSON.stringify({
         action: job.state === "running" ? "started" : job.state,
         ...jobPayload(job),
+        ...costFields(sequencePaid),
       }, null, 2) }],
     };
     } finally {
@@ -3542,6 +4297,10 @@ server.registerTool(
         "Board even when wardrobe is unchecked or the shot contracts fail. The default is to refuse. " +
         "confirm alone does not unblock a refusal.",
       ),
+      jobId: z.string().optional().describe(
+        "Film whose cumulative spend this board counts toward.",
+      ),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3675,15 +4434,26 @@ server.registerTool(
         message: contractValidation.message ?? messageForBoard(undefined),
       });
     }
-    if (decision === "spend") {
-      const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
-      if (sessionRefusal) return sessionRefusal;
-    }
-
+    if (args.jobId) await refreshJobsFromDisk();
+    const boardJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
     const sentRefs = decision === "spend"
       ? await withPersonCutouts(args.characters, rawRefs)
       : rawRefs;
-    const board = await boardFilm(
+    const boardDeps = {
+      outputDir: OUTPUT_DIR,
+      referenceImageUrls: sentRefs.length > 0 ? sentRefs : undefined,
+      baseImageUrl,
+      generateStill: async (job: Parameters<typeof generateGrokStill>[0], opts: Parameters<typeof generateGrokStill>[1]) => generateGrokStill(job, opts),
+    };
+    const boardFingerprint = quoteFingerprint({
+      kind: "board",
+      prompts: boardedShots.map((shot) => shot.prompt ?? shot.action ?? ""),
+      look: args.look ?? "",
+      cast: args.cast ?? "",
+      middles: boardedShots.map((shot) => Boolean(shot.middleKeyframe)),
+      aspectRatio: args.aspectRatio,
+    });
+    const priced = await boardFilm(
       {
         shots: boardedShots,
         aspectRatio: args.aspectRatio,
@@ -3691,20 +4461,41 @@ server.registerTool(
         scene: locationScene(args.characters),
         cast: args.cast,
         maxCostUsd: args.maxCostUsd,
-        confirm: decision === "spend",
+        confirm: false,
       },
-      {
-        outputDir: OUTPUT_DIR,
-        // A base image and a reference set compete for the same body, and the
-        // base is worth more: it holds the room. Keep the portraits that are
-        // not the base itself. A person portrait is a feathered cutout; the
-        // original file is not rewritten.
-        referenceImageUrls: sentRefs.length > 0 ? sentRefs : undefined,
-        baseImageUrl,
-        // Injected so tests can board a whole film without reaching the network.
-        generateStill: async (job, opts) => generateGrokStill(job, opts),
-      },
+      boardDeps,
     );
+    const boardPaid = await quoteGate(
+      { ...args, budgetUsd: args.budgetUsd ?? boardJob?.spendLedger?.thresholdUsd },
+      "board",
+      priced.estimate.estimatedUsd,
+      boardFingerprint,
+      boardJob,
+    );
+    const boardCostRefusal = costRefusal(boardPaid);
+    if (boardCostRefusal) return boardCostRefusal;
+    if (decision === "spend") {
+      const sessionRefusal = await refuseIfSessionWillNotLast(60_000);
+      if (sessionRefusal) return withCost(sessionRefusal, boardPaid);
+    }
+    const board = decision === "spend"
+      ? await boardFilm(
+        {
+          shots: boardedShots,
+          aspectRatio: args.aspectRatio,
+          look: args.look,
+          scene: locationScene(args.characters),
+          cast: args.cast,
+          maxCostUsd: args.maxCostUsd,
+          confirm: true,
+        },
+        boardDeps,
+      )
+      : priced;
+    let boardSpend: NoteOutcome | undefined;
+    if (boardJob && args.jobId && (board.estimate.spentUsd ?? 0) > 0) {
+      boardSpend = await recordFilmCost(args.jobId, "board", board.estimate.spentUsd, undefined);
+    }
 
     const boardFrames = Array.isArray(board.frames) ? board.frames : [];
     const payload = {
@@ -3734,6 +4525,8 @@ server.registerTool(
       ...(board.action === "boarded" || board.action === "partial"
         ? { renderShots: toRenderShots(board) }
         : {}),
+      ...costFields(boardPaid),
+      ...deferredField(boardSpend, "spendNote"),
     };
 
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -3776,6 +4569,7 @@ server.registerTool(
       confirm: z.boolean().default(false),
       overrideValidation: z.boolean().default(false),
       timeoutSecondsPerShot: z.number().min(10).max(600).default(240),
+      ...costApprovalFields,
     }),
   },
   async (args, extra) => {
@@ -3854,6 +4648,24 @@ server.registerTool(
     const retryResolution = original.settings?.resolution ?? "720p";
     const retryRate = ratePerSecond(retryResolution);
     const estimateUsd = Math.round(duration * retryRate * 100) / 100;
+    const retryFingerprint = quoteFingerprint({
+      kind: "retry",
+      jobId: original.id,
+      shotIndex: index,
+      durationSeconds: duration,
+      resolution: retryResolution,
+      prompt,
+    });
+    const retryBudget = args.budgetUsd ?? original.spendLedger?.thresholdUsd;
+    const retryPaid = await quoteGate(
+      { ...args, budgetUsd: retryBudget },
+      "retry",
+      estimateUsd,
+      retryFingerprint,
+      original,
+    );
+    const retryCostRefusal = costRefusal(retryPaid);
+    if (retryCostRefusal) return retryCostRefusal;
     const retrySent = sentShotPrompt(original.settings?.continuity, { prompt: prompt ?? "" });
     const retryHits = lintSentPrompt(retrySent);
     const retryContract = {
@@ -3901,6 +4713,7 @@ server.registerTool(
               isEstimate: true,
             },
             contract: retryContract,
+            ...costFields(retryPaid),
             caveat:
               after.length === 0
                 ? "This is the last shot, so nothing downstream depends on it."
@@ -3952,7 +4765,7 @@ server.registerTool(
       });
     }
     const repairSession = await refuseIfSessionWillNotLast(duration * 1000);
-    if (repairSession) return repairSession;
+    if (repairSession) return withCost(repairSession, retryPaid);
 
     const claim = await claimFilm(original.id);
     if (!claim.ok) {
@@ -3985,7 +4798,8 @@ server.registerTool(
       shots: [],
       settings,
       startFramePath: original.startFramePath,
-      warnings: [...(original.warnings ?? [])],
+      warnings: [...(original.warnings ?? []), ...(retryPaid.budgetWarning ? [retryPaid.budgetWarning] : [])],
+      ...(carrySpend(original) ? { spendLedger: carrySpend(original) } : {}),
       repairedFrom: { jobId: original.id, shotIndex: index, originalCostUsd: target.costUsd },
       ledger: original.ledger,
       // Every reused shot was paid for by the original film. Count it, so the
@@ -4005,6 +4819,12 @@ server.registerTool(
       );
     }
 
+    if (retryBudget !== undefined) {
+      job.spendLedger = {
+        ...(job.spendLedger ?? { version: 1, spentUsd: recordedSpendUsd(original), pendingUsd: 0 }),
+        thresholdUsd: retryBudget,
+      };
+    }
     sequenceJobs.set(job.id, job);
     void persistJob(job);
 
@@ -4041,6 +4861,7 @@ server.registerTool(
       content: [{ type: "text", text: JSON.stringify({
         action: job.state === "running" ? "started" : job.state,
         ...jobPayload(job),
+        ...costFields(retryPaid),
       }, null, 2) }],
     };
     } finally {
@@ -4073,20 +4894,25 @@ server.registerTool(
   async (args) => {
     await refreshJobsFromDisk();
     const all = Array.from(sequenceJobs.values()).sort((a, b) => b.startedAt - a.startedAt);
-    const shown = all
+    const shown = await Promise.all(all
       .filter((job) => args.includeUnfinished || job.state === "completed")
       .slice(0, args.limit)
-      .map((job) => ({
+      .map(async (job) => {
+        const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
+        return {
         jobId: job.id,
         state: job.state,
         startedAt: new Date(job.startedAt).toISOString(),
         shots: job.shots.length,
         durationSeconds: job.filmDurationSeconds,
         spentUsd: Math.round(job.spentUsd * 100) / 100,
+        ...(queued.pendingSpendUsd > 0 ? { pendingSpendUsd: queued.pendingSpendUsd } : {}),
+        ...(queued.pendingThresholdUsd !== undefined ? { pendingThresholdUsd: queued.pendingThresholdUsd } : {}),
         filmPath: job.filmPath,
         firstShot: job.shots[0]?.title,
         repaired: job.repairedFrom ? `replaced shot ${job.repairedFrom.shotIndex} of ${job.repairedFrom.jobId}` : undefined,
         error: job.error,
+        };
       }));
 
     return {
@@ -4138,8 +4964,322 @@ server.registerTool(
         }],
       };
     }
+    const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
     return {
-      content: [{ type: "text", text: JSON.stringify(jobPayload(job), null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ ...jobPayload(job), ...queuedFields(queued) }, null, 2) }],
     };
   }
+);
+
+const reviewShotSchema = z.object({
+  index: z.number().int().min(1),
+  worn: z.array(z.string()).optional(),
+  props: z.array(z.object({
+    id: z.string(),
+    locationId: z.string(),
+    placement: z.string(),
+    holder: z.string().optional(),
+  })).optional(),
+  lastFramePath: z.string().optional(),
+  firstFramePath: z.string().optional(),
+  referencePath: z.string().optional(),
+  durationSeconds: z.number().optional(),
+  pin: z.enum(["start", "both"]).optional(),
+  boardStillPaths: z.array(z.string()).optional(),
+  extendedFrom: z.string().optional(),
+});
+
+function filesIdentical(left: string, right: string): boolean {
+  try {
+    const a = createHash("sha256").update(readFileSync(left)).digest("hex");
+    const b = createHash("sha256").update(readFileSync(right)).digest("hex");
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
+async function reviewShotsFromJob(
+  job: SequenceJob,
+  reviewFrameDir?: string,
+): Promise<{ shots: ReviewShot[]; sources: Map<string, string> }> {
+  const shots: ReviewShot[] = [];
+  const sources = new Map<string, string>();
+  for (let index = 0; index < job.shots.length; index += 1) {
+    const shot = job.shots[index];
+    const ledger = job.ledger?.shots?.find((entry) => entry.shot === shot.index);
+    const worn = ledger?.checklists.flatMap((list) => list.worn.map((layer) => layer.id));
+    let opening = shot.openingFramePath;
+    if (!opening && shot.localPath && existsSync(shot.localPath) && reviewFrameDir) {
+      const extracted = await extractFirstFrame(shot.localPath, reviewFrameDir);
+      if (extracted) {
+        opening = extracted;
+        sources.set(extracted, shot.localPath);
+      }
+    }
+    shots.push({
+      index: shot.index,
+      ...(ledger ? { worn: worn ?? [] } : {}),
+      ...(ledger
+        ? {
+          props: ledger.propsInView.map((prop) => ({
+            id: prop.id,
+            locationId: prop.locationId,
+            placement: prop.placement,
+            ...(prop.holder ? { holder: prop.holder } : {}),
+          })),
+        }
+        : {}),
+      lastFramePath: shot.framePath,
+      firstFramePath: opening,
+      durationSeconds: shot.durationSeconds,
+      pin: shot.pinUsed ?? job.settings?.pin,
+      ...(shot.lastFramePath ? { boardStillPaths: [shot.lastFramePath] } : {}),
+    });
+  }
+  return { shots, sources };
+}
+
+function detachReviewFrames(
+  review: ContinuityReview,
+  tempDir: string | undefined,
+  sources: Map<string, string>,
+): ContinuityReview {
+  if (!tempDir) return review;
+  const prefix = tempDir.endsWith("/") ? tempDir : `${tempDir}/`;
+  return {
+    ...review,
+    findings: review.findings.map((finding) => {
+      if (!finding.evidence) return finding;
+      const touched = finding.evidence.artifactPaths.some((file) => file === tempDir || file.startsWith(prefix));
+      if (!touched) return finding;
+      return {
+        ...finding,
+        evidence: {
+          ...finding.evidence,
+          artifactPaths: finding.evidence.artifactPaths.map((file) => (
+            file === tempDir || file.startsWith(prefix) ? (sources.get(file) ?? file) : file
+          )),
+          ephemeral: true,
+        },
+      };
+    }),
+  };
+}
+
+server.registerTool(
+  "review_continuity",
+  {
+    description:
+      "Review what crosses each cut in a film: wardrobe, props, pose at the seam, lighting, and " +
+      "identity. Each finding is measured, visually flagged, or unverified, and each one carries " +
+      "evidence or an abstention. Free. It does not render, delete, reorder, or spend, and it " +
+      "does not call a vision API. Style and story notes are ignored.",
+    inputSchema: z.object({
+      jobId: z.string().optional().describe("Persist the review on this film. A running render is not stopped."),
+      shots: z.array(reviewShotSchema).optional(),
+      measurements: z.array(z.object({
+        afterShot: z.number().int().min(1),
+        agreement: z.number().optional(),
+        method: z.string().optional(),
+        meanLumaDelta: z.number().optional(),
+        identityAgreement: z.number().optional(),
+      })).optional(),
+      styleNotes: z.array(z.string()).optional().describe("Ignored. Not a boundary finding."),
+      narrativeSuggestions: z.array(z.string()).optional().describe("Ignored. Not a boundary finding."),
+      resolution: z.enum(["480p", "720p", "1080p"]).optional(),
+    }),
+  },
+  async (args) => {
+    const callerSupplied = Boolean(args.shots);
+    let shots = args.shots as ReviewShot[] | undefined;
+    let ledgerArtifact = callerSupplied ? "caller-supplied" : "ledger";
+    let plannedShots: number[] = [];
+    if (args.jobId) await refreshJobsFromDisk();
+    const job = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    if (args.jobId && !job) {
+      return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
+    }
+    const reviewFrameDir = !shots && job
+      ? await mkdtemp(join(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`))
+      : undefined;
+    const frameSources = new Map<string, string>();
+    try {
+    if (!shots && job) {
+      const loaded = await reviewShotsFromJob(job, reviewFrameDir);
+      shots = loaded.shots;
+      for (const [frame, source] of loaded.sources) frameSources.set(frame, source);
+      ledgerArtifact = `job:${job.id}#ledger`;
+      plannedShots = [
+        ...(job.ledger?.wardrobeEvents ?? []).map((event) => event.shot),
+        ...(job.ledger?.propEvents ?? []).map((event) => event.shot),
+      ];
+    }
+    if (!shots || shots.length === 0) {
+      return refusal({
+        error: "No shots to review",
+        executed: false,
+        willRender: false,
+        willSpend: false,
+      });
+    }
+    const review = reviewContinuity({
+      shots,
+      measurements: (args.measurements ?? []).map((measurement) => ({ ...measurement, source: "caller" as const })),
+      fileExists: (file) => existsSync(file),
+      filesIdentical,
+      ledgerArtifact,
+      plannedShots,
+      styleNotes: args.styleNotes,
+      narrativeSuggestions: args.narrativeSuggestions,
+      resolution: args.resolution,
+    });
+    const published = detachReviewFrames(review, reviewFrameDir, frameSources);
+    let persisted = false;
+    let persistError: string | undefined;
+    if (args.jobId && !callerSupplied) {
+      const saved = await saveJobAnnotation(args.jobId, (current) => {
+        current.continuityReview = published;
+      });
+      persisted = saved.ok;
+      if (!saved.ok) persistError = saved.message;
+    }
+    return refusal({
+      ...published,
+      persisted,
+      source: callerSupplied ? "caller-supplied" : "job",
+      reproducible: !callerSupplied,
+      ...(persistError ? { persistError } : {}),
+    });
+    } finally {
+      if (reviewFrameDir) await rm(reviewFrameDir, { recursive: true, force: true });
+    }
+  },
+);
+
+server.registerTool(
+  "propose_repair",
+  {
+    description:
+      "Propose least-cost repairs for one bad shot from the frames that were actually used. " +
+      "Free and advisory: it does not approve and it does not render. When a job id is given, " +
+      "retry-alone includes the costQuote retry_shot accepts. The other options are advice only.",
+    inputSchema: z.object({
+      jobId: z.string().optional(),
+      badShot: z.number().int().min(1),
+      resolution: z.enum(["480p", "720p", "1080p"]).optional().describe(
+        "Quote the options at this resolution. Omitted means 720p, the same default as a render.",
+      ),
+      shots: z.array(z.object({
+        index: z.number().int().min(1),
+        durationSeconds: z.number().min(1).max(15),
+        pin: z.enum(["start", "both"]).optional(),
+        framePath: z.string().optional(),
+        firstFramePath: z.string().optional(),
+        lastFramePath: z.string().optional(),
+        boardStillPaths: z.array(z.string()).optional(),
+        extendedFrom: z.string().optional(),
+      })).optional(),
+      strategyId: z.enum(["retry-alone", "retry-dependents", "reboard-boundary", "accept-note"]).optional(),
+      budgetUsd: z.number().min(0).optional().describe(
+        "Film budget recorded with the proposal. Crossing it warns. It does not render.",
+      ),
+      confirm: z.boolean().default(false).describe(
+        "Ignored. This tool never approves and never renders.",
+      ),
+      approvedUsd: z.number().optional(),
+      approvedKind: z.enum(["board", "video", "still", "extend", "retry"]).optional(),
+      approvedFingerprint: z.string().optional(),
+      overrideValidation: z.boolean().default(false),
+    }),
+  },
+  async (args) => {
+    let source: DependencyShot[] | undefined = args.shots?.map((shot) => ({
+      index: shot.index,
+      durationSeconds: shot.durationSeconds,
+      pin: shot.pin ?? "start",
+      framePath: shot.framePath,
+      firstFramePath: shot.firstFramePath,
+      lastFramePath: shot.lastFramePath,
+      boardStillPaths: shot.boardStillPaths,
+      extendedFrom: shot.extendedFrom,
+    }));
+    let resolution = args.resolution ?? "720p";
+    if (!source && args.jobId) {
+      await refreshJobsFromDisk();
+      const job = sequenceJobs.get(args.jobId);
+      if (!job) {
+        return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
+      }
+      const pin = job.settings?.pin ?? "start";
+      source = job.shots.map((shot) => ({
+        index: shot.index,
+        durationSeconds: shot.durationSeconds ?? 8,
+        pin: shot.pinUsed ?? pin,
+        framePath: shot.framePath,
+        firstFramePath: shot.openingFramePath,
+        lastFramePath: shot.lastFramePath,
+        boardStillPaths: shot.lastFramePath ? [shot.lastFramePath] : undefined,
+        framesRecorded: Boolean(shot.openingFramePath),
+      }));
+      const fromJob = job.settings?.resolution;
+      if (!args.resolution && (fromJob === "480p" || fromJob === "720p" || fromJob === "1080p")) {
+        resolution = fromJob;
+      }
+    }
+    if (!source || source.length === 0) {
+      return refusal({ error: "No shots", executed: false, willRender: false, willSpend: false });
+    }
+    const graph = buildDependencyGraph(source);
+    const proposal = proposeRepair({ graph, badShot: args.badShot, resolution });
+    const repairJob = args.jobId ? sequenceJobs.get(args.jobId) : undefined;
+    const badRecord = source.find((shot) => shot.index === args.badShot);
+    const options = proposal.options.map((option) => {
+      if (option.id !== "retry-alone" || !args.jobId) {
+        return { ...option, advisory: true as const };
+      }
+      const fingerprint = quoteFingerprint({
+        kind: "retry",
+        jobId: args.jobId,
+        shotIndex: args.badShot,
+        durationSeconds: badRecord?.durationSeconds ?? 0,
+        resolution,
+        prompt: repairJob?.shots.find((shot) => shot.index === args.badShot)?.prompt ?? "",
+      });
+      return {
+        ...option,
+        costQuote: {
+          version: 1 as const,
+          kind: "retry" as const,
+          usd: option.costUsd,
+          fingerprint,
+        },
+      };
+    });
+    let persisted = false;
+    let persistError: string | undefined;
+    if (args.jobId) {
+      const saved = await saveJobAnnotation(args.jobId, (job) => {
+        job.dependencies = graph;
+        job.repairProposal = proposal;
+        if (args.budgetUsd !== undefined) {
+          const spent = recordedSpendUsd(job);
+          job.spendLedger = {
+            ...(job.spendLedger ?? { version: 1, spentUsd: spent, pendingUsd: 0 }),
+            thresholdUsd: args.budgetUsd,
+            spentUsd: job.spendLedger?.entries?.length ? job.spendLedger.spentUsd : spent,
+          };
+        }
+      });
+      persisted = saved.ok;
+      if (!saved.ok) persistError = saved.message;
+    }
+    return refusal({
+      ...proposal,
+      options,
+      advisory: true,
+      persisted,
+      ...(persistError ? { persistError } : {}),
+    });
+  },
 );
