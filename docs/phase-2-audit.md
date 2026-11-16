@@ -123,3 +123,14 @@ Rules kept, because the fields exist on a caller plan or on a ledger once the ga
 | `pacing.shot-exceeds-renderer-max` | pacing | `durationSeconds` greater than 15 |
 
 No example rule is dropped. Each one abstains, instead of guessing, when its field is missing. Style opinions and model-written suggestions stay out.
+
+## Review round 1
+
+Checked against the code after the first draft:
+
+- An empty reference snapshot is not an identity match. Zero stored hashes abstain with "no local reference hashed".
+- Shot labels are judged only after the table in `mcp/coverageSuggestions.ts`. Unknown labels and the camera moves `tracking`, `dolly`, and `pan` abstain. `medium close-up` and `MCU` are close. `extreme wide` and `EWS` are wide.
+- A job file that exists but fails validation is "present but could not be parsed", with the schema reason. "Job file not on disk" stays the missing-file case.
+- A settings field that is unset on any film in the set is unverified, not a measured difference against the films that recorded it.
+- A character omitted from a film's first-shot checklist is unverified, not an empty worn list.
+- `persist: true` lists the report path in `mutatedPaths`. The default remains an empty list.

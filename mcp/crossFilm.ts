@@ -127,7 +127,7 @@ export type CrossFilmReport = {
   executed: false;
   willRender: false;
   willSpend: false;
-  mutatedPaths: [];
+  mutatedPaths: string[];
   findings: CrossFilmFinding[];
   films: CrossFilmFilm[];
   persisted: boolean;
@@ -149,6 +149,8 @@ export type ResolvedFrame = {
 export type CrossFilmInput = {
   jobs: CrossFilmJob[];
   missingJobIds?: string[];
+  /** A file was on disk and was not a readable film record. */
+  invalidJobs?: Array<{ id: string; reason: string }>;
   characters: Map<string, CharacterFact | undefined>;
   pendingSpendUsd: Map<string, number>;
   intentionalWardrobeDifference: boolean;
@@ -162,6 +164,16 @@ export function parseCrossFilmJob(value: unknown, path: string): CrossFilmJob | 
   const parsed = jobSchema.safeParse(value);
   if (!parsed.success) return undefined;
   return { ...parsed.data, path };
+}
+
+/** Why a job file that was read could not be used. Empty when the file parses. */
+export function crossFilmParseError(value: unknown): string {
+  const parsed = jobSchema.safeParse(value);
+  if (parsed.success) return "";
+  return parsed.error.issues.map((issue) => {
+    const at = issue.path.length > 0 ? issue.path.join(".") : "job";
+    return `${at}: ${issue.message}`;
+  }).join("; ");
 }
 
 export function namesMatch(left: string, right: string): boolean {
@@ -294,20 +306,32 @@ function wardrobe(input: CrossFilmInput): CrossFilmFinding[] {
   }
   const withLedger = input.jobs.filter((job) => maps.get(job.id));
   for (const name of names) {
-    const rows = withLedger.map((job) => ({
-      job,
-      ids: maps.get(job.id)?.get(name) ?? [],
-    }));
-    const signatures = new Set(rows.map((row) => row.ids.join(",")));
+    const present: Array<{ job: CrossFilmJob; ids: string[] }> = [];
+    const absent: CrossFilmJob[] = [];
+    for (const film of withLedger) {
+      const worn = maps.get(film.id);
+      if (!worn?.has(name)) absent.push(film);
+      else present.push({ job: film, ids: worn.get(name) ?? [] });
+    }
+    if (absent.length > 0) {
+      findings.push(unverified(
+        "wardrobe",
+        absent.map((film) => film.id),
+        `First-shot wardrobe checklist does not list ${name}, so worn layers were not compared.`,
+        absent.map((film) => film.path),
+      ));
+    }
+    if (present.length < 2) continue;
+    const signatures = new Set(present.map((row) => row.ids.join(",")));
     if (signatures.size <= 1) continue;
     findings.push(measured(
       "wardrobe",
-      rows.map((row) => row.job.id),
+      present.map((row) => row.job.id),
       `First-shot worn layers for ${name} differ across these films.`,
       {
         method: "ledger-worn-ids",
-        artifactPaths: rows.map((row) => row.job.path),
-        value: rows.map((row) => `${row.job.id}=[${row.ids.join(",")}]`).join(" ; "),
+        artifactPaths: present.map((row) => row.job.path),
+        value: present.map((row) => `${row.job.id}=[${row.ids.join(",")}]`).join(" ; "),
       },
       input.intentionalWardrobeDifference,
     ));
@@ -336,9 +360,17 @@ function settingsDiffs(input: CrossFilmInput): CrossFilmFinding[] {
   const findings: CrossFilmFinding[] = [];
   for (const field of SETTING_FIELDS) {
     const values = input.jobs.map((job) => settingValue(job, field));
-    const distinct = new Set(values.map((value) => value ?? ""));
-    if (distinct.size <= 1) continue;
     const source = field === "promptStyle" ? "ledger.promptStyle" : `settings.${field}`;
+    if (values.some((value) => value === null)) {
+      findings.push(unverified(
+        "settings",
+        input.jobs.map((job) => job.id),
+        `${source} is not recorded on every film, so it was not compared.`,
+        input.jobs.map((job) => job.path),
+      ));
+      continue;
+    }
+    const distinct = new Set(values);
     findings.push(measured(
       "settings",
       input.jobs.map((job) => job.id),
@@ -422,10 +454,10 @@ function locationProps(input: CrossFilmInput): CrossFilmFinding[] {
   return findings;
 }
 
-function snapshotKey(job: CrossFilmJob, name: string): string | undefined {
+function snapshotHashes(job: CrossFilmJob, name: string): string[] | undefined {
   const snap = job.characterSnapshots?.find((entry) => namesMatch(entry.name, name));
   if (!snap) return undefined;
-  return snap.references.map((ref) => ref.sha256).sort().join(",");
+  return snap.references.map((ref) => ref.sha256.trim()).filter((hash) => hash.length > 0).sort();
 }
 
 function referenceIdentity(input: CrossFilmInput): CrossFilmFinding[] {
@@ -437,9 +469,10 @@ function referenceIdentity(input: CrossFilmInput): CrossFilmFinding[] {
   if (names.size === 0) return [];
   const findings: CrossFilmFinding[] = [];
   for (const name of names) {
-    const rows = input.jobs.map((job) => ({ job, key: snapshotKey(job, name) }));
-    const recorded = rows.filter((row) => row.key !== undefined);
-    const missing = rows.filter((row) => row.key === undefined);
+    const rows = input.jobs.map((job) => ({ job, hashes: snapshotHashes(job, name) }));
+    const missing = rows.filter((row) => row.hashes === undefined);
+    const empty = rows.filter((row) => row.hashes !== undefined && row.hashes.length === 0);
+    const recorded = rows.filter((row) => row.hashes !== undefined && row.hashes.length > 0);
     if (missing.length > 0) {
       findings.push(unverified(
         "identity",
@@ -448,8 +481,16 @@ function referenceIdentity(input: CrossFilmInput): CrossFilmFinding[] {
         missing.map((row) => row.job.path),
       ));
     }
+    if (empty.length > 0) {
+      findings.push(unverified(
+        "identity",
+        empty.map((row) => row.job.id),
+        `no local reference hashed for ${name}`,
+        empty.map((row) => row.job.path),
+      ));
+    }
     if (recorded.length < 2) continue;
-    const distinct = new Set(recorded.map((row) => row.key));
+    const distinct = new Set(recorded.map((row) => (row.hashes ?? []).join(",")));
     findings.push(measured(
       "identity",
       recorded.map((row) => row.job.id),
@@ -572,12 +613,20 @@ function filmRows(input: CrossFilmInput): CrossFilmFilm[] {
 
 export async function checkCrossFilm(input: CrossFilmInput): Promise<CrossFilmReport> {
   const missing = input.missingJobIds ?? [];
-  const missingFindings = missing.map((id) => unverified(
-    "lineage",
-    [id],
-    "Job file not on disk.",
-    [],
-  ));
+  const missingFindings = [
+    ...missing.map((id) => unverified(
+      "lineage",
+      [id],
+      "Job file not on disk.",
+      [],
+    )),
+    ...(input.invalidJobs ?? []).map((entry) => unverified(
+      "lineage",
+      [entry.id],
+      `Job file is present but could not be parsed: ${entry.reason}`,
+      [],
+    )),
+  ];
   if (input.jobs.length < CROSS_FILM_MIN) {
     return {
       version: CROSS_FILM_VERSION,

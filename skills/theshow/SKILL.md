@@ -547,8 +547,8 @@ the note as a quote.
 that list that character. There is no series id. It reports character timestamps, first-shot
 wardrobe, settings, props, reference hashes, first-frame byte identity or a 32×32 grayscale
 correlation, and resume or repair links. A grayscale score is not a face match. Do not invent a
-difference it marked unverified. `persist: true` writes a report outside the jobs directory. It
-does not edit the films.
+difference it marked unverified. `persist: true` writes a report outside the jobs directory and lists that path in `mutatedPaths`.
+Without `persist`, `mutatedPaths` is empty. It does not edit the films.
 
 `budgetUsd`, when the user set one, warns if spent money plus the pending estimate crosses it. The
 warning does not spend and does not stop a render that already started. `overrideValidation` does

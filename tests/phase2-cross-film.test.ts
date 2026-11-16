@@ -148,8 +148,8 @@ describe("check_cross_film", () => {
     const aspect = report.findings.find((finding) => finding.summary.includes("settings.aspectRatio"));
     expect(aspect?.class).toBe("measured");
     const style = report.findings.find((finding) => finding.summary.includes("ledger.promptStyle"));
-    expect(style?.class).toBe("measured");
-    expect(style?.evidence?.value).toContain("sections-v2");
+    expect(style?.class).toBe("unverified");
+    expect(style?.summary).not.toMatch(/differs/);
 
     const props = report.findings.find((finding) => finding.topic === "location-props" && finding.class === "measured");
     expect(props?.evidence?.method).toBe("ledger-prop-signature");
@@ -257,6 +257,87 @@ describe("check_cross_film", () => {
     expect(source).not.toContain("persistJob");
     expect(source).not.toContain("claimFilm");
     expect(source).not.toContain("saveJobAnnotation");
+  });
+
+  it("F1: two films with empty reference snapshots do not count as a hash match", async () => {
+    const empty = (id: string) => job({
+      id,
+      characterSnapshots: [{ name: "Ada", updatedAt: "2024-06-01T00:00:00.000Z", references: [] }],
+    });
+    const report = await checkCrossFilm(input([empty("a"), empty("b")], { characters: new Map() }));
+    const identity = report.findings.filter((finding) => finding.topic === "identity" && finding.summary.toLowerCase().includes("ada"));
+    expect(identity.some((finding) => finding.class === "measured")).toBe(false);
+    expect(identity.some((finding) => finding.summary.includes("match"))).toBe(false);
+    expect(identity.every((finding) => finding.class === "unverified")).toBe(true);
+    expect(identity[0]?.abstention).toMatch(/no local reference hashed/);
+  });
+
+  it("P26: stored hashes say match or differ, and the words are not swapped", async () => {
+    const withHashes = (id: string, sha256: string) => job({
+      id,
+      characterSnapshots: [{ name: "Ada", updatedAt: "2024-06-01T00:00:00.000Z", references: [{ path: "/r.png", sha256 }] }],
+    });
+    const same = await checkCrossFilm(input([withHashes("a", "abc"), withHashes("b", "abc")], { characters: new Map() }));
+    const different = await checkCrossFilm(input([withHashes("a", "abc"), withHashes("b", "def")], { characters: new Map() }));
+    const sameFinding = same.findings.find((finding) => finding.topic === "identity" && finding.evidence?.method === "sha256");
+    const differentFinding = different.findings.find((finding) => finding.topic === "identity" && finding.evidence?.method === "sha256");
+    expect(sameFinding?.class).toBe("measured");
+    expect(sameFinding?.evidence?.value).toBe("identical");
+    expect(sameFinding?.summary).toContain("match");
+    expect(sameFinding?.summary).not.toContain("differ");
+    expect(differentFinding?.class).toBe("measured");
+    expect(differentFinding?.evidence?.value).toBe("differs");
+    expect(differentFinding?.summary).toContain("differ");
+  });
+
+  it("F4: an unset setting is unverified, not a measured difference", async () => {
+    const set = job({ id: "set", settings: { aspectRatio: "16:9", resolution: "720p", model: "grok-imagine-video-1.5", pin: "start", characters: ["Ada"] } });
+    const unset = job({ id: "unset", settings: { resolution: "720p", model: "grok-imagine-video-1.5", pin: "start", characters: ["Ada"] } });
+    const report = await checkCrossFilm(input([set, unset], { characters: new Map() }));
+    const aspect = report.findings.filter((finding) => finding.summary.includes("aspectRatio"));
+    expect(aspect.some((finding) => finding.class === "measured")).toBe(false);
+    expect(aspect[0]?.class).toBe("unverified");
+    const both = await checkCrossFilm(input([
+      job({ id: "wide", settings: { aspectRatio: "16:9", resolution: "720p", model: "m", pin: "start", characters: ["Ada"] } }),
+      job({ id: "tall", settings: { aspectRatio: "9:16", resolution: "720p", model: "m", pin: "start", characters: ["Ada"] } }),
+    ], { characters: new Map() }));
+    const measuredAspect = both.findings.find((finding) => finding.summary.includes("settings.aspectRatio"));
+    expect(measuredAspect?.class).toBe("measured");
+  });
+
+  it("F5: a character missing from the first-shot checklist is not 'wearing nothing'", async () => {
+    const listed = job({
+      id: "listed",
+      ledger: { shots: [{ shot: 1, checklists: [{ character: "Ada", worn: [{ id: "coat" }] }] }] },
+    });
+    const omitted = job({
+      id: "omitted",
+      ledger: { shots: [{ shot: 1, checklists: [{ character: "Bea", worn: [{ id: "hat" }] }] }] },
+    });
+    const report = await checkCrossFilm(input([listed, omitted], { characters: new Map() }));
+    const ada = report.findings.filter((finding) => finding.topic === "wardrobe" && finding.summary.toLowerCase().includes("ada"));
+    expect(ada.some((finding) => finding.class === "measured")).toBe(false);
+    expect(ada.some((finding) => finding.class === "unverified" && finding.jobIds.includes("omitted"))).toBe(true);
+  });
+
+  it("P27: frames that cannot be correlated are visually flagged, not scored", async () => {
+    const left = job({ id: "left", shots: [{ index: 1, openingFramePath: "/frames/a.png" }] });
+    const right = job({ id: "right", shots: [{ index: 1, openingFramePath: "/frames/b.png" }] });
+    const report = await checkCrossFilm(input([left, right], {
+      characters: new Map(),
+      fileExists: () => true,
+      filesIdentical: () => false,
+      correlate: async () => undefined,
+      resolveFirstFrame: async (entry) => ({
+        path: entry.shots?.[0]?.openingFramePath,
+        cited: entry.shots?.[0]?.openingFramePath ?? entry.path,
+        ephemeral: false,
+      }),
+    }));
+    const flagged = report.findings.find((finding) => finding.class === "visually-flagged");
+    expect(flagged?.evidence?.method).toBe("32x32-grayscale-correlation");
+    expect(flagged?.evidence?.value).toBeUndefined();
+    expect(report.findings.some((finding) => finding.class === "measured" && finding.evidence?.method === "32x32-grayscale-correlation")).toBe(false);
   });
 
   it("rejects a consistency directory inside the jobs directory", async () => {

@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { saveCharacter } from "../mcp/characters.ts";
+import { saveCharacter, snapshotCharacter } from "../mcp/characters.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { consistencyDirectory } from "../mcp/crossFilm.ts";
 import { enqueueSpendNote, readQueuedFilmSpend, server } from "../mcp/server.ts";
@@ -212,8 +212,9 @@ describe("phase 2 tools", () => {
     const persisted = JSON.parse(toolText(await client.callTool({
       name: "check_cross_film",
       arguments: { jobIds: [legacyId, phaseId], persist: true },
-    }))) as { persisted: boolean; reportPath?: string; reportId?: string; id?: string };
+    }))) as { persisted: boolean; reportPath?: string; reportId?: string; id?: string; mutatedPaths?: string[] };
     expect(persisted.persisted).toBe(true);
+    expect(persisted.mutatedPaths).toEqual([persisted.reportPath]);
     expect(persisted.id).toBeUndefined();
     expect(persisted.reportPath?.startsWith(consistencyDirectory())).toBe(true);
     const reportFile = JSON.parse(await readFile(persisted.reportPath ?? "", "utf8")) as { id?: string; reportId?: string };
@@ -324,6 +325,153 @@ describe("phase 2 tools", () => {
       expect(saved?.characterSnapshots?.[0]?.name).toBe("Ada");
       expect(saved?.characterSnapshots?.[0]?.references[0]?.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(await stamp(legacyPath)).toBe(before);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+    }
+  });
+
+  it("F3: a job file that fails the schema is present but not readable", async () => {
+    const bad = "seq_phase2_malformed";
+    const good = "seq_phase2_malformed_ok";
+    await writeFile(path.join(JOBS_DIR, `${bad}.json`), JSON.stringify({
+      id: bad,
+      startedAt: 1,
+      state: "completed",
+      spentUsd: 0,
+      shots: [{ index: 1 }],
+      ledger: { props: [{ id: "lamp", name: "lamp" }] },
+    }));
+    await writeFile(path.join(JOBS_DIR, `${good}.json`), JSON.stringify({
+      id: good,
+      startedAt: 2,
+      state: "completed",
+      spentUsd: 0,
+      shots: [{ index: 1, title: "Ok" }],
+      settings: { aspectRatio: "16:9", resolution: "720p", model: "m", pin: "start" },
+    }));
+    const body = JSON.parse(toolText(await client.callTool({
+      name: "check_cross_film",
+      arguments: { jobIds: [bad, good] },
+    }))) as { findings: Array<{ summary: string; class: string; jobIds: string[] }> };
+    const finding = body.findings.find((item) => item.jobIds.includes(bad));
+    expect(finding?.class).toBe("unverified");
+    expect(finding?.summary).toMatch(/present but could not be parsed/);
+    expect(finding?.summary).not.toMatch(/not on disk/);
+    expect(finding?.summary).toMatch(/locationId/);
+  });
+
+  it("P30: persist inside the jobs directory is refused and writes nothing", async () => {
+    const ids = ["seq_phase2_inside_a", "seq_phase2_inside_b"];
+    for (const id of ids) {
+      await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify({
+        id,
+        startedAt: 1,
+        state: "completed",
+        spentUsd: 0,
+        shots: [{ index: 1, title: "Ok" }],
+        settings: { aspectRatio: "16:9", resolution: "720p", model: "m", pin: "start" },
+      }));
+    }
+    const previous = process.env.THESHOW_CONSISTENCY_DIR;
+    const inside = path.join(JOBS_DIR, "consistency-inside");
+    process.env.THESHOW_CONSISTENCY_DIR = inside;
+    try {
+      const body = JSON.parse(toolText(await client.callTool({
+        name: "check_cross_film",
+        arguments: { jobIds: ids, persist: true },
+      }))) as { persisted: boolean; persistError?: string; mutatedPaths: string[] };
+      expect(body.persisted).toBe(false);
+      expect(body.persistError).toMatch(/inside the jobs directory/);
+      expect(body.mutatedPaths).toEqual([]);
+      const names = await readdir(JOBS_DIR);
+      expect(names.filter((name) => name.startsWith("cxf_"))).toEqual([]);
+      expect(names.includes("consistency-inside")).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.THESHOW_CONSISTENCY_DIR;
+      else process.env.THESHOW_CONSISTENCY_DIR = previous;
+    }
+  });
+
+  it("P32: a review-frame directory is removed before the tool returns", async () => {
+    const clip = path.join(JOBS_DIR, "phase2-frame-source.bin");
+    await writeFile(clip, "not-a-video");
+    const ids = ["seq_phase2_frameclean_a", "seq_phase2_frameclean_b"];
+    for (const id of ids) {
+      await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify({
+        id,
+        startedAt: 1,
+        state: "completed",
+        spentUsd: 0,
+        shots: [{ index: 1, title: "Ok", localPath: clip }],
+        settings: { aspectRatio: "16:9", resolution: "720p", model: "m", pin: "start" },
+      }));
+    }
+    await client.callTool({ name: "check_cross_film", arguments: { jobIds: ids } });
+    const names = await readdir(JOBS_DIR);
+    expect(names.filter((name) => name.startsWith(".review-frames-"))).toEqual([]);
+  });
+
+  it("P39: a remote reference URL is not hashed", async () => {
+    const url = "https://example.test/remy.png";
+    const folder = path.join(process.env.THESHOW_CHARACTERS_DIR!, "remy");
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "character.json"), JSON.stringify({
+      id: "remy",
+      name: "Remy",
+      referenceImageUrls: [url],
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    }));
+    const snap = await snapshotCharacter("Remy");
+    expect(snap?.references).toEqual([]);
+    const hashedUrl = createHash("sha256").update(url).digest("hex");
+    expect(JSON.stringify(snap)).not.toContain(hashedUrl);
+  });
+
+  it("P40: retry_shot stores a character snapshot on the new job", async () => {
+    const portrait = path.join(suiteRoot, "ada-retry.png");
+    await writeFile(portrait, Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    ));
+    await saveCharacter({ name: "Ada", referenceImageUrls: [portrait] });
+    const source = "seq_phase2_retry_source";
+    await writeFile(path.join(JOBS_DIR, `${source}.json`), JSON.stringify({
+      id: source,
+      startedAt: 1,
+      state: "completed",
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1,
+      spentUsd: 1,
+      shots: [{ index: 1, title: "Old", status: "completed", prompt: "A man walks across the courtyard.", durationSeconds: 4, localPath: "/keep/old.mp4" }],
+      settings: {
+        aspectRatio: "16:9",
+        resolution: "720p",
+        model: "grok-imagine-video-1.5",
+        fadeDuration: 0,
+        assemble: false,
+        pin: "start",
+        characters: ["Ada"],
+      },
+    }));
+    process.env.THESHOW_STUB_VIDEO = "completed";
+    try {
+      const retried = JSON.parse(toolText(await client.callTool({
+        name: "retry_shot",
+        arguments: { jobId: source, shotIndex: 1, confirm: true, overrideValidation: true },
+      }))) as { jobId?: string };
+      expect(retried.jobId).toBeTruthy();
+      let snap: { name?: string } | undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const saved = JSON.parse(await readFile(path.join(JOBS_DIR, `${retried.jobId}.json`), "utf8")) as {
+          characterSnapshots?: Array<{ name: string }>;
+        };
+        snap = saved.characterSnapshots?.[0];
+        if (snap) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(snap?.name).toBe("Ada");
     } finally {
       delete process.env.THESHOW_STUB_VIDEO;
     }

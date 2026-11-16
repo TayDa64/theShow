@@ -45096,9 +45096,29 @@ var COVERAGE_RULE_IDS = [
   "pacing.total-duration",
   "pacing.shot-exceeds-renderer-max"
 ];
-var WIDE = /* @__PURE__ */ new Set(["wide", "establishing"]);
-var CLOSE = /* @__PURE__ */ new Set(["close", "close-up", "closeup", "feet-close"]);
-var PERSON = /* @__PURE__ */ new Set(["medium", "close", "close-up", "closeup", "feet-close"]);
+var SHOT_LABEL_TABLE = {
+  wide: ["wide", "establishing", "extreme wide", "ews"],
+  medium: ["medium", "ms"],
+  close: ["close", "close up", "closeup", "cu", "feet close", "medium close up", "mcu"],
+  movement: ["tracking", "dolly", "pan"]
+};
+var CLASS_BY_LABEL = new Map(
+  ["wide", "medium", "close"].flatMap((shotClass) => SHOT_LABEL_TABLE[shotClass].map((label) => [label, shotClass]))
+);
+var MOVEMENT = new Set(SHOT_LABEL_TABLE.movement);
+function normalizeShotLabel(raw) {
+  return raw.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+function readShot(shot) {
+  const raw = shot.framing?.trim() || shot.shotType?.trim();
+  if (!raw) return { status: "missing" };
+  const label = normalizeShotLabel(raw);
+  if (MOVEMENT.has(label)) return { status: "movement", label };
+  const shotClass = CLASS_BY_LABEL.get(label);
+  if (!shotClass) return { status: "unknown", label };
+  return { status: "known", class: shotClass, label };
+}
+var VOCABULARY = "shot type not in the rule's vocabulary";
 var RULE_KIND = {
   "coverage.wide-before-first-close": "coverage",
   "coverage.consecutive-same-shot": "coverage",
@@ -45125,12 +45145,14 @@ function ladderTitles(ladder, shotCount) {
   }
   return titles;
 }
-function coverageKey(shot) {
-  const named = shot.framing?.trim() || shot.shotType?.trim();
-  return named ? named.toLowerCase() : void 0;
-}
 function shotTypesRecorded(shots) {
-  return shots.some((shot) => coverageKey(shot) !== void 0);
+  return shots.some((shot) => readShot(shot).status !== "missing");
+}
+function vocabularyShots(shots) {
+  return shots.filter((shot) => {
+    const reading = readShot(shot);
+    return reading.status === "unknown" || reading.status === "movement";
+  });
 }
 function abstain(ruleId, shots, reason) {
   return {
@@ -45204,11 +45226,18 @@ function wideBeforeClose(request) {
     let end = cursor + 1;
     while (end < request.shots.length && request.shots[end].locationId?.trim() === location) end += 1;
     const run = request.shots.slice(cursor, end);
-    const closeIndex = run.findIndex((shot) => CLOSE.has(coverageKey(shot) ?? ""));
+    const closeIndex = run.findIndex((shot) => {
+      const reading = readShot(shot);
+      return reading.status === "known" && reading.class === "close";
+    });
     if (closeIndex >= 0) {
       const close = run[closeIndex];
-      const hasWide = run.slice(0, closeIndex).some((shot) => WIDE.has(coverageKey(shot) ?? ""));
+      const hasWide = run.slice(0, closeIndex).some((shot) => {
+        const reading = readShot(shot);
+        return reading.status === "known" && reading.class === "wide";
+      });
       if (!hasWide) {
+        const reading = readShot(close);
         suggestions.push(measured2(
           request,
           ruleId,
@@ -45218,7 +45247,7 @@ function wideBeforeClose(request) {
           {
             locationId: location,
             shot: close.index,
-            shotType: coverageKey(close) ?? null
+            shotType: reading.status === "known" ? reading.class : null
           },
           true
         ));
@@ -45229,6 +45258,10 @@ function wideBeforeClose(request) {
   const missing = request.shots.filter((shot) => !shot.locationId?.trim()).map((shot) => shot.index);
   if (missing.length > 0) {
     suggestions.push(abstain(ruleId, missing, "location not recorded"));
+  }
+  const unknown2 = vocabularyShots(request.shots.filter((shot) => shot.locationId?.trim()));
+  if (unknown2.length > 0) {
+    suggestions.push(abstain(ruleId, unknown2.map((shot) => shot.index), VOCABULARY));
   }
   return suggestions;
 }
@@ -45255,19 +45288,24 @@ function consecutiveSame(request) {
     run = [];
     runKey = void 0;
   };
+  const unknown2 = [];
   for (const shot of request.shots) {
-    const key = coverageKey(shot);
-    if (!key || key !== runKey) {
+    const reading = readShot(shot);
+    if (reading.status !== "known") {
       flush();
-      if (key) {
-        run = [shot];
-        runKey = key;
-      }
+      if (reading.status === "unknown" || reading.status === "movement") unknown2.push(shot);
+      continue;
+    }
+    if (reading.class !== runKey) {
+      flush();
+      run = [shot];
+      runKey = reading.class;
       continue;
     }
     run.push(shot);
   }
   flush();
+  if (unknown2.length > 0) suggestions.push(abstain(ruleId, unknown2.map((shot) => shot.index), VOCABULARY));
   return suggestions;
 }
 function reestablish(request) {
@@ -45290,19 +45328,23 @@ function reestablish(request) {
       continue;
     }
     if (from === to) continue;
-    const key = coverageKey(shot);
-    if (!key) {
+    const reading = readShot(shot);
+    if (reading.status === "missing") {
       suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
       continue;
     }
-    if (!WIDE.has(key)) {
+    if (reading.status !== "known") {
+      suggestions.push(abstain(ruleId, [shot.index], VOCABULARY));
+      continue;
+    }
+    if (reading.class !== "wide") {
       suggestions.push(measured2(
         request,
         ruleId,
         [shot.index],
         "consider",
         `The cut from ${from} to ${to} does not open on a wide shot.`,
-        { from, to, shot: shot.index, shotType: key },
+        { from, to, shot: shot.index, shotType: reading.class },
         true
       ));
     }
@@ -45356,19 +45398,23 @@ function lineCoverage(request) {
   for (const shot of request.shots) {
     const text = shot.line?.text?.trim();
     if (!text) continue;
-    const key = coverageKey(shot);
-    if (!key) {
+    const reading = readShot(shot);
+    if (reading.status === "missing") {
       suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
       continue;
     }
-    if (!PERSON.has(key)) {
+    if (reading.status !== "known") {
+      suggestions.push(abstain(ruleId, [shot.index], VOCABULARY));
+      continue;
+    }
+    if (reading.class === "wide") {
       suggestions.push(measured2(
         request,
         ruleId,
         [shot.index],
         "consider",
-        `A line is delivered on a ${key} shot, which is not medium or close coverage.`,
-        { shotType: key, shot: shot.index },
+        "A line is delivered on a wide shot, which is not medium or close coverage.",
+        { shotType: reading.class, shot: shot.index },
         false
       ));
     }
@@ -45561,6 +45607,14 @@ function parseCrossFilmJob(value, path) {
   if (!parsed.success) return void 0;
   return { ...parsed.data, path };
 }
+function crossFilmParseError(value) {
+  const parsed = jobSchema.safeParse(value);
+  if (parsed.success) return "";
+  return parsed.error.issues.map((issue2) => {
+    const at = issue2.path.length > 0 ? issue2.path.join(".") : "job";
+    return `${at}: ${issue2.message}`;
+  }).join("; ");
+}
 function namesMatch(left, right) {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -45667,20 +45721,32 @@ function wardrobe(input2) {
   }
   const withLedger = input2.jobs.filter((job) => maps.get(job.id));
   for (const name of names) {
-    const rows = withLedger.map((job) => ({
-      job,
-      ids: maps.get(job.id)?.get(name) ?? []
-    }));
-    const signatures = new Set(rows.map((row) => row.ids.join(",")));
+    const present = [];
+    const absent = [];
+    for (const film of withLedger) {
+      const worn = maps.get(film.id);
+      if (!worn?.has(name)) absent.push(film);
+      else present.push({ job: film, ids: worn.get(name) ?? [] });
+    }
+    if (absent.length > 0) {
+      findings.push(unverified2(
+        "wardrobe",
+        absent.map((film) => film.id),
+        `First-shot wardrobe checklist does not list ${name}, so worn layers were not compared.`,
+        absent.map((film) => film.path)
+      ));
+    }
+    if (present.length < 2) continue;
+    const signatures = new Set(present.map((row) => row.ids.join(",")));
     if (signatures.size <= 1) continue;
     findings.push(measured3(
       "wardrobe",
-      rows.map((row) => row.job.id),
+      present.map((row) => row.job.id),
       `First-shot worn layers for ${name} differ across these films.`,
       {
         method: "ledger-worn-ids",
-        artifactPaths: rows.map((row) => row.job.path),
-        value: rows.map((row) => `${row.job.id}=[${row.ids.join(",")}]`).join(" ; ")
+        artifactPaths: present.map((row) => row.job.path),
+        value: present.map((row) => `${row.job.id}=[${row.ids.join(",")}]`).join(" ; ")
       },
       input2.intentionalWardrobeDifference
     ));
@@ -45704,9 +45770,17 @@ function settingsDiffs(input2) {
   const findings = [];
   for (const field of SETTING_FIELDS) {
     const values = input2.jobs.map((job) => settingValue(job, field));
-    const distinct = new Set(values.map((value) => value ?? ""));
-    if (distinct.size <= 1) continue;
     const source = field === "promptStyle" ? "ledger.promptStyle" : `settings.${field}`;
+    if (values.some((value) => value === null)) {
+      findings.push(unverified2(
+        "settings",
+        input2.jobs.map((job) => job.id),
+        `${source} is not recorded on every film, so it was not compared.`,
+        input2.jobs.map((job) => job.path)
+      ));
+      continue;
+    }
+    const distinct = new Set(values);
     findings.push(measured3(
       "settings",
       input2.jobs.map((job) => job.id),
@@ -45780,10 +45854,10 @@ function locationProps(input2) {
   }
   return findings;
 }
-function snapshotKey(job, name) {
+function snapshotHashes(job, name) {
   const snap = job.characterSnapshots?.find((entry) => namesMatch(entry.name, name));
   if (!snap) return void 0;
-  return snap.references.map((ref) => ref.sha256).sort().join(",");
+  return snap.references.map((ref) => ref.sha256.trim()).filter((hash2) => hash2.length > 0).sort();
 }
 function referenceIdentity(input2) {
   const names = /* @__PURE__ */ new Set();
@@ -45794,9 +45868,10 @@ function referenceIdentity(input2) {
   if (names.size === 0) return [];
   const findings = [];
   for (const name of names) {
-    const rows = input2.jobs.map((job) => ({ job, key: snapshotKey(job, name) }));
-    const recorded = rows.filter((row) => row.key !== void 0);
-    const missing = rows.filter((row) => row.key === void 0);
+    const rows = input2.jobs.map((job) => ({ job, hashes: snapshotHashes(job, name) }));
+    const missing = rows.filter((row) => row.hashes === void 0);
+    const empty = rows.filter((row) => row.hashes !== void 0 && row.hashes.length === 0);
+    const recorded = rows.filter((row) => row.hashes !== void 0 && row.hashes.length > 0);
     if (missing.length > 0) {
       findings.push(unverified2(
         "identity",
@@ -45805,8 +45880,16 @@ function referenceIdentity(input2) {
         missing.map((row) => row.job.path)
       ));
     }
+    if (empty.length > 0) {
+      findings.push(unverified2(
+        "identity",
+        empty.map((row) => row.job.id),
+        `no local reference hashed for ${name}`,
+        empty.map((row) => row.job.path)
+      ));
+    }
     if (recorded.length < 2) continue;
-    const distinct = new Set(recorded.map((row) => row.key));
+    const distinct = new Set(recorded.map((row) => (row.hashes ?? []).join(",")));
     findings.push(measured3(
       "identity",
       recorded.map((row) => row.job.id),
@@ -45923,12 +46006,20 @@ function filmRows(input2) {
 }
 async function checkCrossFilm(input2) {
   const missing = input2.missingJobIds ?? [];
-  const missingFindings = missing.map((id) => unverified2(
-    "lineage",
-    [id],
-    "Job file not on disk.",
-    []
-  ));
+  const missingFindings = [
+    ...missing.map((id) => unverified2(
+      "lineage",
+      [id],
+      "Job file not on disk.",
+      []
+    )),
+    ...(input2.invalidJobs ?? []).map((entry) => unverified2(
+      "lineage",
+      [entry.id],
+      `Job file is present but could not be parsed: ${entry.reason}`,
+      []
+    ))
+  ];
   if (input2.jobs.length < CROSS_FILM_MIN) {
     return {
       version: CROSS_FILM_VERSION,
@@ -51696,21 +51787,32 @@ async function filmsMatchingCharacter(name) {
 async function filmsById(ids) {
   const jobs = [];
   const missing = [];
+  const invalid = [];
   const seen = /* @__PURE__ */ new Set();
   for (const id of ids) {
     if (seen.has(id)) continue;
     seen.add(id);
-    const raw = await readPersistedJob(id);
-    const job = raw ? parseCrossFilmJob(raw, join9(JOBS_DIR, `${id}.json`)) : void 0;
-    if (!job) missing.push(id);
-    else jobs.push(job);
+    const full = join9(JOBS_DIR, `${id}.json`);
+    let value;
+    try {
+      value = JSON.parse(await readFile6(full, "utf8"));
+    } catch {
+      missing.push(id);
+      continue;
+    }
+    const job = parseCrossFilmJob(value, full);
+    if (!job || !value || typeof value !== "object" || value.id !== id) {
+      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file" });
+      continue;
+    }
+    jobs.push(job);
   }
-  return { jobs, missing };
+  return { jobs, missing, invalid };
 }
 server.registerTool(
   "check_cross_film",
   {
-    description: "Compare two to twenty films already on disk: character timestamps, first-shot wardrobe, settings, location props, reference hashes, first frames, and resume or repair lineage. Free and read-only. It does not render, spend, claim a film, or write a job file. There is no series id. Pass jobIds, or a character name to select films that list that character. A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory.",
+    description: "Compare two to twenty films already on disk: character timestamps, first-shot wardrobe, settings, location props, reference hashes, first frames, and resume or repair lineage. Free and read-only. It does not render, spend, claim a film, or write a job file. There is no series id. Pass jobIds, or a character name to select films that list that character. A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory and lists that report path in mutatedPaths. The default writes nothing, and mutatedPaths is empty.",
     inputSchema: external_exports.object({
       jobIds: external_exports.array(external_exports.string().min(1)).min(CROSS_FILM_MIN).max(CROSS_FILM_MAX).optional().describe(
         "Films to compare, 2 to 20. The order is the caller's."
@@ -51743,10 +51845,12 @@ server.registerTool(
     }
     let jobs;
     let missing = [];
+    let invalidJobs = [];
     if (args.jobIds) {
       const loaded = await filmsById(args.jobIds);
       jobs = loaded.jobs;
       missing = loaded.missing;
+      invalidJobs = loaded.invalid;
       if (args.character) {
         jobs = jobs.filter((job) => job.settings?.characters?.some((name) => namesMatch(name, args.character ?? "")) ?? false);
       }
@@ -51782,6 +51886,7 @@ server.registerTool(
       const report = await checkCrossFilm({
         jobs,
         missingJobIds: missing,
+        invalidJobs,
         characters,
         pendingSpendUsd,
         intentionalWardrobeDifference: args.intentionalWardrobeDifference,
@@ -51815,7 +51920,8 @@ server.registerTool(
         ...report,
         reportId,
         reportPath,
-        persisted: true
+        persisted: true,
+        mutatedPaths: [reportPath]
       };
       await atomicWriteFile(reportPath, JSON.stringify(body, null, 2));
       return refusal(body);

@@ -198,6 +198,117 @@ describe("suggest_coverage rules", () => {
     ]);
   });
 
+  it("F2: normalises known labels and abstains on movement-only or unknown ones", () => {
+    const kitchen = (shotType: string, index = 1): CoverageShot => ({
+      index,
+      shotType,
+      locationId: "kitchen",
+      durationSeconds: 8,
+    });
+    const line = (shotType: string): CoverageShot => ({
+      ...kitchen(shotType),
+      line: { text: "Hello there", delivery: "spoken" },
+    });
+
+    const extremeWide = suggestionsFor(request([
+      kitchen("extreme wide"),
+      { index: 2, shotType: "MCU", locationId: "kitchen", durationSeconds: 8 },
+    ]), "coverage.wide-before-first-close");
+    expect(extremeWide.filter((item) => item.class === "measured")).toEqual([]);
+
+    const hyphenated = suggestionsFor(request([
+      kitchen("Extreme-Wide"),
+      { index: 2, shotType: "medium close-up", locationId: "kitchen", durationSeconds: 8 },
+    ]), "coverage.wide-before-first-close");
+    expect(hyphenated.filter((item) => item.class === "measured")).toEqual([]);
+
+    const person = suggestionsFor(request([line("medium close-up")]), "coverage.line-without-person-coverage");
+    expect(person.filter((item) => item.class === "measured")).toEqual([]);
+    const mcu = suggestionsFor(request([line("MCU")]), "coverage.line-without-person-coverage");
+    expect(mcu.filter((item) => item.class === "measured")).toEqual([]);
+
+    const tracking = suggestionsFor(request([
+      kitchen("wide", 1),
+      { index: 2, shotType: "tracking", locationId: "hall", durationSeconds: 8 },
+    ]), "coverage.reestablish-on-location-change");
+    expect(tracking.filter((item) => item.class === "measured")).toEqual([]);
+    expect(tracking[0]?.abstention).toBe("shot type not in the rule's vocabulary");
+
+    for (const label of ["dolly", "pan", "not-a-real-shot"]) {
+      const result = suggestionsFor(request([line(label)]), "coverage.line-without-person-coverage");
+      expect(result.filter((item) => item.class === "measured"), label).toEqual([]);
+      expect(result[0]?.abstention, label).toBe("shot type not in the rule's vocabulary");
+    }
+
+    const sameClass = suggestionsFor(request([
+      kitchen("wide", 1),
+      kitchen("establishing", 2),
+      kitchen("EWS", 3),
+    ]), "coverage.consecutive-same-shot");
+    expect(sameClass).toHaveLength(1);
+    expect(sameClass[0]?.class).toBe("measured");
+    expect(sameClass[0]?.evidence?.values.shotType).toBe("wide");
+  });
+
+  it("P04: framing wins over shotType", () => {
+    const framed = suggestionsFor(request([{
+      index: 1,
+      framing: "wide",
+      shotType: "close-up",
+      locationId: "kitchen",
+      durationSeconds: 8,
+    }]), "coverage.wide-before-first-close");
+    expect(framed.filter((item) => item.class === "measured")).toEqual([]);
+    const shotWinsIfNoFraming = suggestionsFor(request([{
+      index: 1,
+      shotType: "close-up",
+      locationId: "kitchen",
+      durationSeconds: 8,
+    }]), "coverage.wide-before-first-close");
+    expect(shotWinsIfNoFraming.filter((item) => item.class === "measured")).toHaveLength(1);
+  });
+
+  it("P07: a line that fits exactly does not fire, and one second under does", () => {
+    const exact = suggestionsFor(request([{
+      index: 1,
+      shotType: "medium",
+      locationId: "kitchen",
+      durationSeconds: 4,
+      line: { text: "one two three four five six", delivery: "spoken" },
+    }]), "coverage.line-shorter-than-speech");
+    expect(exact).toEqual([]);
+    const short = suggestionsFor(request([{
+      index: 1,
+      shotType: "medium",
+      locationId: "kitchen",
+      durationSeconds: 3,
+      line: { text: "one two three four five six", delivery: "spoken" },
+    }]), "coverage.line-shorter-than-speech");
+    expect(short).toHaveLength(1);
+  });
+
+  it("P11: a sung line uses the sung pace", () => {
+    const words = "one two three four five six seven eight nine ten";
+    const sung = suggestionsFor(request([{
+      index: 1,
+      shotType: "medium",
+      locationId: "kitchen",
+      durationSeconds: 4,
+      line: { text: words, delivery: "sung" },
+    }]), "coverage.line-shorter-than-speech");
+    expect(sung).toHaveLength(1);
+    expect(sung[0]?.evidence?.values.delivery).toBe("sung");
+    expect(sung[0]?.evidence?.values.neededSeconds).toBe(5);
+    const spoken = suggestionsFor(request([{
+      index: 1,
+      shotType: "medium",
+      locationId: "kitchen",
+      durationSeconds: 4,
+      line: { text: words, delivery: "spoken" },
+    }]), "coverage.line-shorter-than-speech");
+    expect(spoken).toEqual([]);
+  });
+
   it("gives every suggestion evidence or an abstention and never a spend field", () => {
     const report = suggestCoverage(request([
       { index: 1, shotType: "close", locationId: "kitchen", durationSeconds: 16, line: { text: "Hello there friend of mine today", delivery: "sung" } },

@@ -191,7 +191,7 @@ A command that spends money still prices the work and waits for a yes. The comma
 6. **Assemble.** `render_sequence` can assemble the finished shots. `assemble_film` joins an ordered list of clips with FFmpeg. Joins are hard cuts by default. A music bed shorter than the film is refused. It is not looped.
 7. **Retry.** `retry_shot` re-renders one shot of a finished film and splices it back. The other shots stay as they were. The seam after the repaired shot is a cut, and the tool says so in `warnings`. `propose_repair` lists cheaper and wider options first and does not render them.
 8. **Review.** `review_continuity` classifies each cut as measured, visually flagged, or unverified. It does not render or delete anything.
-9. **Advise.** `suggest_coverage` reads a plan, or a film already on disk, and suggests coverage, pacing, and ladder-order notes. `check_cross_film` compares two to twenty films. Both are free. Neither renders, spends, or approves. A note that would need a new shot names `render_sequence`, `board_film`, or `retry_shot`, and that tool still returns its own price and waits for its own approval.
+9. **Advise.** `suggest_coverage` reads a plan, or a film already on disk, and suggests coverage, pacing, and ladder-order notes. `check_cross_film` compares two to twenty films. Both are free. Neither renders, spends, or approves. A note that would need a new shot names `render_sequence`, `board_film`, or `retry_shot`, and that tool still returns its own price and waits for its own approval. `check_cross_film` with `persist: true` writes one report outside the jobs directory and lists that path in `mutatedPaths`. Without `persist`, `mutatedPaths` is empty.
 
 ---
 
@@ -215,7 +215,7 @@ A command that spends money still prices the work and waits for a yes. The comma
 | `review_continuity` | free | Evidence review of each cut. It does not render or spend |
 | `propose_repair` | free | Repair options with a price, what they fix, and what stays broken. It does not render |
 | `suggest_coverage` | free | Coverage, pacing, and ladder notes for a plan or a film. It does not render or spend |
-| `check_cross_film` | free | Read-only comparison of 2–20 films. It does not render, spend, or write a job |
+| `check_cross_film` | free | Read-only comparison of 2–20 films. It does not render, spend, or write a job. `persist: true` writes one report outside the jobs directory and lists that path in `mutatedPaths` |
 
 ---
 

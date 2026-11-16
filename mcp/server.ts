@@ -64,6 +64,7 @@ import {
   checkCrossFilm,
   consistencyDirIsSafe,
   consistencyDirectory,
+  crossFilmParseError,
   namesMatch,
   parseCrossFilmJob,
   CROSS_FILM_MAX,
@@ -5541,19 +5542,34 @@ async function filmsMatchingCharacter(name: string): Promise<CrossFilmJob[]> {
   return found;
 }
 
-async function filmsById(ids: string[]): Promise<{ jobs: CrossFilmJob[]; missing: string[] }> {
+async function filmsById(ids: string[]): Promise<{
+  jobs: CrossFilmJob[];
+  missing: string[];
+  invalid: Array<{ id: string; reason: string }>;
+}> {
   const jobs: CrossFilmJob[] = [];
   const missing: string[] = [];
+  const invalid: Array<{ id: string; reason: string }> = [];
   const seen = new Set<string>();
   for (const id of ids) {
     if (seen.has(id)) continue;
     seen.add(id);
-    const raw = await readPersistedJob(id);
-    const job = raw ? parseCrossFilmJob(raw, join(JOBS_DIR, `${id}.json`)) : undefined;
-    if (!job) missing.push(id);
-    else jobs.push(job);
+    const full = join(JOBS_DIR, `${id}.json`);
+    let value: unknown;
+    try {
+      value = JSON.parse(await readFile(full, "utf8")) as unknown;
+    } catch {
+      missing.push(id);
+      continue;
+    }
+    const job = parseCrossFilmJob(value, full);
+    if (!job || !value || typeof value !== "object" || (value as { id?: unknown }).id !== id) {
+      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file" });
+      continue;
+    }
+    jobs.push(job);
   }
-  return { jobs, missing };
+  return { jobs, missing, invalid };
 }
 
 server.registerTool(
@@ -5564,7 +5580,8 @@ server.registerTool(
       "settings, location props, reference hashes, first frames, and resume or repair lineage. " +
       "Free and read-only. It does not render, spend, claim a film, or write a job file. " +
       "There is no series id. Pass jobIds, or a character name to select films that list that character. " +
-      "A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory.",
+      "A grayscale score is a 32x32 correlation, not a face match. persist writes one report outside the jobs directory " +
+      "and lists that report path in mutatedPaths. The default writes nothing, and mutatedPaths is empty.",
     inputSchema: z.object({
       jobIds: z.array(z.string().min(1)).min(CROSS_FILM_MIN).max(CROSS_FILM_MAX).optional().describe(
         "Films to compare, 2 to 20. The order is the caller's.",
@@ -5597,10 +5614,12 @@ server.registerTool(
     }
     let jobs: CrossFilmJob[];
     let missing: string[] = [];
+    let invalidJobs: Array<{ id: string; reason: string }> = [];
     if (args.jobIds) {
       const loaded = await filmsById(args.jobIds);
       jobs = loaded.jobs;
       missing = loaded.missing;
+      invalidJobs = loaded.invalid;
       if (args.character) {
         jobs = jobs.filter((job) => job.settings?.characters?.some((name) => namesMatch(name, args.character ?? "")) ?? false);
       }
@@ -5638,6 +5657,7 @@ server.registerTool(
       const report = await checkCrossFilm({
         jobs,
         missingJobIds: missing,
+        invalidJobs,
         characters,
         pendingSpendUsd,
         intentionalWardrobeDifference: args.intentionalWardrobeDifference,
@@ -5672,6 +5692,7 @@ server.registerTool(
         reportId,
         reportPath,
         persisted: true,
+        mutatedPaths: [reportPath],
       };
       await atomicWriteFile(reportPath, JSON.stringify(body, null, 2));
       return refusal(body);

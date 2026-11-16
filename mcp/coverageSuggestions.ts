@@ -81,9 +81,54 @@ export type CoverageReport = {
   error?: string;
 };
 
-const WIDE = new Set(["wide", "establishing"]);
-const CLOSE = new Set(["close", "close-up", "closeup", "feet-close"]);
-const PERSON = new Set(["medium", "close", "close-up", "closeup", "feet-close"]);
+/**
+ * Labels the coverage rules will judge.
+ *
+ * A label is trimmed, lowercased, and has hyphens and underscores turned into
+ * spaces. Only the rows below are known. Medium close-up and MCU are close:
+ * they are a tight shot of a person, so a line on them counts as person
+ * coverage and they still need a wide shot before them in that location.
+ * tracking, dolly, and pan are camera moves, not framing. An unknown label
+ * is not guessed. Both of those abstain and never produce a measured finding.
+ */
+export const SHOT_LABEL_TABLE = {
+  wide: ["wide", "establishing", "extreme wide", "ews"],
+  medium: ["medium", "ms"],
+  close: ["close", "close up", "closeup", "cu", "feet close", "medium close up", "mcu"],
+  movement: ["tracking", "dolly", "pan"],
+} as const;
+
+export type ShotClass = "wide" | "medium" | "close";
+
+const CLASS_BY_LABEL = new Map<string, ShotClass>(
+  (["wide", "medium", "close"] as const).flatMap((shotClass) => (
+    SHOT_LABEL_TABLE[shotClass].map((label) => [label, shotClass] as const)
+  )),
+);
+
+const MOVEMENT = new Set<string>(SHOT_LABEL_TABLE.movement);
+
+export function normalizeShotLabel(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+
+export type ShotReading =
+  | { status: "missing" }
+  | { status: "known"; class: ShotClass; label: string }
+  | { status: "movement"; label: string }
+  | { status: "unknown"; label: string };
+
+export function readShot(shot: CoverageShot): ShotReading {
+  const raw = shot.framing?.trim() || shot.shotType?.trim();
+  if (!raw) return { status: "missing" };
+  const label = normalizeShotLabel(raw);
+  if (MOVEMENT.has(label)) return { status: "movement", label };
+  const shotClass = CLASS_BY_LABEL.get(label);
+  if (!shotClass) return { status: "unknown", label };
+  return { status: "known", class: shotClass, label };
+}
+
+const VOCABULARY = "shot type not in the rule's vocabulary";
 
 const RULE_KIND: Record<CoverageRuleId, SuggestionKind> = {
   "coverage.wide-before-first-close": "coverage",
@@ -114,12 +159,20 @@ export function ladderTitles(ladder: readonly LadderBeat[], shotCount: number): 
 }
 
 export function coverageKey(shot: CoverageShot): string | undefined {
-  const named = shot.framing?.trim() || shot.shotType?.trim();
-  return named ? named.toLowerCase() : undefined;
+  const reading = readShot(shot);
+  if (reading.status === "missing") return undefined;
+  return reading.status === "known" ? reading.class : reading.label;
 }
 
 function shotTypesRecorded(shots: CoverageShot[]): boolean {
-  return shots.some((shot) => coverageKey(shot) !== undefined);
+  return shots.some((shot) => readShot(shot).status !== "missing");
+}
+
+function vocabularyShots(shots: CoverageShot[]): CoverageShot[] {
+  return shots.filter((shot) => {
+    const reading = readShot(shot);
+    return reading.status === "unknown" || reading.status === "movement";
+  });
 }
 
 function abstain(
@@ -214,11 +267,18 @@ function wideBeforeClose(request: CoverageRequest): CoverageSuggestion[] {
     let end = cursor + 1;
     while (end < request.shots.length && request.shots[end].locationId?.trim() === location) end += 1;
     const run = request.shots.slice(cursor, end);
-    const closeIndex = run.findIndex((shot) => CLOSE.has(coverageKey(shot) ?? ""));
+    const closeIndex = run.findIndex((shot) => {
+      const reading = readShot(shot);
+      return reading.status === "known" && reading.class === "close";
+    });
     if (closeIndex >= 0) {
       const close = run[closeIndex];
-      const hasWide = run.slice(0, closeIndex).some((shot) => WIDE.has(coverageKey(shot) ?? ""));
+      const hasWide = run.slice(0, closeIndex).some((shot) => {
+        const reading = readShot(shot);
+        return reading.status === "known" && reading.class === "wide";
+      });
       if (!hasWide) {
+        const reading = readShot(close);
         suggestions.push(measured(
           request,
           ruleId,
@@ -228,7 +288,7 @@ function wideBeforeClose(request: CoverageRequest): CoverageSuggestion[] {
           {
             locationId: location,
             shot: close.index,
-            shotType: coverageKey(close) ?? null,
+            shotType: reading.status === "known" ? reading.class : null,
           },
           true,
         ));
@@ -239,6 +299,10 @@ function wideBeforeClose(request: CoverageRequest): CoverageSuggestion[] {
   const missing = request.shots.filter((shot) => !shot.locationId?.trim()).map((shot) => shot.index);
   if (missing.length > 0) {
     suggestions.push(abstain(ruleId, missing, "location not recorded"));
+  }
+  const unknown = vocabularyShots(request.shots.filter((shot) => shot.locationId?.trim()));
+  if (unknown.length > 0) {
+    suggestions.push(abstain(ruleId, unknown.map((shot) => shot.index), VOCABULARY));
   }
   return suggestions;
 }
@@ -266,19 +330,24 @@ function consecutiveSame(request: CoverageRequest): CoverageSuggestion[] {
     run = [];
     runKey = undefined;
   };
+  const unknown: CoverageShot[] = [];
   for (const shot of request.shots) {
-    const key = coverageKey(shot);
-    if (!key || key !== runKey) {
+    const reading = readShot(shot);
+    if (reading.status !== "known") {
       flush();
-      if (key) {
-        run = [shot];
-        runKey = key;
-      }
+      if (reading.status === "unknown" || reading.status === "movement") unknown.push(shot);
+      continue;
+    }
+    if (reading.class !== runKey) {
+      flush();
+      run = [shot];
+      runKey = reading.class;
       continue;
     }
     run.push(shot);
   }
   flush();
+  if (unknown.length > 0) suggestions.push(abstain(ruleId, unknown.map((shot) => shot.index), VOCABULARY));
   return suggestions;
 }
 
@@ -302,19 +371,23 @@ function reestablish(request: CoverageRequest): CoverageSuggestion[] {
       continue;
     }
     if (from === to) continue;
-    const key = coverageKey(shot);
-    if (!key) {
+    const reading = readShot(shot);
+    if (reading.status === "missing") {
       suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
       continue;
     }
-    if (!WIDE.has(key)) {
+    if (reading.status !== "known") {
+      suggestions.push(abstain(ruleId, [shot.index], VOCABULARY));
+      continue;
+    }
+    if (reading.class !== "wide") {
       suggestions.push(measured(
         request,
         ruleId,
         [shot.index],
         "consider",
         `The cut from ${from} to ${to} does not open on a wide shot.`,
-        { from, to, shot: shot.index, shotType: key },
+        { from, to, shot: shot.index, shotType: reading.class },
         true,
       ));
     }
@@ -370,19 +443,23 @@ function lineCoverage(request: CoverageRequest): CoverageSuggestion[] {
   for (const shot of request.shots) {
     const text = shot.line?.text?.trim();
     if (!text) continue;
-    const key = coverageKey(shot);
-    if (!key) {
+    const reading = readShot(shot);
+    if (reading.status === "missing") {
       suggestions.push(abstain(ruleId, [shot.index], missingShotTypeReason(request.source)));
       continue;
     }
-    if (!PERSON.has(key)) {
+    if (reading.status !== "known") {
+      suggestions.push(abstain(ruleId, [shot.index], VOCABULARY));
+      continue;
+    }
+    if (reading.class === "wide") {
       suggestions.push(measured(
         request,
         ruleId,
         [shot.index],
         "consider",
-        `A line is delivered on a ${key} shot, which is not medium or close coverage.`,
-        { shotType: key, shot: shot.index },
+        "A line is delivered on a wide shot, which is not medium or close coverage.",
+        { shotType: reading.class, shot: shot.index },
         false,
       ));
     }
