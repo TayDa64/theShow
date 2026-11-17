@@ -59,7 +59,7 @@ Confirm the wiring:
 grok mcp doctor
 ```
 
-You want `theshow` reported healthy with **seventeen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
+You want `theshow` reported healthy with **eighteen tools** discovered. Run that on the machine the session is actually using. Plugins install per machine, and a Grok web sandbox is not your machine.
 
 If the session's tool list has no `plan_storyboard`, the plugin is not loaded there. theShow's skill tells the model to stop and say so rather than quietly build a film some other way.
 
@@ -81,7 +81,7 @@ Set `THESHOW_MCP_FROM_SOURCE=1` to run `mcp/stdio-main.ts` through `tsx` instead
 
 ### Streamable HTTP
 
-A second process can expose the same seventeen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
+A second process can expose the same eighteen tools over Streamable HTTP. Tool names, input schemas, and handlers are the ones the desktop server uses. The process refuses to start without a bearer token, and the default bind is loopback.
 
 ```bash
 THESHOW_TRANSPORT=http \
@@ -216,6 +216,7 @@ A command that spends money still prices the work and waits for a yes. The comma
 | `propose_repair` | free | Repair options with a price, what they fix, and what stays broken. It does not render |
 | `suggest_coverage` | free | Coverage, pacing, and ladder notes for a plan or a film. It does not render or spend |
 | `check_cross_film` | free | Read-only comparison of 2–20 films. It does not render, spend, or write a job. `persist: true` writes one report outside the jobs directory and lists that path in `mutatedPaths` |
+| `production_feed` | free | Read-only feed of job transitions. It renders nothing, spends nothing, writes nothing, and is never required for production. See [docs/production-feed.md](docs/production-feed.md) |
 
 ---
 
@@ -324,7 +325,7 @@ The MCP server ships as two committed esbuild bundles, `mcp/server.bundle.mjs` a
 
 ## StoryForge Studio
 
-The repository also contains **StoryForge Studio**, the web workspace: a timeline, a character roster, a scene library, and a pipeline panel. These shots are the local app on the built-in sample cast (Kaelen Thorne and Lyra), in local draft mode, with no account and no provider key on screen.
+The repository also contains **StoryForge Studio**, the web workspace: a timeline, a character roster, a scene library, and a pipeline panel. The pipeline panel includes a read-only MCP production feed (`GET /api/production/feed`). Studio listens on `0.0.0.0`, and that route answers only a loopback peer. It never writes `~/.theshow`. Set `THESHOW_STUDIO_FEED=0` to disable it. These shots are the local app on the built-in sample cast (Kaelen Thorne and Lyra), in local draft mode, with no account and no provider key on screen.
 
 ```bash
 npm install

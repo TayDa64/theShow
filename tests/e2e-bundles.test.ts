@@ -62,6 +62,7 @@ const TOOL_ORDER = [
   "propose_repair",
   "suggest_coverage",
   "check_cross_film",
+  "production_feed",
 ] as const;
 
 type JsonRpc = {
@@ -70,7 +71,13 @@ type JsonRpc = {
   error?: { message?: string };
 };
 
-type ListedTool = { name: string; description?: string; inputSchema?: unknown };
+type ListedTool = {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  annotations?: Record<string, unknown>;
+};
 
 const openHomes: Array<{ pid?: number; home: string }> = [];
 
@@ -739,6 +746,32 @@ describe("built bundle end to end", () => {
           description: tool.description,
           inputSchema: tool.inputSchema,
         }))).toEqual(fixture.tools);
+        const feedTool = tools.at(-1);
+        expect(feedTool?.annotations).toMatchObject({
+          readOnlyHint: true,
+          idempotentHint: true,
+          destructiveHint: false,
+          openWorldHint: false,
+        });
+        expect(feedTool?.outputSchema).toBeTruthy();
+      }
+
+      const feedIds = (result: unknown) => {
+        const body = toolJson(result);
+        expect((result as { structuredContent?: unknown }).structuredContent).toEqual(body);
+        return ((body.events as Array<{ id: string }> | undefined) ?? []).map((event) => event.id).sort();
+      };
+      expect(feedIds(await stdio.call("production_feed", { limit: 20 }))).toEqual(
+        feedIds(await http.call("production_feed", { limit: 20 })),
+      );
+      for (const client of [stdio, http]) {
+        for (const jobId of ["../x", "/etc/passwd", "a/b"]) {
+          const refused = await client.call("production_feed", { jobId });
+          expect((refused as { isError?: boolean }).isError).toBe(true);
+          expect(toolJson(refused).abstentions).toEqual([
+            { path: jobId, reason: "jobId is not confined to the jobs directory" },
+          ]);
+        }
       }
 
       const stdioResults: Record<string, unknown>[] = [];

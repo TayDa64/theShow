@@ -9,7 +9,7 @@ when-to-use: controlled video, storyboard, continuity, multi-shot film, characte
 You are driving the theShow continuity-first video pipeline. Prefer sequential multi-shot
 generation with explicit continuity over single long clips.
 
-**These seventeen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
+**These eighteen tools are the whole point of this plugin.** Do not substitute `imagine_*` calls, image
 generation plus FFmpeg by hand, or any other route. If a tool appears unavailable, run
 `grok mcp doctor` and report what it says rather than improvising a replacement pipeline.
 
@@ -447,6 +447,11 @@ These were wrong in earlier versions of this skill and caused silent failures. U
 | Coverage notes | `suggest_coverage` | free; does not render, spend, or reorder caller beats |
 | Compare films | `check_cross_film` | free; read-only; 2 to 20 job ids; does not render or spend |
 | Find an old film | `list_films` | free; returns job ids, costs and paths from earlier sessions |
+| Watch production | `production_feed` | free; read-only; renders nothing, spends nothing, writes nothing; never required |
+
+`production_feed` is an optional observer. Production, resume, review, and repair work with no feed reader, no Studio, and no Grok Bot page or routine. Do not wait on it before rendering.
+
+`check_sequence` and `list_films` also return `structuredContent` equal to their text JSON. Their text is unchanged.
 
 There is no `reference_images`, no `first_frame`, no `generate_shot_prompt`, and no `seed`
 parameter. Do not call them. `first_frame` deserves a note: it is silently **ignored** by the API.

@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import path from 'path';
+import { seedStudioHome, STUDIO_HOME, STUDIO_JOBS } from './playwright/studio-home';
 
 const devURL = 'http://127.0.0.1:3100';
 const builtURL = 'http://127.0.0.1:3101';
@@ -7,12 +9,18 @@ const builtURL = 'http://127.0.0.1:3101';
 // instead of a sandbox clip, and the sandbox guard fails.
 const SANDBOX_BACKEND = 'sandbox';
 
+seedStudioHome();
+
 function studioEnv(port: string, nodeEnv: string | undefined): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: port,
+    HOME: STUDIO_HOME,
     DISABLE_HMR: 'true',
     THESHOW_VIDEO_BACKEND: SANDBOX_BACKEND,
+    THESHOW_JOBS_DIR: STUDIO_JOBS,
+    THESHOW_OUTPUT_DIR: path.join(STUDIO_HOME, 'media'),
+    THESHOW_CHARACTERS_DIR: path.join(STUDIO_HOME, 'characters'),
     GROK_AUTH_FILE: '/nonexistent/theshow-test-auth.json',
     THESHOW_FORBID_HOME_AUTH: '1',
   };

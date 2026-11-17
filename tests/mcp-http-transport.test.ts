@@ -295,6 +295,7 @@ describe("streamable HTTP transport", () => {
           ...fixture.tools.map((tool) => tool.name),
           "suggest_coverage",
           "check_cross_film",
+          "production_feed",
         ]);
 
         const unknown = await postJson(endpoint, createCharacterBody(), {

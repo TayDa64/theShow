@@ -4,6 +4,7 @@ import type { ExportSettings, Character, Scene, CameraConfig, StoryboardSeedStra
 import { useAuth } from '../context/AuthContext';
 import { buildProjectTimelineManifest, createRenderSeed, getSceneDisplayBackground, getSceneStoryboardFrameAsset, getShotDialogueExcerpt, getStoryboardShotActiveGeneratedClip, normalizeStoryboardShot, primeNextStoryboardShotContinuity, sanitizeStoryboardSeed, upsertSceneStoryboardFrameAsset } from '../utils/storyforge';
 import type { FilmAssemblyJob } from '../types/pipeline';
+import { ProductionFeed } from './ProductionFeed';
 import { pollUntilComplete } from '../lib/veoChain';
 
 interface SubtitleCue {
@@ -1409,6 +1410,8 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         <h2 className="text-lg font-medium tracking-tight text-white">Pipeline Exports</h2>
         <p className="text-[11px] text-zinc-500 font-mono mt-0.5">Continuity-first export pipeline with quick previews and storyboard shot rendering.</p>
       </div>
+
+      <ProductionFeed />
 
       <div className="bg-zinc-900/40 border border-zinc-900 p-5 rounded-2xl space-y-2">
         <label className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest block">Video Export Panel</label>

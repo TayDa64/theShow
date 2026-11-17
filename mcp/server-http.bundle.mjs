@@ -3083,7 +3083,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3110,7 +3110,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3974,7 +3974,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4010,50 +4010,50 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse4(serialize(base, options), options);
-        relative2 = parse4(serialize(relative2, options), options);
+        relative3 = parse4(serialize(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               const baseHasAuthority = base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0;
               if (baseHasAuthority && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = base.scheme === void 0 && !baseHasAuthority && target.path[0] !== "/" ? removeDotSegmentsRelative(target.path) : removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -4061,7 +4061,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4365,7 +4365,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize,
@@ -10156,7 +10156,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -10183,7 +10183,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -13472,7 +13472,7 @@ var readBodyDirect = (request) => {
     request[bodyBufferKey] = buffered;
     return Promise.resolve(buffered);
   }
-  const promise2 = new Promise((resolve3, reject) => {
+  const promise2 = new Promise((resolve5, reject) => {
     const chunks = [];
     let settled = false;
     const finish = (callback) => {
@@ -13490,7 +13490,7 @@ var readBodyDirect = (request) => {
         else if (recovered === void 0) reject(error62 ?? normalizeAbortError(request, incoming));
         else {
           request[bodyBufferKey] = recovered;
-          resolve3(recovered);
+          resolve5(recovered);
         }
       });
       return true;
@@ -13502,7 +13502,7 @@ var readBodyDirect = (request) => {
       finish(() => {
         const buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
         request[bodyBufferKey] = buffer;
-        resolve3(buffer);
+        resolve5(buffer);
       });
     };
     const onError = (error62) => {
@@ -14049,7 +14049,7 @@ var responseViaResponseObject = async (res, outgoing, options = {}) => {
         });
         if (!chunk) {
           if (i === 1) {
-            await new Promise((resolve3) => setTimeout(resolve3));
+            await new Promise((resolve5) => setTimeout(resolve5));
             maxReadCount = 3;
             continue;
           }
@@ -17818,12 +17818,12 @@ function handleCatchall(proms, input2, payload, ctx, def, inst, abortEarly) {
   const t = _catchall.def.type;
   const optin = _catchall.optin;
   const optout = _catchall.optout;
-  let seen = 0;
+  let seen2 = 0;
   for (const key in input2) {
-    if (abortEarly && payload.issues.length !== seen) {
-      if (aborted(payload, seen))
+    if (abortEarly && payload.issues.length !== seen2) {
+      if (aborted(payload, seen2))
         break;
-      seen = payload.issues.length;
+      seen2 = payload.issues.length;
     }
     if (keySet.has(key))
       continue;
@@ -17912,12 +17912,12 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const proms = [];
     const shape = value.shape;
     const abortEarly = ctx?.abortEarly;
-    let seen = payload.issues.length;
+    let seen2 = payload.issues.length;
     for (const key of value.allKeys) {
-      if (abortEarly && payload.issues.length !== seen) {
-        if (aborted(payload, seen))
+      if (abortEarly && payload.issues.length !== seen2) {
+        if (aborted(payload, seen2))
           break;
-        seen = payload.issues.length;
+        seen2 = payload.issues.length;
       }
       if (key === "__proto__")
         continue;
@@ -18457,12 +18457,12 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     if (def.rest && !itemAborted) {
       let i = items.length - 1;
       const rest = input2.slice(items.length);
-      let seen = payload.issues.length;
+      let seen2 = payload.issues.length;
       for (const el of rest) {
-        if (abortEarly && payload.issues.length !== seen) {
-          if (aborted(payload, seen))
+        if (abortEarly && payload.issues.length !== seen2) {
+          if (aborted(payload, seen2))
             break;
-          seen = payload.issues.length;
+          seen2 = payload.issues.length;
         }
         i++;
         const result = def.rest._zod.run({ value: el, issues: [] }, ctx);
@@ -18692,12 +18692,12 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     const proms = [];
     payload.value = memo2 ? memo2.alloc(inst, payload, /* @__PURE__ */ new Map(), ctx) : /* @__PURE__ */ new Map();
     const abortEarly = ctx?.abortEarly;
-    let seen = payload.issues.length;
+    let seen2 = payload.issues.length;
     for (const [key, value] of input2) {
-      if (abortEarly && payload.issues.length !== seen) {
-        if (aborted(payload, seen))
+      if (abortEarly && payload.issues.length !== seen2) {
+        if (aborted(payload, seen2))
           break;
-        seen = payload.issues.length;
+        seen2 = payload.issues.length;
       }
       const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
       const valueResult = def.valueType._zod.run({ value, issues: [] }, ctx);
@@ -18763,12 +18763,12 @@ var $ZodSet = /* @__PURE__ */ $constructor("$ZodSet", (inst, def) => {
     const proms = [];
     payload.value = memo2 ? memo2.alloc(inst, payload, /* @__PURE__ */ new Set(), ctx) : /* @__PURE__ */ new Set();
     const abortEarly = ctx?.abortEarly;
-    let seen = payload.issues.length;
+    let seen2 = payload.issues.length;
     for (const item of input2) {
-      if (abortEarly && payload.issues.length !== seen) {
-        if (aborted(payload, seen))
+      if (abortEarly && payload.issues.length !== seen2) {
+        if (aborted(payload, seen2))
           break;
-        seen = payload.issues.length;
+        seen2 = payload.issues.length;
       }
       const result = def.valueType._zod.run({ value: item, issues: [] }, ctx);
       if (result instanceof Promise) {
@@ -19396,7 +19396,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve3) {
+function isRecursive(inst, stack, resolve5) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -19406,7 +19406,7 @@ function isRecursive(inst, stack, resolve3) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve3);
+      const answer = isRecursive(child, stack, resolve5);
       if (answer > result)
         result = answer;
     }
@@ -19417,7 +19417,7 @@ function isRecursive(inst, stack, resolve3) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve5) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -19481,7 +19481,7 @@ function isRecursive(inst, stack, resolve3) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve5 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -29988,14 +29988,14 @@ function handleUnrepresentable(schema, ctx, json3, params, message) {
 function processSchema(schema, ctx, _params = { path: [], schemaPath: [] }) {
   var _a3;
   const def = schema._zod.def;
-  const seen = ctx.seen.get(schema);
-  if (seen) {
-    seen.count++;
+  const seen2 = ctx.seen.get(schema);
+  if (seen2) {
+    seen2.count++;
     const isCycle = _params.schemaPath.includes(schema);
     if (isCycle) {
-      seen.cycle = _params.path;
+      seen2.cycle = _params.path;
     }
-    return seen.schema;
+    return seen2.schema;
   }
   const result = { schema: {}, count: 1, cycle: void 0, path: _params.path };
   ctx.seen.set(schema, result);
@@ -30085,12 +30085,12 @@ function extractDefs(ctx, schema) {
     if (entry2[1].schema.$ref) {
       return;
     }
-    const seen = entry2[1];
+    const seen2 = entry2[1];
     const { ref, defId } = makeURI(entry2);
-    seen.def = { ...seen.schema };
+    seen2.def = { ...seen2.schema };
     if (defId)
-      seen.defId = defId;
-    const schema2 = seen.schema;
+      seen2.defId = defId;
+    const schema2 = seen2.schema;
     for (const key in schema2) {
       delete schema2[key];
     }
@@ -30098,16 +30098,16 @@ function extractDefs(ctx, schema) {
   };
   if (ctx.cycles === "throw") {
     for (const entry2 of ctx.seen.entries()) {
-      const seen = entry2[1];
-      if (seen.cycle) {
-        throw new Error(`Cycle detected: #/${seen.cycle?.join("/")}/<root>
+      const seen2 = entry2[1];
+      if (seen2.cycle) {
+        throw new Error(`Cycle detected: #/${seen2.cycle?.join("/")}/<root>
 
 Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.`);
       }
     }
   }
   for (const entry2 of ctx.seen.entries()) {
-    const seen = entry2[1];
+    const seen2 = entry2[1];
     if (schema === entry2[0]) {
       extractToDef(entry2);
       continue;
@@ -30124,11 +30124,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       extractToDef(entry2);
       continue;
     }
-    if (seen.cycle) {
+    if (seen2.cycle) {
       extractToDef(entry2);
       continue;
     }
-    if (seen.count > 1) {
+    if (seen2.count > 1) {
       if (ctx.reused === "ref") {
         extractToDef(entry2);
       }
@@ -30190,7 +30190,7 @@ function foldObjects(members2) {
         const part = other.properties?.[key] ?? undeclaredConstraint(other);
         if (part === null || part === void 0)
           continue;
-        if (!parts.some((seen) => JSON.stringify(seen) === JSON.stringify(part)))
+        if (!parts.some((seen2) => JSON.stringify(seen2) === JSON.stringify(part)))
           parts.push(part);
       }
       const merged = parts.length === 1 ? parts[0] : foldObjects(parts) ?? { allOf: parts };
@@ -30208,7 +30208,7 @@ function foldObjects(members2) {
     const constraints = [];
     for (const object3 of objects) {
       const constraint = undeclaredConstraint(object3);
-      if (constraint && !constraints.some((seen) => JSON.stringify(seen) === JSON.stringify(constraint)))
+      if (constraint && !constraints.some((seen2) => JSON.stringify(seen2) === JSON.stringify(constraint)))
         constraints.push(constraint);
     }
     if (constraints.length === 1)
@@ -30250,13 +30250,13 @@ function finalize(ctx, schema) {
   if (!root)
     throw new Error("Unprocessed schema. This is a bug in Zod.");
   const flattenRef = (zodSchema) => {
-    const seen = ctx.seen.get(zodSchema);
-    if (seen.ref === null)
+    const seen2 = ctx.seen.get(zodSchema);
+    if (seen2.ref === null)
       return;
-    const schema2 = seen.def ?? seen.schema;
+    const schema2 = seen2.def ?? seen2.schema;
     const _cached = { ...schema2 };
-    const ref = seen.ref;
-    seen.ref = null;
+    const ref = seen2.ref;
+    seen2.ref = null;
     if (ref) {
       flattenRef(ref);
       const refSeen = ctx.seen.get(ref);
@@ -30308,7 +30308,7 @@ function finalize(ctx, schema) {
     ctx.override({
       zodSchema,
       jsonSchema: schema2,
-      path: seen.path ?? []
+      path: seen2.path ?? []
     });
   };
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
@@ -30324,8 +30324,8 @@ function finalize(ctx, schema) {
       rewrite();
     if (ctx.intersections.length) {
       const carriers = /* @__PURE__ */ new Map();
-      for (const seen of ctx.seen.values()) {
-        for (const json3 of [seen.schema, seen.def]) {
+      for (const seen2 of ctx.seen.values()) {
+        for (const json3 of [seen2.schema, seen2.def]) {
           const allOf = json3?.allOf;
           if (!Array.isArray(allOf))
             continue;
@@ -30365,11 +30365,11 @@ function finalize(ctx, schema) {
   const defs = ctx.external?.defs ?? {};
   if (!ctx.external || ctx.sharedEmitDoneFor !== ctx.external) {
     for (const entry2 of ctx.seen.entries()) {
-      const seen = entry2[1];
-      if (seen.def && seen.defId) {
-        if (seen.def.id === seen.defId)
-          delete seen.def.id;
-        assignProp(defs, seen.defId, seen.def);
+      const seen2 = entry2[1];
+      if (seen2.def && seen2.defId) {
+        if (seen2.def.id === seen2.defId)
+          delete seen2.def.id;
+        assignProp(defs, seen2.defId, seen2.def);
       }
     }
   }
@@ -30983,8 +30983,8 @@ function rewriteKeyNames(ctx) {
   }
   const rewrites = /* @__PURE__ */ new Map();
   for (const record2 of pendingRecords.get(ctx) ?? []) {
-    const seen = ctx.seen.get(record2);
-    const names = (seen?.def ?? seen?.schema)?.propertyNames;
+    const seen2 = ctx.seen.get(record2);
+    const names = (seen2?.def ?? seen2?.schema)?.propertyNames;
     if (!names || names === true || rewrites.has(names))
       continue;
     const rewritten = stringifyKeyNames(bySchema, names, /* @__PURE__ */ new Set());
@@ -31047,9 +31047,9 @@ var recordProcessor = (schema, ctx, _json, params) => {
 var nullableProcessor = (schema, ctx, json3, params) => {
   const def = schema._zod.def;
   const inner = processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
+  const seen2 = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
-    seen.ref = def.innerType;
+    seen2.ref = def.innerType;
     json3.nullable = true;
   } else {
     json3.anyOf = [inner, { type: "null" }];
@@ -31058,8 +31058,8 @@ var nullableProcessor = (schema, ctx, json3, params) => {
 var nonoptionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
 };
 var UNREPRESENTABLE_DEFAULT = Symbol();
 function serializeDefaultValue(value, schema, ctx, json3, params) {
@@ -31078,8 +31078,8 @@ function serializeDefaultValue(value, schema, ctx, json3, params) {
 var defaultProcessor = (schema, ctx, json3, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   const value = serializeDefaultValue(def.defaultValue, schema, ctx, json3, params);
   if (value !== UNREPRESENTABLE_DEFAULT)
     json3.default = value;
@@ -31087,8 +31087,8 @@ var defaultProcessor = (schema, ctx, json3, params) => {
 var prefaultProcessor = (schema, ctx, json3, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   if (ctx.io !== "input")
     return;
   const value = serializeDefaultValue(def.defaultValue, schema, ctx, json3, params);
@@ -31098,8 +31098,8 @@ var prefaultProcessor = (schema, ctx, json3, params) => {
 var catchProcessor = (schema, ctx, json3, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   let catchValue;
   try {
     catchValue = def.catchValue(void 0);
@@ -31114,33 +31114,33 @@ var pipeProcessor = (schema, ctx, _json, params) => {
   const inIsTransform = def.in._zod.traits.has("$ZodTransform");
   const innerType = ctx.io === "input" ? inIsTransform ? def.out : def.in : def.out;
   processSchema(innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = innerType;
 };
 var readonlyProcessor = (schema, ctx, json3, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   json3.readOnly = true;
 };
 var promiseProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
 };
 var optionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
 };
 var lazyProcessor = (schema, ctx, _json, params) => {
   const innerType = schema._zod.innerType;
   processSchema(innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = innerType;
 };
 var allProcessors = {
   string: stringProcessor,
@@ -33253,7 +33253,7 @@ function checkObjectGuards(objectSchema, guards) {
   });
   return guard.pipe(objectSchema);
 }
-function canonicalKey(value, seen) {
+function canonicalKey(value, seen2) {
   if (value === null)
     return "z";
   const type = typeof value;
@@ -33263,14 +33263,14 @@ function canonicalKey(value, seen) {
     const raw = String(value);
     return `${type[0]}${raw.length}:${raw}`;
   }
-  if (seen.has(value))
+  if (seen2.has(value))
     return null;
-  seen.add(value);
+  seen2.add(value);
   try {
     if (Array.isArray(value)) {
       const parts2 = [];
       for (const item of value) {
-        const key = canonicalKey(item, seen);
+        const key = canonicalKey(item, seen2);
         if (key === null)
           return null;
         parts2.push(key);
@@ -33280,14 +33280,14 @@ function canonicalKey(value, seen) {
     const keys = Object.keys(value).sort();
     const parts = [];
     for (const k of keys) {
-      const key = canonicalKey(value[k], seen);
+      const key = canonicalKey(value[k], seen2);
       if (key === null)
         return null;
       parts.push(`${k.length}:${k}=${key}`);
     }
     return `o${parts.length}:{${parts.join(",")}}`;
   } finally {
-    seen.delete(value);
+    seen2.delete(value);
   }
 }
 var SCHEMA_KEYWORDS = /* @__PURE__ */ new Set([
@@ -35855,8 +35855,8 @@ data:
       });
       const replayedEventIds = /* @__PURE__ */ new Set();
       replayedStreamId = await this._eventStore.replayEventsAfter(lastEventId, {
-        send: async (eventId, message) => {
-          const success2 = this.writeSSEEvent(streamController, encoder, message, eventId);
+        send: async (eventId2, message) => {
+          const success2 = this.writeSSEEvent(streamController, encoder, message, eventId2);
           if (!success2) {
             this.onerror?.(new Error("Failed replay events"));
             try {
@@ -35864,7 +35864,7 @@ data:
             } catch {
             }
           } else {
-            replayedEventIds.add(eventId);
+            replayedEventIds.add(eventId2);
           }
         }
       });
@@ -35902,12 +35902,12 @@ data:
   /**
    * Writes an event to an SSE stream via controller with proper formatting
    */
-  writeSSEEvent(controller, encoder, message, eventId) {
+  writeSSEEvent(controller, encoder, message, eventId2) {
     try {
       let eventData = `event: message
 `;
-      if (eventId) {
-        eventData += `id: ${eventId}
+      if (eventId2) {
+        eventData += `id: ${eventId2}
 `;
       }
       eventData += `data: ${JSON.stringify(message)}
@@ -36034,9 +36034,9 @@ data:
       const initRequest = messages.find((m) => isInitializeRequest(m));
       const clientProtocolVersion = initRequest ? initRequest.params.protocolVersion : req.headers.get("mcp-protocol-version") ?? DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
       if (this._enableJsonResponse) {
-        return new Promise((resolve3) => {
+        return new Promise((resolve5) => {
           this._streamMapping.set(streamId, {
-            resolveJson: resolve3,
+            resolveJson: resolve5,
             cleanup: () => {
               this._streamMapping.delete(streamId);
             }
@@ -36238,16 +36238,16 @@ data:
       if (isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)) {
         throw new Error("Cannot send a response on a standalone SSE stream unless resuming a previous client request");
       }
-      let eventId;
+      let eventId2;
       if (this._eventStore) {
-        eventId = await this._eventStore.storeEvent(this._standaloneSseStreamId, message);
+        eventId2 = await this._eventStore.storeEvent(this._standaloneSseStreamId, message);
       }
       const standaloneSse = this._streamMapping.get(this._standaloneSseStreamId);
       if (standaloneSse === void 0) {
         return;
       }
-      if (standaloneSse.controller && standaloneSse.encoder && (eventId === void 0 || !standaloneSse.replayedEventIds?.has(eventId))) {
-        this.writeSSEEvent(standaloneSse.controller, standaloneSse.encoder, message, eventId);
+      if (standaloneSse.controller && standaloneSse.encoder && (eventId2 === void 0 || !standaloneSse.replayedEventIds?.has(eventId2))) {
+        this.writeSSEEvent(standaloneSse.controller, standaloneSse.encoder, message, eventId2);
       }
       return;
     }
@@ -36257,14 +36257,14 @@ data:
     }
     let stream = this._streamMapping.get(streamId);
     if (!this._enableJsonResponse) {
-      let eventId;
+      let eventId2;
       if (this._eventStore) {
-        eventId = await this._eventStore.storeEvent(streamId, message);
+        eventId2 = await this._eventStore.storeEvent(streamId, message);
         stream = this._streamMapping.get(streamId);
       }
-      if (stream?.controller && stream?.encoder && (eventId === void 0 || !stream.replayedEventIds?.has(eventId))) {
-        const written = this.writeSSEEvent(stream.controller, stream.encoder, message, eventId);
-        if (written && eventId !== void 0) {
+      if (stream?.controller && stream?.encoder && (eventId2 === void 0 || !stream.replayedEventIds?.has(eventId2))) {
+        const written = this.writeSSEEvent(stream.controller, stream.encoder, message, eventId2);
+        if (written && eventId2 !== void 0) {
           this._resumableStreams.add(streamId);
         }
       }
@@ -42399,7 +42399,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -42416,7 +42416,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -42494,7 +42494,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve5(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -42756,12 +42756,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve5, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -43901,7 +43901,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -44509,14 +44509,14 @@ var FORBIDDEN = [
 var NEGATION = /\b(never|don't|do not|does not|didn't|avoid|nothing|without|n't)\b|\bno\b/i;
 function negativePhrases(negative) {
   if (!negative?.trim()) return [];
-  const seen = /* @__PURE__ */ new Set();
+  const seen2 = /* @__PURE__ */ new Set();
   const phrases = [];
   for (const part of negative.split(/[\n,]+/)) {
     const phrase = part.trim();
     if (phrase.length < 3) continue;
     const key = phrase.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seen2.has(key)) continue;
+    seen2.add(key);
     phrases.push(phrase);
   }
   return phrases;
@@ -45879,7 +45879,7 @@ function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
   return Number.isFinite(ticks) && ticks > 0 ? ticks / USD_TICKS_PER_DOLLAR : void 0;
 }
-var sleep = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
+var sleep = (ms) => new Promise((resolve5) => setTimeout(resolve5, ms));
 function describeHttpFailure(status, body) {
   const text = body.trim();
   if (!text.startsWith("<")) {
@@ -46855,14 +46855,14 @@ function buildDependencyGraph(shots) {
 function downstreamShots(graph, badShot, kinds) {
   const chain = graph.edges.filter((edge) => edge.verified && kinds.includes(edge.kind) && edge.fromShot !== edge.toShot);
   const found = [];
-  const seen = /* @__PURE__ */ new Set([badShot]);
+  const seen2 = /* @__PURE__ */ new Set([badShot]);
   const queue = [badShot];
   while (queue.length > 0) {
     const current = queue.shift();
     if (current === void 0) break;
     for (const edge of chain) {
-      if (edge.fromShot !== current || seen.has(edge.toShot)) continue;
-      seen.add(edge.toShot);
+      if (edge.fromShot !== current || seen2.has(edge.toShot)) continue;
+      seen2.add(edge.toShot);
       found.push(edge.toShot);
       queue.push(edge.toShot);
     }
@@ -47288,9 +47288,9 @@ function ladderTitles(ladder, shotCount) {
       if (candidate.at <= position + 1e-9) beat = candidate;
     }
     const base = beat?.title ?? "";
-    const seen = counts.get(base) ?? 0;
-    counts.set(base, seen + 1);
-    titles.push(seen === 0 ? base : `${base} ${seen + 1}`);
+    const seen2 = counts.get(base) ?? 0;
+    counts.set(base, seen2 + 1);
+    titles.push(seen2 === 0 ? base : `${base} ${seen2 + 1}`);
   }
   return titles;
 }
@@ -48910,7 +48910,7 @@ async function withFolderLock(folder, body) {
       continue;
     }
     if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
-    await new Promise((resolve3) => setTimeout(resolve3, delay));
+    await new Promise((resolve5) => setTimeout(resolve5, delay));
     delay = Math.min(delay * 2, 250);
   }
 }
@@ -48923,11 +48923,11 @@ function copyNameFor(source) {
 async function keepReferences(input2) {
   const refsDir = join8(input2.folder, "refs");
   const kept = [];
-  const seen = /* @__PURE__ */ new Set();
+  const seen2 = /* @__PURE__ */ new Set();
   for (const ref of input2.refs) {
     const trimmed = ref.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
+    if (!trimmed || seen2.has(trimmed)) continue;
+    seen2.add(trimmed);
     if (/^(https?:|data:)/i.test(trimmed)) {
       kept.push(trimmed);
       continue;
@@ -49823,9 +49823,779 @@ function runPreVideoGate(input2) {
 
 // mcp/server.ts
 import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
-import { mkdir as mkdir5, mkdtemp, readFile as readFile6, readdir as readdir3, rename as rename3, rm as rm5, stat as stat5, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
-import { join as join9 } from "node:path";
-import { createHash as createHash6, randomUUID as randomUUID3 } from "node:crypto";
+import { mkdir as mkdir6, mkdtemp, readFile as readFile8, readdir as readdir4, rename as rename3, rm as rm5, stat as stat5, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
+import { join as join10 } from "node:path";
+import { createHash as createHash8, randomUUID as randomUUID3 } from "node:crypto";
+
+// mcp/jobEvents.ts
+import { createHash as createHash6 } from "node:crypto";
+import { appendFile, mkdir as mkdir5, readFile as readFile6 } from "node:fs/promises";
+import { isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
+var EVENT_LOG_VERSION = 1;
+var MAX_EVENT_LINE_BYTES = 16 * 1024;
+var MAX_EVENTS_PER_JOB = 2e3;
+var MAX_EVENT_LOG_BYTES = 1024 * 1024;
+var JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+var defaultFs = {
+  appendFile: (path, data) => appendFile(path, data, "utf8"),
+  readFile: (path) => readFile6(path, "utf8"),
+  mkdir: async (path) => {
+    await mkdir5(path, { recursive: true });
+  }
+};
+var eventFs = defaultFs;
+var beforeAppend;
+var fingerprints = /* @__PURE__ */ new Map();
+var chains = /* @__PURE__ */ new Map();
+var reportedFailures = /* @__PURE__ */ new Set();
+var reportedSkips = /* @__PURE__ */ new Set();
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map((entry2) => canonicalJson(entry2)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, entry2]) => entry2 !== void 0).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    return `{${entries.map(([key, entry2]) => `${JSON.stringify(key)}:${canonicalJson(entry2)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+function isSafeJobId(jobId) {
+  return JOB_ID_PATTERN.test(jobId);
+}
+function eventLogPath(jobsDir, jobId) {
+  if (!isSafeJobId(jobId)) return void 0;
+  const root = resolve3(jobsDir, ".events");
+  const full = resolve3(root, `${jobId}.jsonl`);
+  const rel = relative2(root, full);
+  if (rel.startsWith("..") || isAbsolute2(rel) || rel !== `${jobId}.jsonl`) return void 0;
+  return full;
+}
+function eventId(jobId, type, discriminator) {
+  const hex3 = createHash6("sha256").update(jobId).update("\0").update(type).update("\0").update(discriminator).digest("hex").slice(0, 32);
+  return `ev_${hex3}`;
+}
+function reviewCounts(review) {
+  const findings = review && typeof review === "object" && Array.isArray(review.findings) ? review.findings : [];
+  let measured4 = 0;
+  let visuallyFlagged2 = 0;
+  let unverified3 = 0;
+  for (const finding of findings) {
+    if (finding?.class === "measured") measured4 += 1;
+    else if (finding?.class === "visually-flagged") visuallyFlagged2 += 1;
+    else if (finding?.class === "unverified") unverified3 += 1;
+  }
+  return { findings: findings.length, measured: measured4, visuallyFlagged: visuallyFlagged2, unverified: unverified3 };
+}
+function repairData(proposal) {
+  const options = (proposal.options ?? []).flatMap((option) => {
+    if (typeof option?.id !== "string" || typeof option.costUsd !== "number") return [];
+    return [{ id: option.id, costUsd: option.costUsd, requiresApproval: true }];
+  });
+  return { options };
+}
+function deriveJobEvents(job) {
+  const events = [];
+  const push = (type, discriminator, data) => {
+    events.push({ id: eventId(job.id, type, discriminator), type, data });
+  };
+  push("job.started", "started", { shotCount: job.shotCount ?? job.shots?.length ?? 0 });
+  const threshold = job.spendLedger?.thresholdUsd;
+  if (typeof threshold === "number" && Number.isFinite(threshold)) {
+    push("budget.set", canonicalJson(threshold), { thresholdUsd: threshold });
+  }
+  const entries = job.spendLedger?.entries ?? [];
+  entries.forEach((entry2, index) => {
+    if (!entry2 || typeof entry2.kind !== "string" || typeof entry2.usd !== "number" || !Number.isFinite(entry2.usd)) return;
+    const canonicalEntry = {
+      kind: entry2.kind,
+      usd: entry2.usd,
+      ...entry2.estimated ? { estimated: true } : {},
+      ...entry2.derived ? { derived: true } : {},
+      ...entry2.uncertain ? { uncertain: true } : {},
+      ...entry2.reason ? { reason: entry2.reason } : {}
+    };
+    const data = { index, kind: entry2.kind, usd: entry2.usd };
+    if (entry2.estimated) data.estimated = true;
+    if (entry2.derived) data.derived = true;
+    if (entry2.uncertain) data.uncertain = true;
+    push("spend.recorded", `${index}\0${canonicalJson(canonicalEntry)}`, data);
+  });
+  const noteIds = (job.spendLedger?.appliedNoteIds ?? []).filter((id) => typeof id === "string" && id.length > 0);
+  if (noteIds.length > 0) {
+    const sorted = [...noteIds].sort();
+    const data = sorted.length > 50 ? { count: sorted.length } : { noteIds: sorted.slice(0, 50) };
+    push("spend.merged", sorted.join("\0"), data);
+  }
+  for (const shot of job.shots ?? []) {
+    if (typeof shot?.index !== "number") continue;
+    if (shot.status !== "completed" && shot.status !== "failed") continue;
+    const type = shot.status === "completed" ? "shot.completed" : "shot.failed";
+    push(type, `${shot.index}\0${shot.status}`, { index: shot.index, status: shot.status });
+  }
+  if (job.continuityReview !== void 0 && job.continuityReview !== null) {
+    push("review.recorded", createHash6("sha256").update(canonicalJson(job.continuityReview)).digest("hex"), reviewCounts(job.continuityReview));
+  }
+  if (job.repairProposal) {
+    push(
+      "repair.proposed",
+      createHash6("sha256").update(canonicalJson(job.repairProposal)).digest("hex"),
+      repairData(job.repairProposal)
+    );
+  }
+  if (job.state === "completed" || job.state === "stopped" || job.state === "failed") {
+    push(`job.${job.state}`, job.state, { state: job.state });
+  }
+  return events;
+}
+function parseEventLog(raw, jobId) {
+  const lines = raw.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const accepted = [];
+  let tornLines = 0;
+  for (const line of lines) {
+    if (line.length === 0) continue;
+    if (Buffer.byteLength(line) > MAX_EVENT_LINE_BYTES) {
+      tornLines += 1;
+      continue;
+    }
+    let value;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      tornLines += 1;
+      continue;
+    }
+    const event = asParsedEvent(value, jobId);
+    if (!event) {
+      tornLines += 1;
+      continue;
+    }
+    accepted.push(event);
+  }
+  const recorded = (event) => event.recordedAt ?? Number.MAX_SAFE_INTEGER;
+  accepted.sort((left, right) => left.seq - right.seq || recorded(left) - recorded(right) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  const seqCounts = /* @__PURE__ */ new Map();
+  for (const event of accepted) seqCounts.set(event.seq, (seqCounts.get(event.seq) ?? 0) + 1);
+  let seqCollisions = 0;
+  for (const count of seqCounts.values()) if (count > 1) seqCollisions += count - 1;
+  const events = [];
+  const seen2 = /* @__PURE__ */ new Set();
+  let maxSeq = 0;
+  let maxRevision;
+  let capped = false;
+  for (const event of accepted) {
+    if (seen2.has(event.id)) continue;
+    seen2.add(event.id);
+    events.push(event);
+    if (event.seq > maxSeq) maxSeq = event.seq;
+    if (typeof event.revision === "number" && (maxRevision === void 0 || event.revision > maxRevision)) {
+      maxRevision = event.revision;
+    }
+    if (event.type === "log.capped") capped = true;
+  }
+  return { events, tornLines, seqCollisions, capped, maxSeq, maxRevision };
+}
+function asParsedEvent(value, jobId) {
+  if (!value || typeof value !== "object") return void 0;
+  const row = value;
+  if (row.v !== 1) return void 0;
+  if (typeof row.id !== "string" || !/^ev_[0-9a-f]{32}$/.test(row.id)) return void 0;
+  if (typeof row.seq !== "number" || !Number.isInteger(row.seq) || row.seq < 1) return void 0;
+  if (row.jobId !== jobId || typeof row.type !== "string" || row.type.length === 0) return void 0;
+  if (row.revision !== void 0 && typeof row.revision !== "number") return void 0;
+  if (row.recordedAt !== void 0 && typeof row.recordedAt !== "number") return void 0;
+  const data = row.data && typeof row.data === "object" && !Array.isArray(row.data) ? row.data : {};
+  return {
+    id: row.id,
+    type: row.type,
+    data,
+    seq: row.seq,
+    jobId,
+    ...typeof row.revision === "number" ? { revision: row.revision } : {},
+    ...typeof row.recordedAt === "number" ? { recordedAt: row.recordedAt } : {}
+  };
+}
+function eventFingerprint(job) {
+  const clone2 = structuredClone(job);
+  delete clone2.revision;
+  for (const key of ["owner", "claim"]) {
+    const holder = clone2[key];
+    if (holder && typeof holder === "object") delete holder.heartbeatAt;
+  }
+  return createHash6("sha256").update(canonicalJson(clone2)).digest("hex");
+}
+function writerOwns(job) {
+  const owner = job.owner;
+  if (owner && owner.token === processToken && owner.pid === process.pid) return true;
+  const claim2 = job.claim;
+  return Boolean(claim2 && claim2.token === processToken && claim2.pid === process.pid);
+}
+function reportOnce(bucket, jobId, message) {
+  if (bucket.has(jobId)) return;
+  bucket.add(jobId);
+  console.error(message);
+}
+function safeToken(value) {
+  return value.replace(/[^\x20-\x7E]/g, "?").slice(0, 160);
+}
+function lineFor(input2) {
+  const body = {
+    v: EVENT_LOG_VERSION,
+    id: input2.id,
+    seq: input2.seq,
+    jobId: input2.jobId,
+    type: input2.type,
+    ...input2.revision !== void 0 ? { revision: input2.revision } : {},
+    recordedAt: input2.recordedAt,
+    data: input2.data
+  };
+  let line = `${JSON.stringify(body)}
+`;
+  if (Buffer.byteLength(line) > MAX_EVENT_LINE_BYTES) {
+    line = `${JSON.stringify({ ...body, data: { truncated: true } })}
+`;
+  }
+  return line;
+}
+async function appendDerived(job, jobsDir) {
+  const logPath = eventLogPath(jobsDir, job.id);
+  if (!logPath) {
+    reportOnce(reportedSkips, job.id, `theShow: event log skipped for ${safeToken(job.id)}: invalid id`);
+    return;
+  }
+  if (beforeAppend) await beforeAppend();
+  await eventFs.mkdir(resolve3(jobsDir, ".events"));
+  let raw = "";
+  try {
+    raw = await eventFs.readFile(logPath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  const parsed = parseEventLog(raw, job.id);
+  if (parsed.capped) return;
+  const known = new Set(parsed.events.map((event) => event.id));
+  const fresh = deriveJobEvents(job).filter((event) => !known.has(event.id));
+  let seq = parsed.maxSeq;
+  let count = parsed.events.length;
+  let bytes = Buffer.byteLength(raw);
+  let needsBreak = raw.length > 0 && !raw.endsWith("\n");
+  const recordedAt = Date.now();
+  const cappedId = eventId(job.id, "log.capped", "capped");
+  const writeLine = async (line) => {
+    const prefix = needsBreak ? "\n" : "";
+    await eventFs.appendFile(logPath, prefix + line);
+    needsBreak = false;
+    bytes += Buffer.byteLength(prefix) + Buffer.byteLength(line);
+    count += 1;
+    seq += 1;
+  };
+  const cappedLine = () => lineFor({
+    id: cappedId,
+    seq: seq + 1,
+    jobId: job.id,
+    type: "log.capped",
+    revision: job.revision,
+    recordedAt,
+    data: { events: count + 1, bytes }
+  });
+  if (known.has(cappedId)) return;
+  for (const event of fresh) {
+    const prefixBytes = needsBreak ? 1 : 0;
+    const real = lineFor({
+      id: event.id,
+      seq: seq + 1,
+      jobId: job.id,
+      type: event.type,
+      revision: job.revision,
+      recordedAt,
+      data: event.data
+    });
+    const marker = cappedLine();
+    const roomForMarker = count + 1 <= MAX_EVENTS_PER_JOB && bytes + prefixBytes + Buffer.byteLength(marker) <= MAX_EVENT_LOG_BYTES;
+    const roomForBoth = count + 2 <= MAX_EVENTS_PER_JOB && bytes + prefixBytes + Buffer.byteLength(real) + Buffer.byteLength(marker) <= MAX_EVENT_LOG_BYTES;
+    if (!roomForBoth) {
+      if (roomForMarker) await writeLine(cappedLine());
+      return;
+    }
+    await writeLine(real);
+  }
+}
+function noteJobPersisted(job, jobsDir) {
+  try {
+    const fingerprint = eventFingerprint(job);
+    if (fingerprints.get(job.id) === fingerprint) return;
+    fingerprints.set(job.id, fingerprint);
+    if (!writerOwns(job)) return;
+    const run = (chains.get(job.id) ?? Promise.resolve()).then(() => appendDerived(job, jobsDir)).catch((err) => {
+      const code = err.code ?? (err instanceof Error ? err.name : "unknown");
+      reportOnce(
+        reportedFailures,
+        job.id,
+        `theShow: event log append failed for ${safeToken(job.id)}: ${safeToken(String(code))}`
+      );
+    });
+    chains.set(job.id, run);
+    trackWrite(run);
+  } catch (err) {
+    const code = err.code ?? "unknown";
+    reportOnce(
+      reportedFailures,
+      job.id,
+      `theShow: event log append failed for ${safeToken(job.id)}: ${safeToken(String(code))}`
+    );
+  }
+}
+async function waitForJobEvents(jobId, timeoutMs = 2e3) {
+  const pending = chains.get(jobId);
+  if (!pending) return;
+  let timer;
+  try {
+    await Promise.race([
+      pending,
+      new Promise((resolve5) => {
+        timer = setTimeout(resolve5, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// mcp/productionFeed.ts
+import { createHash as createHash7 } from "node:crypto";
+import { readdir as readdir3, readFile as readFile7 } from "node:fs/promises";
+import { basename as basename3, join as join9 } from "node:path";
+var feedJobSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  startedAt: external_exports.number(),
+  finishedAt: external_exports.number().optional(),
+  state: external_exports.string(),
+  revision: external_exports.number().optional(),
+  shotCount: external_exports.number().optional(),
+  completed: external_exports.number().optional(),
+  spentUsd: external_exports.number().optional(),
+  filmPath: external_exports.string().optional(),
+  shots: external_exports.array(external_exports.object({
+    index: external_exports.number().optional(),
+    status: external_exports.string().optional(),
+    costUsd: external_exports.number().optional()
+  }).passthrough()).optional(),
+  continuityReview: external_exports.unknown().optional(),
+  repairProposal: external_exports.unknown().optional(),
+  spendLedger: external_exports.unknown().optional(),
+  owner: external_exports.unknown().optional(),
+  claim: external_exports.unknown().optional()
+}).passthrough();
+function spendJournalDir(jobId, jobsDir = JOBS_DIR) {
+  return join9(jobsDir, ".spend-journal", jobId);
+}
+function isSpendNote(value) {
+  if (!value || typeof value !== "object") return false;
+  const note = value;
+  if (typeof note.id !== "string" || note.id.length === 0) return false;
+  if (note.op === "budget") return typeof note.thresholdUsd === "number";
+  if (note.op === "spend") return typeof note.usd === "number";
+  return false;
+}
+async function listJournal(jobId, jobsDir = JOBS_DIR) {
+  const dir = spendJournalDir(jobId, jobsDir);
+  let names = [];
+  try {
+    names = await readdir3(dir);
+  } catch {
+    return { valid: [], torn: [] };
+  }
+  names.sort();
+  const valid = [];
+  const torn = [];
+  for (const name of names) {
+    const file2 = join9(dir, name);
+    if (!name.endsWith(".json") || name.startsWith(".")) {
+      const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
+      if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
+      torn.push(file2);
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(await readFile7(file2, "utf8"));
+      if (!isSpendNote(parsed)) torn.push(file2);
+      else valid.push({ file: file2, note: parsed });
+    } catch {
+      torn.push(file2);
+    }
+  }
+  return { valid, torn };
+}
+async function readQueuedFilmSpend(jobId, appliedNoteIds, jobsDir = JOBS_DIR) {
+  const { valid } = await listJournal(jobId, jobsDir);
+  const applied = new Set(appliedNoteIds ?? []);
+  let pendingSpendUsd = 0;
+  let pendingThresholdUsd;
+  for (const { note } of valid) {
+    if (applied.has(note.id)) continue;
+    if (note.op === "spend") pendingSpendUsd += note.usd;
+    else pendingThresholdUsd = note.thresholdUsd;
+  }
+  const rounded = Math.round(pendingSpendUsd * 100) / 100;
+  return {
+    pendingSpendUsd: rounded,
+    ...pendingThresholdUsd !== void 0 ? { pendingThresholdUsd } : {}
+  };
+}
+function roundUsd2(value) {
+  return Math.round(value * 100) / 100;
+}
+function asOwner(value) {
+  if (!value || typeof value !== "object") return void 0;
+  const owner = value;
+  if (typeof owner.pid !== "number" || typeof owner.token !== "string") return void 0;
+  if (typeof owner.host !== "string" || typeof owner.heartbeatAt !== "number") return void 0;
+  return { pid: owner.pid, token: owner.token, host: owner.host, heartbeatAt: owner.heartbeatAt };
+}
+function spentOf(job) {
+  const entries = job.spendLedger?.entries ?? [];
+  if (entries.length > 0) {
+    return roundUsd2(entries.reduce((sum, entry2) => sum + (typeof entry2.usd === "number" ? entry2.usd : 0), 0));
+  }
+  if (typeof job.spentUsd === "number") return roundUsd2(job.spentUsd);
+  return roundUsd2((job.shots ?? []).reduce((sum, shot) => sum + (shot.costUsd ?? 0), 0));
+}
+function reviewOf(review) {
+  if (!review || typeof review !== "object") return void 0;
+  const findings = Array.isArray(review.findings) ? review.findings : [];
+  let measured4 = 0;
+  let visuallyFlagged2 = 0;
+  let unverified3 = 0;
+  for (const finding of findings) {
+    if (finding?.class === "measured") measured4 += 1;
+    else if (finding?.class === "visually-flagged") visuallyFlagged2 += 1;
+    else if (finding?.class === "unverified") unverified3 += 1;
+  }
+  return { findings: findings.length, measured: measured4, visuallyFlagged: visuallyFlagged2, unverified: unverified3 };
+}
+function repairOf(proposal) {
+  if (!proposal || typeof proposal !== "object") return void 0;
+  const options = Array.isArray(proposal.options) ? proposal.options : [];
+  return {
+    options: options.flatMap((option) => typeof option?.id === "string" && typeof option.costUsd === "number" ? [{ id: option.id, costUsd: option.costUsd, requiresApproval: true }] : [])
+  };
+}
+async function readEventLog(jobsDir, jobId) {
+  const logPath = eventLogPath(jobsDir, jobId);
+  if (!logPath) return { present: false, unreadable: false, events: [], tornLines: 0, seqCollisions: 0, capped: false };
+  let raw;
+  try {
+    raw = await readFile7(logPath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { present: false, unreadable: false, events: [], tornLines: 0, seqCollisions: 0, capped: false };
+    }
+    return { present: false, unreadable: true, events: [], tornLines: 0, seqCollisions: 0, capped: false };
+  }
+  const parsed = parseEventLog(raw, jobId);
+  return { present: true, unreadable: false, ...parsed };
+}
+function reconciledAt(type, job) {
+  if (type === "job.started" && typeof job.startedAt === "number") return job.startedAt;
+  if ((type === "job.completed" || type === "job.stopped" || type === "job.failed") && typeof job.finishedAt === "number") {
+    return job.finishedAt;
+  }
+  return void 0;
+}
+function livenessOf(job, now) {
+  if (job.state === "running") {
+    return jobShouldStop(asOwner(job.owner), now) ? "owner-gone-awaiting-reap" : "running";
+  }
+  const claim2 = asOwner(job.claim);
+  if (claim2 && !jobShouldStop(claim2, now)) return "claimed";
+  return "idle";
+}
+async function loadJobFile(jobsDir, name) {
+  const stem = name.slice(0, -".json".length);
+  if (!isSafeJobId(stem)) return { abstention: { path: name, reason: "job id is not confined" } };
+  let raw;
+  try {
+    raw = await readFile7(join9(jobsDir, name), "utf8");
+  } catch {
+    return { abstention: { path: name, reason: "unreadable" } };
+  }
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { abstention: { path: name, reason: "invalid JSON" } };
+  }
+  const parsed = feedJobSchema.safeParse(value);
+  if (!parsed.success || parsed.data.id !== stem) {
+    return { abstention: { path: name, reason: "invalid job" } };
+  }
+  return { job: parsed.data };
+}
+async function readJobsForFeed(jobsDir) {
+  let names = [];
+  try {
+    names = await readdir3(jobsDir);
+  } catch {
+    return { jobs: [], abstentions: [] };
+  }
+  const jobs = [];
+  const abstentions = [];
+  for (const name of names) {
+    if (name.startsWith(".") || !name.endsWith(".json")) continue;
+    const loaded = await loadJobFile(jobsDir, name);
+    if (loaded.abstention) abstentions.push(loaded.abstention);
+    else if (loaded.job) jobs.push(loaded.job);
+  }
+  jobs.sort((left, right) => (right.startedAt ?? 0) - (left.startedAt ?? 0) || (left.id < right.id ? -1 : 1));
+  return { jobs, abstentions };
+}
+function digestIds(ids) {
+  const sorted = [...ids].sort();
+  const hash2 = createHash7("sha256").update(sorted.join("\0")).digest("hex");
+  const body = Buffer.from(JSON.stringify(sorted), "utf8").toString("base64url");
+  return `${hash2}.${body}`;
+}
+function undigest(value) {
+  const dot = value.indexOf(".");
+  if (dot <= 0) return void 0;
+  const hash2 = value.slice(0, dot);
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(value.slice(dot + 1), "base64url").toString("utf8"));
+  } catch {
+    return void 0;
+  }
+  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string")) return void 0;
+  const sorted = [...parsed].sort();
+  const check2 = createHash7("sha256").update(sorted.join("\0")).digest("hex");
+  if (check2 !== hash2) return void 0;
+  return sorted;
+}
+function encodeCursor(marks) {
+  const jobs = {};
+  for (const [jobId, mark] of marks) {
+    jobs[jobId] = { seq: mark.seq, reconciledDigest: digestIds(mark.ids) };
+  }
+  const body = { v: 1, jobs };
+  return Buffer.from(canonicalJson(body), "utf8").toString("base64url");
+}
+function decodeCursor(cursor) {
+  if (!cursor) return /* @__PURE__ */ new Map();
+  let value;
+  try {
+    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return void 0;
+  }
+  const parsed = external_exports.object({
+    v: external_exports.literal(1),
+    jobs: external_exports.record(external_exports.string(), external_exports.object({
+      seq: external_exports.number().int().nonnegative(),
+      reconciledDigest: external_exports.string()
+    }))
+  }).safeParse(value);
+  if (!parsed.success) return void 0;
+  const marks = /* @__PURE__ */ new Map();
+  for (const [jobId, mark] of Object.entries(parsed.data.jobs)) {
+    if (!isSafeJobId(jobId)) return void 0;
+    const ids = undigest(mark.reconciledDigest);
+    if (!ids) return void 0;
+    marks.set(jobId, { seq: mark.seq, ids });
+  }
+  return marks;
+}
+function clampLimit(limit) {
+  if (limit === void 0 || !Number.isFinite(limit)) return 20;
+  return Math.min(50, Math.max(1, Math.floor(limit)));
+}
+function journalEvent(jobId, note) {
+  const data = note.op === "spend" ? { op: "spend", kind: note.kind, usd: note.usd } : { op: "budget", thresholdUsd: note.thresholdUsd };
+  return {
+    id: eventId(jobId, "spend.queued", note.id),
+    jobId,
+    type: "spend.queued",
+    source: "journal",
+    data
+  };
+}
+function fromLog(event) {
+  return {
+    id: event.id,
+    jobId: event.jobId,
+    type: event.type,
+    source: "log",
+    seq: event.seq,
+    ...event.revision !== void 0 ? { revision: event.revision } : {},
+    ...event.recordedAt !== void 0 ? { recordedAt: event.recordedAt } : {},
+    data: event.data
+  };
+}
+function fromReconciled(job, event) {
+  const at = reconciledAt(event.type, job);
+  return {
+    id: event.id,
+    jobId: job.id,
+    type: event.type,
+    source: "reconciled",
+    ...at !== void 0 ? { at } : {},
+    data: event.data
+  };
+}
+function eventSort(left, right) {
+  const seq = (event) => event.seq ?? Number.MAX_SAFE_INTEGER;
+  const at = (event) => event.recordedAt ?? Number.MAX_SAFE_INTEGER;
+  return seq(left) - seq(right) || at(left) - at(right) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+}
+function seen(mark, event) {
+  if (!mark) return false;
+  if (mark.ids.includes(event.id)) return true;
+  return event.source === "log" && event.seq !== void 0 && event.seq <= mark.seq;
+}
+async function readProductionFeed(input2) {
+  if (input2.jobId !== void 0 && !isSafeJobId(input2.jobId)) {
+    return { refused: true, reason: "jobId is not confined to the jobs directory" };
+  }
+  const marks = decodeCursor(input2.cursor);
+  const cursor = marks ?? /* @__PURE__ */ new Map();
+  const loaded = await readJobsForFeed(input2.jobsDir);
+  const selected = input2.jobId ? loaded.jobs.filter((job) => job.id === input2.jobId) : loaded.jobs;
+  const abstentions = [...loaded.abstentions];
+  const now = input2.now ?? Date.now();
+  const summaries = [];
+  const allEvents = [];
+  for (const job of selected) {
+    const log = await readEventLog(input2.jobsDir, job.id);
+    if (log.unreadable) abstentions.push({ path: `${job.id}.jsonl`, reason: "unreadable event log" });
+    const derived2 = deriveJobEvents(job);
+    const loggedIds = new Set(log.events.map((event) => event.id));
+    const missing = derived2.filter((event) => !loggedIds.has(event.id));
+    const behind = !log.present || missing.length > 0 || typeof job.revision === "number" && log.present && (log.maxRevision === void 0 || log.maxRevision < job.revision);
+    const journal = isSafeJobId(job.id) ? await listJournal(job.id, input2.jobsDir) : { valid: [], torn: [] };
+    for (const file2 of journal.torn) abstentions.push({ path: basename3(file2), reason: "torn journal note" });
+    const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds, input2.jobsDir);
+    const events = [
+      ...log.events.map(fromLog),
+      ...missing.map((event) => fromReconciled(job, event)),
+      ...journal.valid.filter((entry2) => !(job.spendLedger?.appliedNoteIds ?? []).includes(entry2.note.id)).map((entry2) => journalEvent(job.id, entry2.note))
+    ].sort(eventSort);
+    allEvents.push(...events);
+    const summary = {
+      jobId: job.id,
+      state: job.state ?? "unknown",
+      progress: {
+        completed: job.completed ?? 0,
+        shotCount: job.shotCount ?? job.shots?.length ?? 0
+      },
+      spentUsd: spentOf(job),
+      pendingSpendUsd: queued.pendingSpendUsd,
+      ...queued.pendingThresholdUsd !== void 0 ? { pendingThresholdUsd: queued.pendingThresholdUsd } : {},
+      budget: assessBudget({
+        spentUsd: spentOf(job),
+        pendingUsd: queued.pendingSpendUsd,
+        thresholdUsd: job.spendLedger?.thresholdUsd
+      }),
+      ...reviewOf(job.continuityReview) ? { review: reviewOf(job.continuityReview) } : {},
+      ...job.repairProposal ? { repairProposal: repairOf(job.repairProposal) } : {},
+      ...typeof job.filmPath === "string" && job.filmPath.length > 0 ? { filmPath: basename3(job.filmPath) } : {},
+      liveness: livenessOf(job, now),
+      log: {
+        present: log.present,
+        events: log.events.length,
+        tornLines: log.tornLines,
+        seqCollisions: log.seqCollisions,
+        capped: log.capped,
+        behind
+      }
+    };
+    summaries.push(summary);
+  }
+  const limit = clampLimit(input2.limit);
+  const unseen = marks ? allEvents.filter((event) => !seen(cursor.get(event.jobId), event)) : allEvents;
+  const page = [];
+  for (const event of unseen) {
+    if (page.length >= limit) {
+      const last = page[page.length - 1];
+      if (!(last?.source === "log" && event.source === "log" && last.seq !== void 0 && last.seq === event.seq)) break;
+    }
+    page.push(event);
+  }
+  const next = new Map(cursor);
+  for (const event of page) {
+    const mark = next.get(event.jobId) ?? { seq: 0, ids: [] };
+    if (event.source === "log" && event.seq !== void 0) mark.seq = Math.max(mark.seq, event.seq);
+    else if (!mark.ids.includes(event.id)) mark.ids.push(event.id);
+    next.set(event.jobId, mark);
+  }
+  return {
+    version: 1,
+    generatedAt: new Date(now).toISOString(),
+    cursor: encodeCursor(next),
+    jobs: summaries,
+    events: page,
+    abstentions,
+    truncated: page.length < unseen.length
+  };
+}
+var productionFeedResultSchema = external_exports.object({
+  version: external_exports.literal(1),
+  generatedAt: external_exports.string(),
+  cursor: external_exports.string(),
+  jobs: external_exports.array(external_exports.object({
+    jobId: external_exports.string(),
+    state: external_exports.string(),
+    progress: external_exports.object({ completed: external_exports.number(), shotCount: external_exports.number() }),
+    spentUsd: external_exports.number(),
+    pendingSpendUsd: external_exports.number(),
+    pendingThresholdUsd: external_exports.number().optional(),
+    budget: external_exports.object({
+      version: external_exports.literal(1),
+      spentUsd: external_exports.number(),
+      pendingUsd: external_exports.number(),
+      totalUsd: external_exports.number(),
+      thresholdUsd: external_exports.number().optional(),
+      crossed: external_exports.boolean(),
+      warning: external_exports.string().optional(),
+      authorizesSpend: external_exports.literal(false)
+    }),
+    review: external_exports.object({
+      findings: external_exports.number(),
+      measured: external_exports.number(),
+      visuallyFlagged: external_exports.number(),
+      unverified: external_exports.number()
+    }).optional(),
+    repairProposal: external_exports.object({
+      options: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        costUsd: external_exports.number(),
+        requiresApproval: external_exports.literal(true)
+      }))
+    }).optional(),
+    filmPath: external_exports.string().optional(),
+    liveness: external_exports.enum(["running", "owner-gone-awaiting-reap", "claimed", "idle"]),
+    log: external_exports.object({
+      present: external_exports.boolean(),
+      events: external_exports.number(),
+      tornLines: external_exports.number(),
+      seqCollisions: external_exports.number(),
+      capped: external_exports.boolean(),
+      behind: external_exports.boolean()
+    })
+  })),
+  events: external_exports.array(external_exports.object({
+    id: external_exports.string(),
+    jobId: external_exports.string(),
+    type: external_exports.string(),
+    source: external_exports.enum(["log", "reconciled", "journal"]),
+    seq: external_exports.number().optional(),
+    revision: external_exports.number().optional(),
+    recordedAt: external_exports.number().optional(),
+    at: external_exports.number().optional(),
+    data: external_exports.record(external_exports.string(), external_exports.unknown())
+  })),
+  abstentions: external_exports.array(external_exports.object({
+    path: external_exports.string(),
+    reason: external_exports.string()
+  })),
+  truncated: external_exports.boolean()
+});
 
 // mcp/resume-claim-probe.ts
 var probe;
@@ -50137,9 +50907,9 @@ function planShots(opts) {
     for (const candidate of BEAT_LADDER) {
       if (candidate.at <= position + 1e-9) beat = candidate;
     }
-    const seen = titleCounts.get(beat.title) ?? 0;
-    titleCounts.set(beat.title, seen + 1);
-    const title = seen === 0 ? beat.title : `${beat.title} ${seen + 1}`;
+    const seen2 = titleCounts.get(beat.title) ?? 0;
+    titleCounts.set(beat.title, seen2 + 1);
+    const title = seen2 === 0 ? beat.title : `${beat.title} ${seen2 + 1}`;
     const focus = cast[i % cast.length];
     const shot = {
       index: i + 1,
@@ -50532,6 +51302,13 @@ function continuityPlanFromRenderArgs(args) {
 function refusal(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
 }
+function structuredText(payload) {
+  const text = JSON.stringify(payload, null, 2);
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: JSON.parse(text)
+  };
+}
 var costApprovalFields = {
   approvedUsd: external_exports.number().optional().describe(
     "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior."
@@ -50648,62 +51425,6 @@ function carrySpend(source) {
     entries: derived2
   };
 }
-function spendJournalDir(jobId) {
-  return join9(JOBS_DIR, ".spend-journal", jobId);
-}
-function isSpendNote(value) {
-  if (!value || typeof value !== "object") return false;
-  const note = value;
-  if (typeof note.id !== "string" || note.id.length === 0) return false;
-  if (note.op === "budget") return typeof note.thresholdUsd === "number";
-  if (note.op === "spend") return typeof note.usd === "number";
-  return false;
-}
-async function listJournal(jobId) {
-  const dir = spendJournalDir(jobId);
-  let names = [];
-  try {
-    names = await readdir3(dir);
-  } catch {
-    return { valid: [], torn: [] };
-  }
-  names.sort();
-  const valid = [];
-  const torn = [];
-  for (const name of names) {
-    const file2 = join9(dir, name);
-    if (!name.endsWith(".json") || name.startsWith(".")) {
-      const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
-      if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
-      torn.push(file2);
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(await readFile6(file2, "utf8"));
-      if (!isSpendNote(parsed)) torn.push(file2);
-      else valid.push({ file: file2, note: parsed });
-    } catch {
-      torn.push(file2);
-    }
-  }
-  return { valid, torn };
-}
-async function readQueuedFilmSpend(jobId, appliedNoteIds) {
-  const { valid } = await listJournal(jobId);
-  const applied = new Set(appliedNoteIds ?? []);
-  let pendingSpendUsd = 0;
-  let pendingThresholdUsd;
-  for (const { note } of valid) {
-    if (applied.has(note.id)) continue;
-    if (note.op === "spend") pendingSpendUsd += note.usd;
-    else pendingThresholdUsd = note.thresholdUsd;
-  }
-  const rounded = Math.round(pendingSpendUsd * 100) / 100;
-  return {
-    pendingSpendUsd: rounded,
-    ...pendingThresholdUsd !== void 0 ? { pendingThresholdUsd } : {}
-  };
-}
 function queuedFields(queued) {
   if (!queued) return {};
   return {
@@ -50743,10 +51464,10 @@ function rememberAppliedNote(job, id) {
 async function enqueueSpendNote(jobId, note) {
   const full = { ...note, id: randomUUID3() };
   const dir = spendJournalDir(jobId);
-  await mkdir5(dir, { recursive: true });
+  await mkdir6(dir, { recursive: true });
   const finalName = `${String(Date.now()).padStart(16, "0")}-${full.id}.json`;
-  const dest = join9(dir, finalName);
-  const tmp = join9(dir, `.${finalName}.${process.pid}.tmp`);
+  const dest = join10(dir, finalName);
+  const tmp = join10(dir, `.${finalName}.${process.pid}.tmp`);
   await writeFile5(tmp, JSON.stringify(full));
   await rename3(tmp, dest);
 }
@@ -51115,7 +51836,7 @@ function localImagePath(ref) {
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
   return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
 }
-var sleep2 = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
+var sleep2 = (ms) => new Promise((resolve5) => setTimeout(resolve5, ms));
 function cancelledBeforeSpend(extra) {
   if (!extra?.signal?.aborted) return void 0;
   return {
@@ -51466,10 +52187,10 @@ server.registerTool(
 var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
-    await mkdir5(DOWNLOAD_DIR, { recursive: true });
-    const digest = createHash6("sha1").update(input2).digest("hex").slice(0, 16);
+    await mkdir6(DOWNLOAD_DIR, { recursive: true });
+    const digest = createHash8("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
-    const target = join9(DOWNLOAD_DIR, `src-${digest}.${ext}`);
+    const target = join10(DOWNLOAD_DIR, `src-${digest}.${ext}`);
     const existing = await probeDuration(target);
     if (existing !== void 0) return target;
     const res = await fetch(input2, { redirect: "follow" });
@@ -51761,7 +52482,7 @@ var sequenceJobs = /* @__PURE__ */ new Map();
 var jobRevision = /* @__PURE__ */ new Map();
 var jobWriteChain = /* @__PURE__ */ new Map();
 function claimPath(jobId) {
-  return join9(JOBS_DIR, `${jobId}.claim`);
+  return join10(JOBS_DIR, `${jobId}.claim`);
 }
 function noteRevision(job) {
   if (typeof job.revision === "number") {
@@ -51782,11 +52503,12 @@ async function persistJob(job) {
   const write = previous.then(async () => {
     if (jobRevision.get(job.id) !== revision) return;
     try {
-      await atomicWriteFile(join9(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
+      await atomicWriteFile(join10(JOBS_DIR, `${job.id}.json`), JSON.stringify(snapshot, null, 2));
       if (snapshot.claim) await atomicWriteFile(claimPath(job.id), JSON.stringify(snapshot.claim));
       else await unlink3(claimPath(job.id)).catch(() => void 0);
       if (beforeJournalDelete) await beforeJournalDelete();
       for (const file2 of consumed) await unlink3(file2).catch(() => void 0);
+      noteJobPersisted(snapshot, JOBS_DIR);
     } catch (err) {
       console.error(`theShow: could not persist job ${job.id}:`, err);
     }
@@ -51833,14 +52555,14 @@ function mergeFromDisk(memory, disk) {
 async function refreshJobsFromDisk() {
   let names;
   try {
-    names = await readdir3(JOBS_DIR);
+    names = await readdir4(JOBS_DIR);
   } catch {
     return;
   }
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     try {
-      const raw = await readFile6(join9(JOBS_DIR, name), "utf8");
+      const raw = await readFile8(join10(JOBS_DIR, name), "utf8");
       const job = JSON.parse(raw);
       if (!job?.id) continue;
       const memory = sequenceJobs.get(job.id);
@@ -51860,7 +52582,7 @@ async function loadJobsFromDisk() {
 }
 async function readClaimFile(path) {
   try {
-    const raw = await readFile6(path, "utf8");
+    const raw = await readFile8(path, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -51892,7 +52614,7 @@ function claimTurnPath(jobId) {
 }
 async function readClaimTurn(path) {
   try {
-    const raw = await readFile6(path, "utf8");
+    const raw = await readFile8(path, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -51925,7 +52647,7 @@ async function discardIfUnchanged(path, expected) {
   }
   let tombRaw = "";
   try {
-    tombRaw = await readFile6(tomb, "utf8");
+    tombRaw = await readFile8(tomb, "utf8");
   } catch {
     tombRaw = "";
   }
@@ -51964,7 +52686,7 @@ async function acquireClaimTurn(jobId) {
   if (!claimTurnIsStale(current, turnAge)) return void 0;
   let raw = "";
   try {
-    raw = await readFile6(dest, "utf8");
+    raw = await readFile8(dest, "utf8");
   } catch {
     return void 0;
   }
@@ -51982,7 +52704,7 @@ async function releaseClaimTurn(jobId, token) {
   if (current?.token !== token) return;
   let raw = "";
   try {
-    raw = await readFile6(dest, "utf8");
+    raw = await readFile8(dest, "utf8");
   } catch {
     return;
   }
@@ -52037,7 +52759,7 @@ async function claimFilm(jobId) {
       }
       let raw = "";
       try {
-        raw = await readFile6(claimPath(jobId), "utf8");
+        raw = await readFile8(claimPath(jobId), "utf8");
       } catch {
         if (await placeClaim(jobId, owner)) {
           if (await commitClaimFromDisk(jobId, owner)) return { ok: true };
@@ -52075,7 +52797,7 @@ async function liveTurnWithoutClaim(jobId) {
 }
 async function readPersistedJob(jobId) {
   try {
-    const raw = await readFile6(join9(JOBS_DIR, `${jobId}.json`), "utf8");
+    const raw = await readFile8(join10(JOBS_DIR, `${jobId}.json`), "utf8");
     const job = JSON.parse(raw);
     if (!job || job.id !== jobId) return void 0;
     return job;
@@ -52123,6 +52845,7 @@ async function saveJobAnnotation(jobId, patch) {
   }
 }
 async function releaseFilmClaim(jobId) {
+  await waitForJobEvents(jobId);
   const disk = await readPersistedJob(jobId);
   const memory = sequenceJobs.get(jobId);
   const job = disk ?? memory;
@@ -52233,7 +52956,7 @@ async function runSequenceJob(job, args) {
       let retries = 0;
       while (result.status === "failed" && result.retryable && retries < 3) {
         retries += 1;
-        await new Promise((resolve3) => setTimeout(resolve3, 2500 * retries));
+        await new Promise((resolve5) => setTimeout(resolve5, 2500 * retries));
         result = await renderShot();
       }
       if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
@@ -52292,7 +53015,8 @@ async function runSequenceJob(job, args) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
       const clipPath = await resolveToLocalFile(result.videoUrl);
@@ -52314,7 +53038,8 @@ async function runSequenceJob(job, args) {
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
       const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
@@ -52327,7 +53052,8 @@ async function runSequenceJob(job, args) {
         job.state = "stopped";
         job.error = entry2.error;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
       previousFrame = frame.path;
@@ -52361,12 +53087,14 @@ async function runSequenceJob(job, args) {
     if (degradations.length > 0) {
       job.warnings = [...job.warnings ?? [], ...degradations];
     }
-    void persistJob(job);
+    await persistJob(job);
+    await waitForJobEvents(job.id);
   } catch (err) {
     job.state = "failed";
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
-    void persistJob(job);
+    await persistJob(job);
+    await waitForJobEvents(job.id);
   }
 }
 server.registerTool(
@@ -53409,17 +54137,12 @@ server.registerTool(
         error: job.error
       };
     }));
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          count: shown.length,
-          films: shown,
-          storage: JOBS_DIR,
-          next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
-        }, null, 2)
-      }]
-    };
+    return structuredText({
+      count: shown.length,
+      films: shown,
+      storage: JOBS_DIR,
+      next: shown.length === 0 ? "No films yet. Configure one with configure_film, then render_sequence." : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to retry_shot to replace one of its shots."
+    });
   }
 );
 server.registerTool(
@@ -53434,21 +54157,14 @@ server.registerTool(
     await refreshJobsFromDisk();
     const job = sequenceJobs.get(args.jobId);
     if (!job) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "Unknown jobId",
-            detail: "No film has that id. Call list_films to see every film on disk with its job id.",
-            known: Array.from(sequenceJobs.keys()).slice(-5)
-          }, null, 2)
-        }]
-      };
+      return structuredText({
+        error: "Unknown jobId",
+        detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+        known: Array.from(sequenceJobs.keys()).slice(-5)
+      });
     }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ...jobPayload(job), ...queuedFields(queued) }, null, 2) }]
-    };
+    return structuredText({ ...jobPayload(job), ...queuedFields(queued) });
   }
 );
 var reviewShotSchema = external_exports.object({
@@ -53470,8 +54186,8 @@ var reviewShotSchema = external_exports.object({
 });
 function filesIdentical(left, right) {
   try {
-    const a = createHash6("sha256").update(readFileSync3(left)).digest("hex");
-    const b = createHash6("sha256").update(readFileSync3(right)).digest("hex");
+    const a = createHash8("sha256").update(readFileSync3(left)).digest("hex");
+    const b = createHash8("sha256").update(readFileSync3(right)).digest("hex");
     return a === b;
   } catch {
     return false;
@@ -53561,7 +54277,7 @@ server.registerTool(
     if (args.jobId && !job) {
       return refusal({ error: "Unknown jobId", executed: false, willRender: false, willSpend: false });
     }
-    const reviewFrameDir = !shots && job ? await mkdtemp(join9(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`)) : void 0;
+    const reviewFrameDir = !shots && job ? await mkdtemp(join10(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`)) : void 0;
     const frameSources = /* @__PURE__ */ new Map();
     try {
       if (!shots && job) {
@@ -53869,7 +54585,7 @@ server.registerTool(
       }
       shots = coverageShotsFromJob(job);
       source = "job";
-      artifactPaths = [join9(JOBS_DIR, `${job.id}.json`)];
+      artifactPaths = [join10(JOBS_DIR, `${job.id}.json`)];
     }
     if (shots.length === 0) {
       return refusal({
@@ -53899,17 +54615,17 @@ server.registerTool(
 async function filmsMatchingCharacter(name) {
   let fileNames = [];
   try {
-    fileNames = await readdir3(JOBS_DIR);
+    fileNames = await readdir4(JOBS_DIR);
   } catch {
     return [];
   }
   const found = [];
   for (const fileName of fileNames) {
     if (!fileName.endsWith(".json") || fileName.startsWith(".")) continue;
-    const full = join9(JOBS_DIR, fileName);
+    const full = join10(JOBS_DIR, fileName);
     let value;
     try {
-      value = JSON.parse(await readFile6(full, "utf8"));
+      value = JSON.parse(await readFile8(full, "utf8"));
     } catch {
       continue;
     }
@@ -53926,14 +54642,14 @@ async function filmsById(ids) {
   const jobs = [];
   const missing = [];
   const invalid = [];
-  const seen = /* @__PURE__ */ new Set();
+  const seen2 = /* @__PURE__ */ new Set();
   for (const id of ids) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const full = join9(JOBS_DIR, `${id}.json`);
+    if (seen2.has(id)) continue;
+    seen2.add(id);
+    const full = join10(JOBS_DIR, `${id}.json`);
     let raw;
     try {
-      raw = await readFile6(full, "utf8");
+      raw = await readFile8(full, "utf8");
     } catch (err) {
       if (err.code === "ENOENT") {
         missing.push(id);
@@ -54012,7 +54728,7 @@ server.registerTool(
         const key = name.trim().toLowerCase();
         if (characters.has(key)) continue;
         const record2 = await loadCharacter(name);
-        characters.set(key, record2 ? { name: record2.name, updatedAt: record2.updatedAt, path: join9(record2.folder, "character.json") } : void 0);
+        characters.set(key, record2 ? { name: record2.name, updatedAt: record2.updatedAt, path: join10(record2.folder, "character.json") } : void 0);
       }
     }
     const pendingSpendUsd = /* @__PURE__ */ new Map();
@@ -54028,7 +54744,7 @@ server.registerTool(
       return !(shot.openingFramePath && existsSync2(shot.openingFramePath));
     });
     if (needsFrames) {
-      frameDir = await mkdtemp(join9(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`));
+      frameDir = await mkdtemp(join10(JOBS_DIR, `.review-frames-${process.pid}-${hostKey()}-`));
       if (beforeAdvisoryFrames) await beforeAdvisoryFrames();
     }
     try {
@@ -54064,7 +54780,7 @@ server.registerTool(
         });
       }
       const reportId = `cxf_${randomUUID3()}`;
-      const reportPath = join9(dir, `${reportId}.json`);
+      const reportPath = join10(dir, `${reportId}.json`);
       const body = {
         ...report,
         reportId,
@@ -54077,6 +54793,54 @@ server.registerTool(
     } finally {
       if (frameDir) await rm5(frameDir, { recursive: true, force: true });
     }
+  }
+);
+server.registerTool(
+  "production_feed",
+  {
+    description: "Read the production feed for films this plugin has recorded. Free, read-only, renders nothing, spends nothing, writes nothing, and is never required for production. Poll it from any host. Rendering, review, repair, and budget changes stay on the other tools.",
+    inputSchema: external_exports.object({
+      cursor: external_exports.string().optional().describe("Opaque cursor from the previous feed. A garbage cursor reads from the start."),
+      limit: external_exports.number().int().min(1).max(50).optional().describe("How many events to return. Defaults to 20."),
+      jobId: external_exports.string().optional().describe("One film. Any id that could leave the jobs directory is refused.")
+    }),
+    outputSchema: productionFeedResultSchema,
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
+      openWorldHint: false
+    }
+  },
+  async (args) => {
+    const feed = await readProductionFeed({
+      jobsDir: JOBS_DIR,
+      cursor: args.cursor,
+      limit: args.limit,
+      jobId: args.jobId
+    });
+    if ("refused" in feed) {
+      const refusal2 = {
+        version: 1,
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        cursor: "",
+        jobs: [],
+        events: [],
+        abstentions: [{ path: args.jobId ?? "", reason: feed.reason }],
+        truncated: false
+      };
+      const text2 = JSON.stringify(refusal2, null, 2);
+      return {
+        isError: true,
+        content: [{ type: "text", text: text2 }],
+        structuredContent: JSON.parse(text2)
+      };
+    }
+    const text = JSON.stringify(feed, null, 2);
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: JSON.parse(text)
+    };
   }
 );
 
@@ -54144,7 +54908,7 @@ function readHttpBody(req, limit) {
     req.resume();
     return Promise.reject(Object.assign(new Error("too large"), { code: "TOO_LARGE" }));
   }
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const chunks = [];
     let received = 0;
     const fail = (err) => {
@@ -54166,7 +54930,7 @@ function readHttpBody(req, limit) {
       req.removeListener("data", onData);
       req.removeListener("end", onEnd);
       req.removeListener("error", onError);
-      resolve3(Buffer.concat(chunks));
+      resolve5(Buffer.concat(chunks));
     };
     const onError = (err) => fail(err);
     req.on("data", onData);
@@ -54348,7 +55112,7 @@ async function startHttpServer() {
       writeJson(res, 500, rpcError(-32603, "Internal server error"));
     });
   });
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve5, reject) => {
     const onListenError = (err) => reject(err);
     httpServer.once("error", onListenError);
     httpServer.listen(port, host, () => {
@@ -54359,7 +55123,7 @@ async function startHttpServer() {
       allowHosts = names.hosts;
       allowOrigins = names.origins;
       console.error(`theShow MCP server running on http://${formatHost(host)}:${boundPort}/mcp`);
-      resolve3();
+      resolve5();
     });
   });
   installShutdown(async () => {

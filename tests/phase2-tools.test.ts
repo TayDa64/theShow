@@ -96,7 +96,7 @@ describe("phase 2 tools", () => {
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name);
     expect(names.slice(0, ORIGINAL_TOOLS.length)).toEqual([...ORIGINAL_TOOLS]);
-    expect(names.slice(ORIGINAL_TOOLS.length)).toEqual(["suggest_coverage", "check_cross_film"]);
+    expect(names.slice(ORIGINAL_TOOLS.length)).toEqual(["suggest_coverage", "check_cross_film", "production_feed"]);
   });
 
   it("kills mutation: emitting a costQuote from a suggestion", async () => {

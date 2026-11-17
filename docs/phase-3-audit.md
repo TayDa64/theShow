@@ -209,7 +209,15 @@ Reconciled rows (derived id missing from the log) use `source: "reconciled"`, no
 
 ## Feed path must not reach writers
 
-The feed module does not exist yet. This is the set it, `readProductionFeed`, `production_feed`, and `GET /api/production/feed` must not call:
+After the modules landed, this command returns no matches in `mcp/productionFeed.ts`:
+
+```text
+rg "persistJob|atomicWriteFile|unlink\\(|appendFile|writeFile|rename\\(|truncate\\(|refreshJobsFromDisk|loadJobsFromDisk|reapIfOwnerGone|claimFilm|saveJobAnnotation|releaseFilmClaim|applyQueuedNotes|enqueueSpendNote|noteReportedSpend|sweepOrphanTemps|sweepStaleReviewFrames|noteJobPersisted|rm\\(" mcp/productionFeed.ts
+```
+
+The feed imports `readFile` and `readdir` only. `deriveJobEvents` is pure. The Studio route calls `readProductionFeed` and does not import the writer.
+
+This is the set `readProductionFeed`, `production_feed`, and `GET /api/production/feed` must not call:
 
 `persistJob`, `atomicWriteFile`, `publishExclusive`, `unlink`, `rm`, `writeFile`, `appendFile`, `rename`, `truncate`, `refreshJobsFromDisk`, `loadJobsFromDisk`, `reapIfOwnerGone`, `claimFilm`, `saveJobAnnotation`, `releaseFilmClaim`, `applyQueuedNotes`, `enqueueSpendNote`, `noteReportedSpend`, `sweepOrphanTemps`, `sweepStaleReviewFrames`, `scheduleJobEvents` / the event writer.
 
@@ -226,9 +234,9 @@ A source grep of `mcp/productionFeed.ts` and of the Studio route will be recorde
 
 ## Axe
 
-Before this change the new surface does not exist, so it has no violation count.
+Before this change the new surface did not exist, so it had no violation count. The existing gate in `e2e/studio-baseline.spec.ts` (lines 44–46) asserts `result.violations` is empty for WCAG 2.2 AA tags (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`) at 1280 and 375, on the dev server and the built server. The Pipeline popup is one of those surfaces.
 
-Existing gate: `e2e/studio-baseline.spec.ts` 44–46 asserts `result.violations` is `[]` for WCAG 2.2 AA tags (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`) at 1280 and 375, on the dev server and the built server. The Pipeline popup is one of those surfaces (97–102). After the section lands, that gate still has to be zero, including the new section. The measured after counts will be added here once Playwright has been run.
+After the section landed, that gate and `e2e/production-feed.spec.ts` reported 0 violations at 1280 and at 375, on both the dev server and the built server. The Playwright run was 46 passed and 1 skipped.
 
 ## What Phase 3 must not make worse
 
