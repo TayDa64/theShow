@@ -10,8 +10,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { readProductionFeed } from "../mcp/productionFeed.ts";
-import { deriveJobEvents } from "../mcp/jobEvents.ts";
+import { deriveJobEvents, setBeforeEventAppendProbe } from "../mcp/jobEvents.ts";
 import { server } from "../mcp/server.ts";
+import { flushJobWrites } from "../mcp/runtime.ts";
 
 let client: Client;
 
@@ -175,6 +176,118 @@ describe("production feed", () => {
     const garbage = await readProductionFeed({ jobsDir: JOBS_DIR, jobId: id, limit: 50, cursor: "%%%not-a-cursor%%%" });
     if ("refused" in garbage) throw new Error(garbage.reason);
     expect(garbage.events.map((event) => event.id)).toEqual(fresh.events.map((event) => event.id));
+    const digestIds = ["ev_" + "cd".repeat(16)];
+    const digest = `${createHash("sha256").update(digestIds.join("\0")).digest("hex")}.${Buffer.from(JSON.stringify(digestIds), "utf8").toString("base64url")}`;
+    const malformed = [
+      Buffer.from(JSON.stringify({ v: 2, jobs: {} }), "utf8").toString("base64url"),
+      Buffer.from(JSON.stringify({ v: 1, jobs: { "../x": { seq: 0, reconciledDigest: digest } } }), "utf8").toString("base64url"),
+      Buffer.from(JSON.stringify({ v: 1, jobs: { [id]: { seq: 0, reconciledDigest: "not-a-digest" } } }), "utf8").toString("base64url"),
+    ];
+    for (const cursor of malformed) {
+      const page = await readProductionFeed({ jobsDir: JOBS_DIR, jobId: id, limit: 50, cursor });
+      if ("refused" in page) throw new Error(page.reason);
+      expect(page.events.map((event) => event.id)).toEqual(fresh.events.map((event) => event.id));
+    }
     expect(fresh.events.map((event) => event.id).sort()).toEqual(deriveJobEvents(body).map((event) => event.id).sort());
   });
+
+  it("returns review and repair while a hung append is still pending, and releases the claim", async () => {
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    setBeforeEventAppendProbe(() => pending);
+    try {
+      const reviewId = `seq_p3_fast_${Date.now().toString(36)}`;
+      await writeFile(path.join(JOBS_DIR, `${reviewId}.json`), JSON.stringify({
+        id: reviewId,
+        startedAt: 1,
+        state: "completed",
+        finishedAt: 2,
+        shotCount: 1,
+        completed: 1,
+        estimateUsd: 1,
+        spentUsd: 0,
+        shots: [{ index: 1, title: "A", status: "completed", prompt: "A lantern." }],
+      }));
+      const reviewStarted = Date.now();
+      const review = await client.callTool({ name: "review_continuity", arguments: { jobId: reviewId } });
+      expect(Date.now() - reviewStarted).toBeLessThan(1_000);
+      expect(JSON.parse(toolText(review)).persisted).toBe(true);
+      const disk = JSON.parse(await readFile(path.join(JOBS_DIR, `${reviewId}.json`), "utf8")) as { claim?: unknown };
+      expect(disk.claim).toBeUndefined();
+      await expect(readFile(path.join(JOBS_DIR, `${reviewId}.claim`))).rejects.toThrow();
+      await expect(readFile(path.join(JOBS_DIR, ".events", `${reviewId}.jsonl`))).rejects.toThrow();
+
+      const repairId = `seq_p3_fast_repair_${Date.now().toString(36)}`;
+      await writeFile(path.join(JOBS_DIR, `${repairId}.json`), JSON.stringify({
+        id: repairId,
+        startedAt: 1,
+        state: "completed",
+        finishedAt: 2,
+        shotCount: 1,
+        completed: 1,
+        estimateUsd: 1,
+        spentUsd: 0,
+        shots: [{ index: 1, title: "A", status: "failed", prompt: "A lantern." }],
+      }));
+      const repairStarted = Date.now();
+      const repair = await client.callTool({
+        name: "propose_repair",
+        arguments: { jobId: repairId, badShot: 1, budgetUsd: 3 },
+      });
+      expect(Date.now() - repairStarted).toBeLessThan(1_000);
+      expect(JSON.parse(toolText(repair)).persisted).toBe(true);
+      await expect(readFile(path.join(JOBS_DIR, ".events", `${repairId}.jsonl`))).rejects.toThrow();
+    } finally {
+      release();
+      setBeforeEventAppendProbe(undefined);
+      await flushJobWrites();
+    }
+  });
+
+  it("returns render_sequence before the terminal event append finishes", async () => {
+    process.env.THESHOW_STUB_VIDEO = "completed";
+    let entered = 0;
+    setBeforeEventAppendProbe(async () => {
+      if (entered === 0) entered = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    });
+    try {
+      const started = Date.now();
+      const result = await client.callTool({
+        name: "render_sequence",
+        arguments: {
+          shots: [{ prompt: "A lantern sits on a wooden table.", durationSeconds: 4, title: "Lantern" }],
+          confirm: true,
+          overrideValidation: true,
+          assemble: false,
+        },
+      });
+      const returned = Date.now();
+      expect(returned - started).toBeLessThan(1_000);
+      const payload = JSON.parse(toolText(result)) as { jobId?: string };
+      expect(payload.jobId).toMatch(/^seq_/);
+      const logPath = path.join(JOBS_DIR, ".events", `${payload.jobId}.jsonl`);
+      const deadline = Date.now() + 8_000;
+      let text = "";
+      let sawStopped = 0;
+      while (Date.now() < deadline) {
+        try {
+          text = await readFile(logPath, "utf8");
+          if (text.includes("job.stopped")) {
+            sawStopped = Date.now();
+            break;
+          }
+        } catch { /* the append is still inside the probe */ }
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      expect(text).toContain("job.stopped");
+      expect(sawStopped).toBeGreaterThan(returned);
+      expect(sawStopped - entered).toBeGreaterThanOrEqual(700);
+      expect(returned).toBeLessThan(entered + 700);
+    } finally {
+      delete process.env.THESHOW_STUB_VIDEO;
+      setBeforeEventAppendProbe(undefined);
+      await flushJobWrites();
+    }
+  }, 15_000);
 });

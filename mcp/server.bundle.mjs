@@ -47975,8 +47975,8 @@ function noteJobPersisted(job, jobsDir) {
   try {
     const fingerprint = eventFingerprint(job);
     if (fingerprints.get(job.id) === fingerprint) return;
-    fingerprints.set(job.id, fingerprint);
     if (!writerOwns(job)) return;
+    fingerprints.set(job.id, fingerprint);
     const run = (chains.get(job.id) ?? Promise.resolve()).then(() => appendDerived(job, jobsDir)).catch((err) => {
       const code = err.code ?? (err instanceof Error ? err.name : "unknown");
       reportOnce(
@@ -48011,7 +48011,13 @@ async function waitForJobEvents(jobId, timeoutMs = 2e3) {
     if (timer) clearTimeout(timer);
   }
 }
+function envAppendProbeEnabled() {
+  const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
+  if (mode !== "hold" && mode !== "gap") return false;
+  return process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+}
 async function runEnvAppendProbe(logPath) {
+  if (!envAppendProbeEnabled()) return;
   const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
   if (mode !== "hold" && mode !== "gap") return;
   if (mode === "hold") {
@@ -50722,7 +50728,6 @@ async function saveJobAnnotation(jobId, patch) {
   }
 }
 async function releaseFilmClaim(jobId) {
-  await waitForJobEvents(jobId);
   const disk = await readPersistedJob(jobId);
   const memory = sequenceJobs.get(jobId);
   const job = disk ?? memory;

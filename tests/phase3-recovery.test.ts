@@ -4,7 +4,7 @@
  * bundle's /mcp port. A restart kills the process and starts a new one.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,6 +22,7 @@ const PROTOCOL = "2025-11-25";
 const ACCEPT = "application/json, text/event-stream";
 
 const children: ChildProcess[] = [];
+const homes: string[] = [];
 
 type Transport = "stdio" | "http";
 
@@ -50,6 +51,7 @@ function film(id: string, extra: Record<string, unknown> = {}): string {
 
 async function homeDir(): Promise<{ home: string; jobs: string }> {
   const home = await mkdtemp(path.join(tmpdir(), "theshow-p3-bundle-"));
+  homes.push(home);
   const jobs = path.join(home, "jobs");
   await mkdir(jobs, { recursive: true });
   await mkdir(path.join(home, "media"), { recursive: true });
@@ -241,11 +243,22 @@ function toolBody(result: unknown): Record<string, unknown> {
   return JSON.parse(toolText(result)) as Record<string, unknown>;
 }
 
-async function assertGuard(home: string, script: string): Promise<void> {
+async function assertGuard(home: string, child: ChildProcess, script: string): Promise<void> {
   const log = await readFile(path.join(home, "net-guard.log"), "utf8");
-  expect(log).toContain("guard-loaded");
-  expect(log).toContain(script);
+  expect(log).toContain(`guard-loaded ${child.pid} ${script}`);
   expect(log).not.toContain("provider network blocked");
+}
+
+async function waitForDurableReview(file: string): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < 5_000) {
+    try {
+      const body = JSON.parse(await readFile(file, "utf8")) as { continuityReview?: { version?: number } };
+      if (body.continuityReview?.version === 1) return;
+    } catch { /* the rename has not landed */ }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`continuity review was not durable in ${file}`);
 }
 
 function normalizeText(text: string, home: string): string {
@@ -264,6 +277,7 @@ afterEach(async () => {
     }
     await waitForChildClose(child);
   }
+  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
 
 describe("phase 3 recovery on built bundles", () => {
@@ -279,12 +293,13 @@ describe("phase 3 recovery on built bundles", () => {
       shots: [],
       owner: { pid: 999_999, token: "gone", host: "other-host", heartbeatAt: 1 },
     }));
-    const owner = new Bundle(home, transport, { THESHOW_EVENT_APPEND_PROBE: "hold" });
+    const owner = new Bundle(home, transport, { NODE_ENV: "test", THESHOW_EVENT_APPEND_PROBE: "hold" });
     await owner.ready();
     const pending = owner.call("review_continuity", { jobId: id }).catch(() => undefined);
     await waitForChildSignal(owner.child, () => owner.stderr, "event-append-hold", 20_000);
     const torn = await readFile(path.join(jobs, ".events", `${id}.jsonl`));
     expect(torn.toString("utf8")).toBe("{\"partial\"");
+    await waitForDurableReview(path.join(jobs, `${id}.json`));
     const written = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as { continuityReview?: { version: number } };
     expect(written.continuityReview?.version).toBe(1);
     owner.kill();
@@ -305,17 +320,20 @@ describe("phase 3 recovery on built bundles", () => {
     expect(parsed.tornLines).toBe(1);
     expect(parsed.events.some((event) => event.type === "repair.proposed")).toBe(true);
     next.kill();
-    await assertGuard(home, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
+    const script = transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs";
+    await assertGuard(home, owner.child, script);
+    await assertGuard(home, next.child, script);
   }, 60_000);
 
   it.each(["stdio", "http"] as const)("reconciles a kill between rename and append on %s", async (transport) => {
     const { home, jobs } = await homeDir();
     const id = `seq_p3_gap_${transport}`;
     await writeFile(path.join(jobs, `${id}.json`), film(id));
-    const owner = new Bundle(home, transport, { THESHOW_EVENT_APPEND_PROBE: "gap" });
+    const owner = new Bundle(home, transport, { NODE_ENV: "test", THESHOW_EVENT_APPEND_PROBE: "gap" });
     await owner.ready();
     const pending = owner.call("review_continuity", { jobId: id }).catch(() => undefined);
     await waitForChildSignal(owner.child, () => owner.stderr, "event-append-hold", 20_000);
+    await waitForDurableReview(path.join(jobs, `${id}.json`));
     await expect(readFile(path.join(jobs, ".events", `${id}.jsonl`))).rejects.toThrow();
     owner.kill();
     await waitForChildClose(owner.child);
@@ -330,7 +348,9 @@ describe("phase 3 recovery on built bundles", () => {
     const disk = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as { id: string };
     expect(ids).toContain(deriveJobEvents(disk).find((event) => event.type === "review.recorded")?.id);
     next.kill();
-    await assertGuard(home, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
+    const script = transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs";
+    await assertGuard(home, owner.child, script);
+    await assertGuard(home, next.child, script);
   }, 60_000);
 
   it.each(["stdio", "http"] as const)("shows owner-gone, then a reconciled stop after the bundle reaps on %s", async (transport) => {
@@ -359,7 +379,7 @@ describe("phase 3 recovery on built bundles", () => {
     expect(stopped?.source).toBe("reconciled");
     expect(stopped?.id).toBe(deriveJobEvents({ id, state: "stopped", shotCount: 1, shots: [] }).find((event) => event.type === "job.stopped")?.id);
     bundle.kill();
-    await assertGuard(home, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
+    await assertGuard(home, bundle.child, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
   }, 40_000);
 
   it("runs a stdio bundle and an HTTP bundle at the same time on one home", async () => {
@@ -372,15 +392,24 @@ describe("phase 3 recovery on built bundles", () => {
     let sawReview = false;
     let sawRepair = false;
     let lastRepair = "";
+    let overlapMs = 0;
     for (let round = 0; round < 6 && !(sawReview && sawRepair); round += 1) {
-      const [review, repair] = await Promise.all([
-        sawReview
-          ? stdio.call("production_feed", { jobId: id, limit: 5 })
-          : stdio.call("review_continuity", { jobId: id }),
-        sawRepair
-          ? http.call("production_feed", { jobId: id, limit: 5 })
-          : http.call("propose_repair", { jobId: id, badShot: 1, budgetUsd: 3, resolution: "720p" }),
-      ]);
+      const reviewStarted = Date.now();
+      let reviewEnded = 0;
+      let repairEnded = 0;
+      const reviewPromise = (sawReview
+        ? stdio.call("production_feed", { jobId: id, limit: 5 })
+        : stdio.call("review_continuity", { jobId: id })).finally(() => { reviewEnded = Date.now(); });
+      expect(stdio.child.exitCode).toBeNull();
+      expect(http.child.exitCode).toBeNull();
+      const repairStarted = Date.now();
+      const repairPromise = (sawRepair
+        ? http.call("production_feed", { jobId: id, limit: 5 })
+        : http.call("propose_repair", { jobId: id, badShot: 1, budgetUsd: 3, resolution: "720p" })).finally(() => { repairEnded = Date.now(); });
+      const [review, repair] = await Promise.all([reviewPromise, repairPromise]);
+      if (round === 0) {
+        overlapMs = Math.min(reviewEnded, repairEnded) - Math.max(reviewStarted, repairStarted);
+      }
       if (!sawReview && toolBody(review).persisted === true) sawReview = true;
       if (!sawRepair) {
         lastRepair = toolText(repair);
@@ -389,6 +418,7 @@ describe("phase 3 recovery on built bundles", () => {
     }
     expect(sawReview).toBe(true);
     expect(sawRepair, lastRepair).toBe(true);
+    expect(overlapMs).toBeGreaterThan(0);
     const parsed = parseEventLog(await readFile(path.join(jobs, ".events", `${id}.jsonl`), "utf8"), id);
     const ids = parsed.events.map((event) => event.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -401,8 +431,8 @@ describe("phase 3 recovery on built bundles", () => {
     expect(idsOf(stdioFeed)).toEqual(idsOf(httpFeed));
     stdio.kill();
     http.kill();
-    await assertGuard(home, "server.bundle.mjs");
-    await assertGuard(home, "server-http.bundle.mjs");
+    await assertGuard(home, stdio.child, "server.bundle.mjs");
+    await assertGuard(home, http.child, "server-http.bundle.mjs");
   }, 60_000);
 
   it("kills both bundles and the restarted processes replay the same cursor", async () => {
@@ -431,8 +461,10 @@ describe("phase 3 recovery on built bundles", () => {
     expect(replayAgain.events).toEqual(replay.events);
     stdio2.kill();
     http2.kill();
-    await assertGuard(home, "server.bundle.mjs");
-    await assertGuard(home, "server-http.bundle.mjs");
+    await assertGuard(home, stdio.child, "server.bundle.mjs");
+    await assertGuard(home, http.child, "server-http.bundle.mjs");
+    await assertGuard(home, stdio2.child, "server.bundle.mjs");
+    await assertGuard(home, http2.child, "server-http.bundle.mjs");
   }, 60_000);
 
   it.each(["stdio", "http"] as const)("keeps tool text byte-identical when the append fails on %s", async (transport) => {
@@ -478,6 +510,82 @@ describe("phase 3 recovery on built bundles", () => {
     expect(lines.filter((line) => line.includes(id))).toHaveLength(1);
     expect(lines).toHaveLength(2);
     bad.kill();
-    await assertGuard(failed.home, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
+    const script = transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs";
+    await assertGuard(baseline.home, good.child, script);
+    await assertGuard(failed.home, bad.child, script);
   }, 90_000);
+
+  it.each(["stdio", "http"] as const)("keeps tool text when the event directory denies permission on %s", async (transport) => {
+    const baseline = await homeDir();
+    const id = `seq_p3_eacces_${transport}`;
+    await writeFile(path.join(baseline.jobs, `${id}.json`), film(id));
+    const good = new Bundle(baseline.home, transport, {
+      NODE_ENV: "test",
+      THESHOW_STUB_VIDEO: "completed",
+    });
+    await good.ready();
+    const goodReview = toolText(await good.call("review_continuity", { jobId: id }));
+    const goodRepair = toolText(await good.call("propose_repair", { jobId: id, badShot: 1, budgetUsd: 4 }));
+    const goodRender = toolText(await good.call("render_sequence", {
+      shots: [{ prompt: "A lantern sits on a wooden table.", durationSeconds: 4, title: "Lantern" }],
+      confirm: true,
+      overrideValidation: true,
+      assemble: false,
+    }));
+    good.kill();
+
+    const failed = await homeDir();
+    await writeFile(path.join(failed.jobs, `${id}.json`), film(id));
+    const events = path.join(failed.jobs, ".events");
+    await mkdir(events);
+    await chmod(events, 0o555);
+    await expect(writeFile(path.join(events, "probe"), "x")).rejects.toMatchObject({ code: "EACCES" });
+    try {
+      const bad = new Bundle(failed.home, transport, {
+        NODE_ENV: "test",
+        THESHOW_STUB_VIDEO: "completed",
+      });
+      await bad.ready();
+      const badReview = toolText(await bad.call("review_continuity", { jobId: id }));
+      const badRepair = toolText(await bad.call("propose_repair", { jobId: id, badShot: 1, budgetUsd: 4 }));
+      const badRender = toolText(await bad.call("render_sequence", {
+        shots: [{ prompt: "A lantern sits on a wooden table.", durationSeconds: 4, title: "Lantern" }],
+        confirm: true,
+        overrideValidation: true,
+        assemble: false,
+      }));
+      expect(normalizeText(badReview, failed.home)).toBe(normalizeText(goodReview, baseline.home));
+      expect(normalizeText(badRepair, failed.home)).toBe(normalizeText(goodRepair, baseline.home));
+      expect(normalizeText(badRender, failed.home)).toBe(normalizeText(goodRender, baseline.home));
+      const lines = bad.stderr.split("\n").filter((line) => line.includes("event log append failed"));
+      expect(lines.filter((line) => line.includes(id) && line.includes("EACCES"))).toHaveLength(1);
+      expect(lines.filter((line) => line.includes("EACCES"))).toHaveLength(2);
+      bad.kill();
+      const script = transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs";
+      await assertGuard(baseline.home, good.child, script);
+      await assertGuard(failed.home, bad.child, script);
+    } finally {
+      await chmod(events, 0o755);
+    }
+  }, 90_000);
+
+  it.each(["stdio", "http"] as const)("ignores THESHOW_EVENT_APPEND_PROBE outside a test process on %s", async (transport) => {
+    const { home, jobs } = await homeDir();
+    const id = `seq_p3_probe_${transport}`;
+    await writeFile(path.join(jobs, `${id}.json`), film(id));
+    const bundle = new Bundle(home, transport, { THESHOW_EVENT_APPEND_PROBE: "hold" });
+    await bundle.ready();
+    const started = Date.now();
+    const body = toolBody(await bundle.call("review_continuity", { jobId: id }));
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(body.persisted).toBe(true);
+    expect(bundle.stderr).not.toContain("event-append-hold");
+    const log = await readFile(path.join(jobs, ".events", `${id}.jsonl`), "utf8");
+    expect(log).not.toContain("{\"partial\"");
+    const parsed = parseEventLog(log, id);
+    expect(parsed.tornLines).toBe(0);
+    expect(parsed.events.some((event) => event.type === "review.recorded")).toBe(true);
+    bundle.kill();
+    await assertGuard(home, bundle.child, transport === "stdio" ? "server.bundle.mjs" : "server-http.bundle.mjs");
+  }, 30_000);
 });

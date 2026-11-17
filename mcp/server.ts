@@ -3242,7 +3242,6 @@ export async function saveJobAnnotation(
 }
 
 export async function releaseFilmClaim(jobId: string): Promise<void> {
-  await waitForJobEvents(jobId);
   const disk = await readPersistedJob(jobId);
   const memory = sequenceJobs.get(jobId);
   const job = disk ?? memory;

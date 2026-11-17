@@ -1,13 +1,24 @@
 /**
- * Pinned Studio home for Playwright. The web servers and the specs share this
- * path so a test never reads a real ~/.theshow.
+ * Pinned Studio home for Playwright. The config process creates a fresh
+ * directory for this run and publishes it through THESHOW_PLAYWRIGHT_HOME
+ * and a pointer file, so a worker that did not inherit the env still uses
+ * the same path. That path is never a real ~/.theshow.
  */
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-export const STUDIO_HOME = path.join(os.tmpdir(), 'theshow-playwright-studio');
-export const STUDIO_JOBS = path.join(STUDIO_HOME, 'jobs');
+const POINTER = path.join(os.tmpdir(), 'theshow-playwright-home-pointer');
+
+export function studioHome(): string {
+  const fromEnv = process.env.THESHOW_PLAYWRIGHT_HOME;
+  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  return fs.readFileSync(POINTER, 'utf8').trim();
+}
+
+export function studioJobs(): string {
+  return path.join(studioHome(), 'jobs');
+}
 
 const CANARY = 'pw-canary-token';
 
@@ -34,12 +45,14 @@ function job(id: string, extra: Record<string, unknown>): string {
 }
 
 export function seedStudioHome(): void {
-  fs.rmSync(STUDIO_HOME, { recursive: true, force: true });
-  const events = path.join(STUDIO_JOBS, '.events');
+  const home = studioHome();
+  const jobs = studioJobs();
+  fs.rmSync(home, { recursive: true, force: true });
+  const events = path.join(jobs, '.events');
   fs.mkdirSync(events, { recursive: true });
-  fs.mkdirSync(path.join(STUDIO_HOME, 'media'), { recursive: true });
-  fs.mkdirSync(path.join(STUDIO_HOME, 'characters'), { recursive: true });
-  const write = (name: string, body: string) => fs.writeFileSync(path.join(STUDIO_JOBS, name), body);
+  fs.mkdirSync(path.join(home, 'media'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'characters'), { recursive: true });
+  const write = (name: string, body: string) => fs.writeFileSync(path.join(jobs, name), body);
   write('seq_pw_running.json', job('seq_pw_running', {
     state: 'running',
     completed: 0,

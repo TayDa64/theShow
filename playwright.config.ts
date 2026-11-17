@@ -1,6 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { seedStudioHome, STUDIO_HOME, STUDIO_JOBS } from './playwright/studio-home';
+import { seedStudioHome } from './playwright/studio-home';
+
+const STUDIO_HOME = process.env.THESHOW_PLAYWRIGHT_HOME
+  ?? path.join(os.tmpdir(), `theshow-playwright-${process.pid}-${Date.now().toString(36)}`);
+const STUDIO_JOBS = path.join(STUDIO_HOME, 'jobs');
+if (!process.env.THESHOW_PLAYWRIGHT_HOME) {
+  process.env.THESHOW_PLAYWRIGHT_HOME = STUDIO_HOME;
+  fs.writeFileSync(path.join(os.tmpdir(), 'theshow-playwright-home-pointer'), `${STUDIO_HOME}\n`);
+}
 
 const devURL = 'http://127.0.0.1:3100';
 const builtURL = 'http://127.0.0.1:3101';

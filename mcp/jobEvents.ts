@@ -419,8 +419,8 @@ export function noteJobPersisted(job: EventJob, jobsDir: string): void {
   try {
     const fingerprint = eventFingerprint(job);
     if (fingerprints.get(job.id) === fingerprint) return;
-    fingerprints.set(job.id, fingerprint);
     if (!writerOwns(job)) return;
+    fingerprints.set(job.id, fingerprint);
     const run = (chains.get(job.id) ?? Promise.resolve())
       .then(() => appendDerived(job, jobsDir))
       .catch((err: unknown) => {
@@ -463,10 +463,18 @@ export async function waitForJobEvents(jobId: string, timeoutMs = 2_000): Promis
 
 /**
  * Bundle kill tests set THESHOW_EVENT_APPEND_PROBE to "hold" or "gap".
- * Production leaves that variable unset, so this never runs.
+ * Same gate as the video stub: a shipped process with the variable set does
+ * nothing unless VITEST or NODE_ENV=test is also set. Production leaves both off.
  * "hold" writes a torn tail and pauses. "gap" pauses before any log byte is written.
  */
+function envAppendProbeEnabled(): boolean {
+  const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
+  if (mode !== "hold" && mode !== "gap") return false;
+  return process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+}
+
 async function runEnvAppendProbe(logPath: string): Promise<void> {
+  if (!envAppendProbeEnabled()) return;
   const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
   if (mode !== "hold" && mode !== "gap") return;
   if (mode === "hold") {
@@ -487,6 +495,11 @@ export function setBeforeEventAppendProbe(next: (() => Promise<void>) | undefine
 /** Test seam. Production uses node:fs. Tests simulate ENOSPC, EACCES, and ENOTDIR here. */
 export function setEventFs(next: Partial<EventFs> | undefined): void {
   eventFs = next ? { ...defaultFs, ...next } : defaultFs;
+}
+
+/** True after an owning write has stored this job's event fingerprint. */
+export function eventFingerprintRemembered(jobId: string): boolean {
+  return fingerprints.has(jobId);
 }
 
 /** Drop in-memory skip state so a test can observe a single fresh failure. */

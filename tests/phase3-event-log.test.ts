@@ -11,6 +11,7 @@ import { JOBS_DIR } from "../mcp/media.ts";
 import {
   canonicalJson,
   deriveJobEvents,
+  eventFingerprintRemembered,
   eventId,
   eventLogPath,
   noteJobPersisted,
@@ -396,6 +397,49 @@ describe("phase 3 event log", () => {
     expect(cappedBytes.byteLength).toBeLessThanOrEqual(1024 * 1024);
     const body = parseEventLog(cappedBytes.toString("utf8"), bytesId);
     expect(body.events.filter((event) => event.type === "log.capped")).toHaveLength(1);
+  });
+
+  it("dedupes a repeated event id and keeps the first sequence number", () => {
+    const id = "seq_p3_dedupe";
+    const line = (seq: number) => JSON.stringify({
+      v: 1,
+      id: `ev_${"ab".repeat(16)}`,
+      seq,
+      jobId: id,
+      type: "job.started",
+      recordedAt: seq,
+      data: { state: "running" },
+    });
+    const parsed = parseEventLog(`${line(2)}\n${line(1)}\n`, id);
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0]?.seq).toBe(1);
+    expect(parsed.seqCollisions).toBe(0);
+    const sameSeq = parseEventLog(`${line(4)}\n${line(4)}\n`, id);
+    expect(sameSeq.events).toHaveLength(1);
+    expect(sameSeq.seqCollisions).toBe(1);
+  });
+
+  it("does not remember a fingerprint until this process owns the job", async () => {
+    const id = `seq_p3_fp_${Date.now().toString(36)}`;
+    const foreign = film(id, {
+      state: "completed",
+      finishedAt: 2,
+      owner: { pid: 1, token: "other", host: "other-host", heartbeatAt: 1 },
+      shots: [{ index: 1, title: "A", status: "completed" }],
+    });
+    await persistJob(foreign);
+    await flushJobWrites();
+    expect(eventFingerprintRemembered(id)).toBe(false);
+    await expect(readFile(path.join(JOBS_DIR, ".events", `${id}.jsonl`))).rejects.toThrow();
+    await persistJob(film(id, {
+      state: "completed",
+      finishedAt: 2,
+      shots: [{ index: 1, title: "A", status: "completed" }],
+    }));
+    await flushJobWrites();
+    expect(eventFingerprintRemembered(id)).toBe(true);
+    const parsed = parseEventLog(await logText(id), id);
+    expect(parsed.events.some((event) => event.type === "shot.completed")).toBe(true);
   });
 
   it("leaves .events untouched by the sweeps and the reaper, and confines job ids", async () => {
