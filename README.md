@@ -162,7 +162,7 @@ The reference field takes a **path or an https URL**, because MCP has no file up
 
 ### Slash commands
 
-Ten commands ship with the plugin. `/theshow` is the primary start. `/film` follows the same recipe.
+Eleven commands ship with the plugin. `/theshow` is the primary start. `/film` follows the same recipe. `/advisor` is free and does not render.
 
 | Command | What it does |
 |---|---|
@@ -176,6 +176,7 @@ Ten commands ship with the plugin. `/theshow` is the primary start. `/film` foll
 | `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
 | `/films [count]` | Lists films on disk. Free |
 | `/continue <jobId> <what next>` | Continues an existing film with more shots |
+| `/advisor <scene, jobId, or character>` | Free notes on a plan, one film, or several films. Does not render |
 
 A command that spends money still prices the work and waits for a yes. The command files are in [`commands/`](commands/theshow.md).
 
@@ -391,7 +392,7 @@ mcp/            the MCP server
   characters.ts   on-disk character store
   runtime.ts      claims, locks, HTTP session limits
 skills/theshow/ the workflow the model follows
-commands/       the ten slash commands
+commands/       the eleven slash commands
 docs/           proof measurements, the film, and screenshots
 src/            StoryForge Studio (React)
 server.ts       Studio dev server
