@@ -22,6 +22,23 @@ describe('/theshow', () => {
     expect(skill).not.toContain('Never show:');
   });
 
+  it('keeps /advisor on the free tools', () => {
+    const advisor = read('commands/advisor.md');
+    expect(advisor).toContain('/advisor');
+    expect(advisor).toContain('suggest_coverage');
+    expect(advisor).toContain('review_continuity');
+    expect(advisor).toContain('propose_repair');
+    expect(advisor).toContain('check_cross_film');
+    expect(advisor).toContain('plan_storyboard');
+    expect(advisor).toContain('Spend nothing');
+    expect(advisor).toContain('single bare word');
+    expect(advisor).not.toContain('confirm: true');
+    expect(skill).toContain('/advisor');
+    expect(skill).toContain('eleven commands');
+    expect(read('README.md')).toContain('/advisor');
+    expect(read('README-PLUGIN.md')).toContain('/advisor');
+  });
+
   it('keeps the storyboard render off the silent extend path', () => {
     const render = exportView.slice(
       exportView.indexOf('const renderStoryboardShot'),

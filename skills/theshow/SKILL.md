@@ -117,9 +117,10 @@ the config block. If they don't care, say so explicitly instead of filling the g
 
 ## Slash commands
 
-The plugin ships ten commands, and each one is this same workflow started partway in. When a user
+The plugin ships eleven commands. Ten of them are this same workflow started partway in. When a user
 types one, honour what it names and skip the step they already took. None of them skips the
-estimate. `/theshow` is the primary start. `/film` follows that same recipe.
+estimate. `/theshow` is the primary start. `/film` follows that same recipe. `/advisor` stops at
+the free notes and does not render.
 
 | Command | What it does |
 |---|---|
@@ -133,6 +134,7 @@ estimate. `/theshow` is the primary start. `/film` follows that same recipe.
 | `/retry <jobId> <shot> [prompt]` | Re-renders one bad shot and splices it back |
 | `/films [count]` | Lists films on disk. Free |
 | `/continue <jobId> <what next>` | Continues an existing film with more shots |
+| `/advisor <scene, jobId, or character>` | Free notes from the plan or from films on disk. Does not render |
 
 None of them skips the estimate. A command that spends money still calls its tool without `confirm`,
 shows the contract that applies to it, and waits. `/board` shows the still prompts, their lint hits,

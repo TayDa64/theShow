@@ -12,7 +12,7 @@ This turns theShow (StoryForge) into a Grok Build plugin and MCP server for cont
 | `mcp/server.bundle.mjs` | The server, bundled so startup installs nothing |
 | `mcp/server.ts` | Tool definitions — edit here, then rebuild the bundle |
 | `skills/theshow/SKILL.md` | The workflow the model follows |
-| `commands/*.md` | The ten slash commands. `/theshow` is the primary start |
+| `commands/*.md` | The eleven slash commands. `/theshow` is the primary start |
 
 ## Install
 
@@ -56,6 +56,7 @@ Or start from a command. `/theshow` is the primary start. The file is `commands/
 | `/retry <jobId> <shot> [prompt]` | Repair one shot |
 | `/films [count]` | List films on disk. Free |
 | `/continue <jobId> <what next>` | Continue an existing film |
+| `/advisor <scene, jobId, or character>` | Free notes. Does not render |
 
 ## The tools
 
