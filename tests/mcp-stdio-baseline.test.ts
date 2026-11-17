@@ -229,6 +229,7 @@ describe("desktop stdio launch", () => {
         ...fixture.tools.map((tool) => tool.name),
         "suggest_coverage",
         "check_cross_film",
+        "production_feed",
       ]);
     },
     20_000,

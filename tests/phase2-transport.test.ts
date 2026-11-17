@@ -235,7 +235,7 @@ describe("phase 2 stdio and http", () => {
       stdio.notify("notifications/initialized");
       const listed = await stdio.request("tools/list", {}) as { tools?: Array<{ name: string }> };
       const names = listed.tools?.map((tool) => tool.name) ?? [];
-      expect(names.slice(-2)).toEqual(["suggest_coverage", "check_cross_film"]);
+      expect(names.slice(-3)).toEqual(["suggest_coverage", "check_cross_film", "production_feed"]);
       const stdioCoverage = textOf(await stdio.request("tools/call", { name: "suggest_coverage", arguments: coverageArgs }));
       const httpCoverage = await httpCall(http.url, "suggest_coverage", coverageArgs);
       expect(httpCoverage).toEqual(stdioCoverage);

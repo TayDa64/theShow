@@ -108,6 +108,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { noteJobPersisted, waitForJobEvents } from "./jobEvents.ts";
+import {
+  listJournal,
+  productionFeedResultSchema,
+  readProductionFeed,
+  readQueuedFilmSpend,
+  spendJournalDir,
+  type QueuedFilmSpend,
+  type SpendNote,
+  type SpendNoteInput,
+} from "./productionFeed.ts";
+export { readQueuedFilmSpend };
+export type { QueuedFilmSpend };
 import { runResumeClaimProbe } from "./resume-claim-probe.ts";
 import {
   atomicWriteFile,
@@ -1093,6 +1106,15 @@ function refusal(payload: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
+/** Text stays the historical JSON. structuredContent is that same JSON, with no outputSchema. */
+function structuredText(payload: Record<string, unknown>) {
+  const text = JSON.stringify(payload, null, 2);
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: JSON.parse(text) as Record<string, unknown>,
+  };
+}
+
 const costApprovalFields = {
   approvedUsd: z.number().optional().describe(
     "Usd from the estimate being approved. If it does not match this call's estimate, the confirm is refused. Omit to keep the previous confirm behavior.",
@@ -1248,87 +1270,7 @@ export function carrySpend(source: SequenceJob): PersistedSpend | undefined {
   };
 }
 
-type SpendNoteInput = {
-  op: "budget";
-  thresholdUsd: number;
-} | {
-  op: "spend";
-  kind: SpendKind;
-  usd: number;
-  estimated?: boolean;
-  uncertain?: boolean;
-  reason?: string;
-};
-
-type SpendNote = SpendNoteInput & { id: string };
-
 export type NoteOutcome = { applied: true } | { applied: false; deferred: true; queued: true; reason: string };
-
-export type QueuedFilmSpend = {
-  pendingSpendUsd: number;
-  pendingThresholdUsd?: number;
-};
-
-function spendJournalDir(jobId: string): string {
-  return join(JOBS_DIR, ".spend-journal", jobId);
-}
-
-function isSpendNote(value: unknown): value is SpendNote {
-  if (!value || typeof value !== "object") return false;
-  const note = value as { id?: unknown; op?: unknown; usd?: unknown; thresholdUsd?: unknown };
-  if (typeof note.id !== "string" || note.id.length === 0) return false;
-  if (note.op === "budget") return typeof note.thresholdUsd === "number";
-  if (note.op === "spend") return typeof note.usd === "number";
-  return false;
-}
-
-async function listJournal(jobId: string): Promise<{ valid: { file: string; note: SpendNote }[]; torn: string[] }> {
-  const dir = spendJournalDir(jobId);
-  let names: string[] = [];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return { valid: [], torn: [] };
-  }
-  names.sort();
-  const valid: { file: string; note: SpendNote }[] = [];
-  const torn: string[] = [];
-  for (const name of names) {
-    const file = join(dir, name);
-    if (!name.endsWith(".json") || name.startsWith(".")) {
-      const pid = Number(name.match(/\.(\d+)\.tmp$/)?.[1]);
-      if (Number.isFinite(pid) && (pid === process.pid || pidAlive(pid))) continue;
-      torn.push(file);
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(await readFile(file, "utf8")) as unknown;
-      if (!isSpendNote(parsed)) torn.push(file);
-      else valid.push({ file, note: parsed });
-    } catch {
-      torn.push(file);
-    }
-  }
-  return { valid, torn };
-}
-
-/** Read queued notes without merging them and without deleting anything. */
-export async function readQueuedFilmSpend(jobId: string, appliedNoteIds?: string[]): Promise<QueuedFilmSpend> {
-  const { valid } = await listJournal(jobId);
-  const applied = new Set(appliedNoteIds ?? []);
-  let pendingSpendUsd = 0;
-  let pendingThresholdUsd: number | undefined;
-  for (const { note } of valid) {
-    if (applied.has(note.id)) continue;
-    if (note.op === "spend") pendingSpendUsd += note.usd;
-    else pendingThresholdUsd = note.thresholdUsd;
-  }
-  const rounded = Math.round(pendingSpendUsd * 100) / 100;
-  return {
-    pendingSpendUsd: rounded,
-    ...(pendingThresholdUsd !== undefined ? { pendingThresholdUsd } : {}),
-  };
-}
 
 function queuedFields(queued: QueuedFilmSpend | undefined): Record<string, unknown> {
   if (!queued) return {};
@@ -2885,6 +2827,7 @@ export async function persistJob(job: SequenceJob): Promise<void> {
       else await unlink(claimPath(job.id)).catch(() => undefined);
       if (beforeJournalDelete) await beforeJournalDelete();
       for (const file of consumed) await unlink(file).catch(() => undefined);
+      noteJobPersisted(snapshot, JOBS_DIR);
     } catch (err) {
       // A failed write must never lose the render or the queued notes. The notes
       // stay on disk until a later rename of this ledger succeeds.
@@ -3570,7 +3513,8 @@ async function runSequenceJob(
         job.state = "stopped";
         job.error = `Shot ${shotNumber} failed: ${result.error ?? "no video URL returned"}. The chain stopped so no later shot renders without continuity.`;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
 
@@ -3602,7 +3546,8 @@ async function runSequenceJob(
         job.state = "stopped";
         job.error = `Shot ${shotNumber} rendered but its last frame could not be extracted, so the chain has no anchor for the next shot.`;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
       const accepted = await acceptRenderedTake(frame.path, shot.admission, shot.negative);
@@ -3617,7 +3562,8 @@ async function runSequenceJob(
         job.state = "stopped";
         job.error = entry.error;
         job.finishedAt = Date.now();
-        void persistJob(job);
+        await persistJob(job);
+        await waitForJobEvents(job.id);
         return;
       }
       previousFrame = frame.path;
@@ -3661,12 +3607,14 @@ async function runSequenceJob(
       // so, or the seam reads as a bug the user has to hunt for.
       job.warnings = [...(job.warnings ?? []), ...degradations];
     }
-    void persistJob(job);
+    await persistJob(job);
+    await waitForJobEvents(job.id);
   } catch (err) {
     job.state = "failed";
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
-    void persistJob(job);
+    await persistJob(job);
+    await waitForJobEvents(job.id);
   }
 }
 
@@ -4949,20 +4897,15 @@ server.registerTool(
         };
       }));
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          count: shown.length,
-          films: shown,
-          storage: JOBS_DIR,
-          next: shown.length === 0
-            ? "No films yet. Configure one with configure_film, then render_sequence."
-            : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to " +
-              "retry_shot to replace one of its shots.",
-        }, null, 2),
-      }],
-    };
+    return structuredText({
+      count: shown.length,
+      films: shown,
+      storage: JOBS_DIR,
+      next: shown.length === 0
+        ? "No films yet. Configure one with configure_film, then render_sequence."
+        : "Pass a jobId to render_sequence as resumeFromJobId to extend that film, or to " +
+          "retry_shot to replace one of its shots.",
+    });
   }
 );
 
@@ -4986,22 +4929,14 @@ server.registerTool(
     await refreshJobsFromDisk();
     const job = sequenceJobs.get(args.jobId);
     if (!job) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: "Unknown jobId",
-            detail:
-              "No film has that id. Call list_films to see every film on disk with its job id.",
-            known: Array.from(sequenceJobs.keys()).slice(-5),
-          }, null, 2),
-        }],
-      };
+      return structuredText({
+        error: "Unknown jobId",
+        detail: "No film has that id. Call list_films to see every film on disk with its job id.",
+        known: Array.from(sequenceJobs.keys()).slice(-5),
+      });
     }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ...jobPayload(job), ...queuedFields(queued) }, null, 2) }],
-    };
+    return structuredText({ ...jobPayload(job), ...queuedFields(queued) });
   }
 );
 
@@ -5710,5 +5645,57 @@ server.registerTool(
     } finally {
       if (frameDir) await rm(frameDir, { recursive: true, force: true });
     }
+  },
+);
+
+server.registerTool(
+  "production_feed",
+  {
+    description:
+      "Read the production feed for films this plugin has recorded. Free, read-only, renders nothing, " +
+      "spends nothing, writes nothing, and is never required for production. Poll it from any host. " +
+      "Rendering, review, repair, and budget changes stay on the other tools.",
+    inputSchema: z.object({
+      cursor: z.string().optional().describe("Opaque cursor from the previous feed. A garbage cursor reads from the start."),
+      limit: z.number().int().min(1).max(50).optional().describe("How many events to return. Defaults to 20."),
+      jobId: z.string().optional().describe("One film. Any id that could leave the jobs directory is refused."),
+    }),
+    outputSchema: productionFeedResultSchema,
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  },
+  async (args) => {
+    const feed = await readProductionFeed({
+      jobsDir: JOBS_DIR,
+      cursor: args.cursor,
+      limit: args.limit,
+      jobId: args.jobId,
+    });
+    if ("refused" in feed) {
+      const refusal = {
+        version: 1 as const,
+        generatedAt: new Date().toISOString(),
+        cursor: "",
+        jobs: [],
+        events: [],
+        abstentions: [{ path: args.jobId ?? "", reason: feed.reason }],
+        truncated: false,
+      };
+      const text = JSON.stringify(refusal, null, 2);
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text }],
+        structuredContent: JSON.parse(text) as Record<string, unknown>,
+      };
+    }
+    const text = JSON.stringify(feed, null, 2);
+    return {
+      content: [{ type: "text" as const, text }],
+      structuredContent: JSON.parse(text) as Record<string, unknown>,
+    };
   },
 );

@@ -54,6 +54,7 @@ import {
   type VideoBackend,
 } from './src/lib/grokClipStore';
 import { generateGrokClip } from './mcp/grokVideo';
+import { feedJobsDir, readProductionFeed, studioFeedRequestAllowed } from './mcp/productionFeed';
 import { lintSentPrompt } from './mcp/promptLint';
 import { featheredSubjectCutout } from './mcp/cutout';
 import { resolveVideoCredential } from './mcp/grok-auth';
@@ -2765,6 +2766,56 @@ app.post('/api/save-sandbox-state', requireAuth, requireCsrf, (req, res) => {
   } catch (error: any) {
     console.error("[State DB] Failed to save state file:", error);
     return res.status(500).json({ error: "Failed to persist screenplay state on server." });
+  }
+});
+
+const productionFeedLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}:${req.path}`,
+});
+
+// Loopback-only read of the MCP job feed. No auth: a guest Studio can watch.
+// The bind stays 0.0.0.0; this guard is what keeps the feed off the network.
+app.use('/api/production/feed', productionFeedLimiter, (req, res, next) => {
+  if (process.env.THESHOW_STUDIO_FEED === '0') {
+    res.status(404).end();
+    return;
+  }
+  if (!studioFeedRequestAllowed(req.socket.remoteAddress, req.headers.host)) {
+    res.status(404).end();
+    return;
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.status(405).set('Allow', 'GET, HEAD').end();
+    return;
+  }
+  next();
+});
+
+app.get('/api/production/feed', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const rawLimit = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const limit = rawLimit === undefined ? undefined : Number(rawLimit);
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+  const jobId = typeof req.query.jobId === 'string' ? req.query.jobId : undefined;
+  try {
+    const feed = await readProductionFeed({
+      jobsDir: feedJobsDir(),
+      cursor,
+      limit: typeof limit === 'number' && Number.isFinite(limit) ? limit : undefined,
+      jobId,
+    });
+    if ('refused' in feed) {
+      res.status(400).json(feed);
+      return;
+    }
+    res.json(feed);
+  } catch (error) {
+    console.error('theShow: production feed read failed:', error instanceof Error ? error.name : 'unknown');
+    res.status(500).json({ error: 'Production feed unavailable' });
   }
 });
 

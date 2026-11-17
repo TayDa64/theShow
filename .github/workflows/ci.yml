@@ -103,6 +103,10 @@ jobs:
           test "${THESHOW_VIDEO_BACKEND}" = "sandbox"
           grep -q "const SANDBOX_BACKEND = 'sandbox'" playwright.config.ts
           grep -q 'THESHOW_VIDEO_BACKEND: SANDBOX_BACKEND' playwright.config.ts
+          grep -q 'HOME: STUDIO_HOME' playwright.config.ts
+          grep -q 'THESHOW_JOBS_DIR: STUDIO_JOBS' playwright.config.ts
+          grep -q 'THESHOW_OUTPUT_DIR:' playwright.config.ts
+          grep -q 'THESHOW_CHARACTERS_DIR:' playwright.config.ts
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
       - uses: actions/upload-artifact@v4
