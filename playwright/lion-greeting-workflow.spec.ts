@@ -14,13 +14,16 @@
 //   - It never calls live Veo.
 //   - It consumes ZERO daily video-generation quota.
 //
-// It drives the API directly (Playwright `request`) because the film pipeline is a
-// server-orchestrated flow; this is more reliable than UI seed/anchor timing and is
-// the same surface the UI ultimately calls.
+// It calls the film API from inside the page. The built server marks the session
+// cookie Secure, and a bare API request context does not send that cookie on
+// http://127.0.0.1. The assertions are the original sandbox checks.
 
-import { expect, test, type APIRequestContext } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './hermetic.ts';
+import { browserFetch } from './browser-api.ts';
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3100';
+// Requests run in the page so the built server's Secure session cookie is sent.
+// Assertions below are the original sandbox checks.
 
 // Two lions exchanging a greeting. Each beat maps to a 6s shot => 12s total.
 const LION_GREETING = [
@@ -40,9 +43,9 @@ const LION_GREETING = [
 
 const TOTAL_EXPECTED_SECONDS = LION_GREETING.reduce((sum, beat) => sum + beat.durationSeconds, 0);
 
-async function registerLocalAccount(request: APIRequestContext) {
+async function registerLocalAccount(page: Page) {
   const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const response = await request.post(`${BASE_URL}/api/auth/register`, {
+  const response = await browserFetch(page, '/api/auth/register', {
     data: {
       name: `Lion Workflow ${nonce.slice(-6)}`,
       email: `lion-workflow-${nonce}@example.com`,
@@ -56,13 +59,13 @@ async function registerLocalAccount(request: APIRequestContext) {
   return { csrfToken: body.csrfToken as string };
 }
 
-async function pollOperation(request: APIRequestContext, csrfToken: string, operationName: string) {
+async function pollOperation(page: Page, csrfToken: string, operationName: string) {
   // Mock operations complete in ~6s of simulated render time; poll generously.
   const maxAttempts = 40;
   const intervalMs = 1000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await request.post(`${BASE_URL}/api/video-status`, {
+    const response = await browserFetch(page, '/api/video-status', {
       headers: { 'x-csrf-token': csrfToken },
       data: { operationName },
     });
@@ -84,8 +87,9 @@ async function pollOperation(request: APIRequestContext, csrfToken: string, oper
 test.describe('Lion greeting two-clip workflow (sandbox)', () => {
   test.setTimeout(180_000);
 
-  test('renders two dialogue-driven clips (~12s total) and assembles a downloadable film', async ({ request }) => {
-    const { csrfToken } = await registerLocalAccount(request);
+  test('renders two dialogue-driven clips (~12s total) and assembles a downloadable film', async ({ page }) => {
+    await page.goto('/');
+    const { csrfToken } = await registerLocalAccount(page);
 
     const scene = {
       id: 'lion-greeting-scene',
@@ -134,7 +138,7 @@ test.describe('Lion greeting two-clip workflow (sandbox)', () => {
         transitionInMode: index === 0 ? 'none' : 'previous-shot',
       };
 
-      const renderResponse = await request.post(`${BASE_URL}/api/generate-shot-video`, {
+      const renderResponse = await browserFetch(page, '/api/generate-shot-video', {
         headers: { 'x-csrf-token': csrfToken },
         data: { characters, scene, shot, camera, resolvedSeed: 1234 + index },
       });
@@ -151,7 +155,7 @@ test.describe('Lion greeting two-clip workflow (sandbox)', () => {
       expect([4, 6, 8]).toContain(renderBody.durationSeconds);
       expect(renderBody.durationSeconds).toBe(beat.durationSeconds);
 
-      await pollOperation(request, csrfToken, renderBody.operationName);
+      await pollOperation(page, csrfToken, String(renderBody.operationName));
 
       clips.push({
         shotId: beat.shotId,
@@ -169,7 +173,7 @@ test.describe('Lion greeting two-clip workflow (sandbox)', () => {
     expect(totalSeconds).toBe(12);
 
     // Assemble the two clips into a single film.
-    const assembleResponse = await request.post(`${BASE_URL}/api/assemble-film`, {
+    const assembleResponse = await browserFetch(page, '/api/assemble-film', {
       headers: { 'x-csrf-token': csrfToken },
       data: { title: 'Two Lions Greet at Dawn', clips, aspectRatio: '16:9' },
     });
@@ -181,8 +185,10 @@ test.describe('Lion greeting two-clip workflow (sandbox)', () => {
     expect(assembleBody.downloadUrl, 'assembly should return a download URL').toMatch(/^\/api\/download-film\//);
 
     // Download the assembled film and verify it is a real MP4.
-    const downloadResponse = await request.get(`${BASE_URL}${assembleBody.downloadUrl}`, {
+    const downloadResponse = await browserFetch(page, String(assembleBody.downloadUrl), {
+      method: 'GET',
       headers: { 'x-csrf-token': csrfToken },
+      binary: true,
     });
 
     expect(downloadResponse.ok(), 'film download should succeed').toBeTruthy();

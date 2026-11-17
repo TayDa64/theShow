@@ -48167,7 +48167,7 @@ async function checkCrossFilm(input2) {
       "lineage",
       [entry2.id],
       `Job file is present but could not be parsed: ${entry2.reason}`,
-      []
+      entry2.path ? [entry2.path] : []
     ))
   ];
   if (input2.jobs.length < CROSS_FILM_MIN) {
@@ -53939,19 +53939,19 @@ async function filmsById(ids) {
         missing.push(id);
         continue;
       }
-      invalid.push({ id, reason: "unreadable" });
+      invalid.push({ id, reason: "unreadable", path: full });
       continue;
     }
     let value;
     try {
       value = JSON.parse(raw);
     } catch {
-      invalid.push({ id, reason: "invalid JSON" });
+      invalid.push({ id, reason: "invalid JSON", path: full });
       continue;
     }
     const job = parseCrossFilmJob(value, full);
     if (!job || !value || typeof value !== "object" || value.id !== id) {
-      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file" });
+      invalid.push({ id, reason: crossFilmParseError(value) || "job id does not match the file", path: full });
       continue;
     }
     jobs.push(job);

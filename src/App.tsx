@@ -481,12 +481,13 @@ export default function App() {
                 type="button"
                 onClick={() => openWorkspace('account')}
                 data-testid="account-workspace-trigger"
+                aria-label={accountAccessibleName(isAuthenticated, user?.name)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${activePopupView === 'account'
                   ? 'bg-indigo-600/15 border-indigo-500/30 text-indigo-300'
                   : 'bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:text-zinc-100'}`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{isAuthenticated ? (user?.name.split(' ')[0] || 'Account') : 'Account'}</span>
+                <span className="hidden sm:inline">{accountVisibleLabel(isAuthenticated, user?.name)}</span>
               </button>
             </div>
           </header>
@@ -588,6 +589,25 @@ export default function App() {
       </div>
     </AuthGate>
   );
+}
+
+function accountFirstName(name: string | undefined): string {
+  return name?.split(' ')[0]?.trim() ?? '';
+}
+
+/** Visible label. Signed out, and a signed-in user with no name, both say Account. */
+function accountVisibleLabel(isAuthenticated: boolean, name: string | undefined): string {
+  const firstName = accountFirstName(name);
+  return isAuthenticated && firstName ? firstName : 'Account';
+}
+
+/**
+ * Accessible name. Signed in, it is `${firstName} account`, which still contains
+ * the visible first name (WCAG 2.5.3). Signed out, it stays Account.
+ */
+function accountAccessibleName(isAuthenticated: boolean, name: string | undefined): string {
+  const firstName = accountFirstName(name);
+  return isAuthenticated && firstName ? `${firstName} account` : 'Account';
 }
 
 function NavItem({ 
