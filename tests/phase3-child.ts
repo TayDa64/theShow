@@ -4,11 +4,13 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { eventLogPath, setBeforeEventAppendProbe } from "../mcp/jobEvents.ts";
 import { JOBS_DIR } from "../mcp/media.ts";
 import { readProductionFeed } from "../mcp/productionFeed.ts";
 import { thisOwner } from "../mcp/runtime.ts";
-import { loadJobsFromDisk, persistJob, saveJobAnnotation, type SequenceJob } from "../mcp/server.ts";
+import { loadJobsFromDisk, persistJob, saveJobAnnotation, server, type SequenceJob } from "../mcp/server.ts";
 
 function hang(): Promise<void> {
   return new Promise(() => {
@@ -59,6 +61,26 @@ async function main(): Promise<void> {
   if (mode === "feed") {
     const feed = await readProductionFeed({ jobsDir: JOBS_DIR, jobId: id || undefined, limit: 50 });
     process.stdout.write(JSON.stringify(feed));
+    return;
+  }
+
+  if (mode === "render") {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: "phase3-child", version: "0.0.0" });
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: "render_sequence",
+      arguments: {
+        shots: [{ prompt: "A lantern on a table.", durationSeconds: 4, title: "Lantern" }],
+        confirm: true,
+        overrideValidation: true,
+        assemble: false,
+      },
+    });
+    const text = (result as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? "";
+    process.stdout.write(text);
+    await client.close();
     return;
   }
 

@@ -31,10 +31,10 @@ function childEnv(jobs: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function startChild(jobs: string, args: string[]): ChildProcess {
+function startChild(jobs: string, args: string[], extra: NodeJS.ProcessEnv = {}): ChildProcess {
   const child = spawn(process.execPath, ["--import", "tsx", CHILD, ...args], {
     cwd: ROOT,
-    env: childEnv(jobs),
+    env: { ...childEnv(jobs), ...extra },
   });
   children.push(child);
   return child;
@@ -247,6 +247,35 @@ describe("phase 3 recovery without a bot", () => {
     expect(stderr.match(/event log append failed/g)).toHaveLength(1);
     const disk = JSON.parse(await readFile(path.join(jobs, `${id}.json`), "utf8")) as { continuityReview?: { version: number } };
     expect(disk.continuityReview?.version).toBe(1);
+    const repair = startChild(jobs, ["repair", id, "stdio"]);
+    let repairErr = "";
+    repair.stderr?.setEncoding("utf8");
+    repair.stderr?.on("data", (chunk: string) => { repairErr += chunk; });
+    const repairCode = await new Promise<number | null>((resolve, reject) => {
+      repair.on("error", reject);
+      repair.on("close", (status) => resolve(status));
+    });
+    expect(repairCode, repairErr).toBe(0);
+    expect(repairErr.match(/event log append failed/g)).toHaveLength(1);
+    const render = startChild(jobs, ["render", id, "stdio"], {
+      VITEST: "true",
+      NODE_ENV: "test",
+      THESHOW_STUB_VIDEO: "completed",
+    });
+    let renderErr = "";
+    let renderOut = "";
+    render.stderr?.setEncoding("utf8");
+    render.stdout?.setEncoding("utf8");
+    render.stderr?.on("data", (chunk: string) => { renderErr += chunk; });
+    render.stdout?.on("data", (chunk: string) => { renderOut += chunk; });
+    const renderCode = await new Promise<number | null>((resolve, reject) => {
+      render.on("error", reject);
+      render.on("close", (status) => resolve(status));
+    });
+    expect(renderCode, `${renderErr}\n${renderOut}`).toBe(0);
+    expect(renderOut).toContain("jobId");
+    expect(renderOut).not.toContain("event log append failed");
+    expect(renderErr.match(/event log append failed/g)?.length ?? 0).toBeLessThanOrEqual(1);
     const feed = await readProductionFeed({ jobsDir: jobs, jobId: id, limit: 20 });
     if ("refused" in feed) throw new Error(feed.reason);
     expect(feed.events.some((event) => event.type === "review.recorded" && event.source === "reconciled")).toBe(true);
