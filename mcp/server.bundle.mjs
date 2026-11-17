@@ -47680,8 +47680,9 @@ import { createHash as createHash8, randomUUID as randomUUID3 } from "node:crypt
 
 // mcp/jobEvents.ts
 import { createHash as createHash6 } from "node:crypto";
+import { writeSync } from "node:fs";
 import { appendFile, mkdir as mkdir5, readFile as readFile6 } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
+import { dirname as dirname5, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
 var EVENT_LOG_VERSION = 1;
 var MAX_EVENT_LINE_BYTES = 16 * 1024;
 var MAX_EVENTS_PER_JOB = 2e3;
@@ -47913,6 +47914,7 @@ async function appendDerived(job, jobsDir) {
     return;
   }
   if (beforeAppend) await beforeAppend();
+  else await runEnvAppendProbe(logPath);
   await eventFs.mkdir(resolve3(jobsDir, ".events"));
   let raw = "";
   try {
@@ -48008,6 +48010,18 @@ async function waitForJobEvents(jobId, timeoutMs = 2e3) {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+async function runEnvAppendProbe(logPath) {
+  const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
+  if (mode !== "hold" && mode !== "gap") return;
+  if (mode === "hold") {
+    await mkdir5(dirname5(logPath), { recursive: true });
+    await appendFile(logPath, '{"partial"', "utf8");
+  }
+  writeSync(2, "event-append-hold\n");
+  await new Promise(() => {
+    setInterval(() => void 0, 1e3);
+  });
 }
 
 // mcp/productionFeed.ts

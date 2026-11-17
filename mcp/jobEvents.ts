@@ -9,8 +9,9 @@
  * scope as the link() fallbacks in mcp/runtime.ts.
  */
 import { createHash } from "node:crypto";
+import { writeSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { processToken, trackWrite, type JobOwner } from "./runtime";
 
 export const EVENT_LOG_VERSION = 1;
@@ -350,6 +351,7 @@ async function appendDerived(job: EventJob, jobsDir: string): Promise<void> {
     return;
   }
   if (beforeAppend) await beforeAppend();
+  else await runEnvAppendProbe(logPath);
   await eventFs.mkdir(resolve(jobsDir, ".events"));
   let raw = "";
   try {
@@ -457,6 +459,24 @@ export async function waitForJobEvents(jobId: string, timeoutMs = 2_000): Promis
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * Bundle kill tests set THESHOW_EVENT_APPEND_PROBE to "hold" or "gap".
+ * Production leaves that variable unset, so this never runs.
+ * "hold" writes a torn tail and pauses. "gap" pauses before any log byte is written.
+ */
+async function runEnvAppendProbe(logPath: string): Promise<void> {
+  const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
+  if (mode !== "hold" && mode !== "gap") return;
+  if (mode === "hold") {
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, "{\"partial\"", "utf8");
+  }
+  writeSync(2, "event-append-hold\n");
+  await new Promise<void>(() => {
+    setInterval(() => undefined, 1_000);
+  });
 }
 
 /** Test seam. Production leaves this unset. A probe may write a partial line and pause. */

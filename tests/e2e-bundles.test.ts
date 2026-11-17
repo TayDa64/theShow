@@ -774,6 +774,31 @@ describe("built bundle end to end", () => {
         }
       }
 
+      const textOf = (result: unknown) => toolText(result);
+      const expectStructuredIsText = (result: unknown) => {
+        const text = textOf(result);
+        const structured = (result as { structuredContent?: unknown }).structuredContent;
+        expect(structured).toEqual(JSON.parse(text));
+        expect(JSON.stringify(structured, null, 2)).toBe(text);
+        return text;
+      };
+      const homeSwap = (text: string, home: string) => text.split(home).join("<HOME>");
+      const stdioList = expectStructuredIsText(await stdio.call("list_films", { includeUnfinished: true, limit: 50 }));
+      const httpList = expectStructuredIsText(await http.call("list_films", { includeUnfinished: true, limit: 50 }));
+      expect(homeSwap(stdioList, stdioHome)).toBe(homeSwap(httpList, httpHome));
+      expect(expectStructuredIsText(await stdio.call("list_films", { includeUnfinished: true, limit: 50 }))).toBe(stdioList);
+      const stdioCheck = expectStructuredIsText(await stdio.call("check_sequence", { jobId: "seq_e2e_legacy" }));
+      const httpCheck = expectStructuredIsText(await http.call("check_sequence", { jobId: "seq_e2e_legacy" }));
+      expect(homeSwap(stdioCheck, stdioHome)).toBe(homeSwap(httpCheck, httpHome));
+      expect(expectStructuredIsText(await http.call("check_sequence", { jobId: "seq_e2e_legacy" }))).toBe(httpCheck);
+      for (const client of [stdio, http]) {
+        const missing = await client.call("check_sequence", { jobId: "seq_e2e_missing" });
+        const missingText = expectStructuredIsText(missing);
+        const missingBody = JSON.parse(missingText) as { error?: string };
+        expect(missingBody.error).toBe("Unknown jobId");
+        expect(expectStructuredIsText(await client.call("check_sequence", { jobId: "seq_e2e_missing" }))).toBe(missingText);
+      }
+
       const stdioResults: Record<string, unknown>[] = [];
       const httpResults: Record<string, unknown>[] = [];
       const clients: Array<[BundleClient, string, Record<string, unknown>[], string]> = [

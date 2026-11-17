@@ -55,6 +55,37 @@ describe("production feed", () => {
     expect((result as { isError?: boolean }).isError).toBeUndefined();
   });
 
+  it("keeps check_sequence and list_films text byte-identical to structuredContent", async () => {
+    const id = `seq_p3_struct_${Date.now().toString(36)}`;
+    await writeFile(path.join(JOBS_DIR, `${id}.json`), JSON.stringify({
+      id,
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_000_050,
+      state: "completed",
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 1,
+      spentUsd: 1,
+      filmPath: path.join(JOBS_DIR, "reel.mp4"),
+      shots: [{ index: 1, title: "Lantern", status: "completed", prompt: "A lantern.", costUsd: 1, durationSeconds: 4 }],
+    }));
+    const assertMatch = (result: unknown) => {
+      const text = toolText(result);
+      const structured = (result as { structuredContent?: unknown }).structuredContent;
+      expect(structured).toEqual(JSON.parse(text));
+      expect(JSON.stringify(structured, null, 2)).toBe(text);
+      return text;
+    };
+    await client.callTool({ name: "list_films", arguments: { includeUnfinished: true, limit: 50 } });
+    const listed = assertMatch(await client.callTool({ name: "list_films", arguments: { includeUnfinished: true, limit: 50 } }));
+    expect(assertMatch(await client.callTool({ name: "list_films", arguments: { includeUnfinished: true, limit: 50 } }))).toBe(listed);
+    const checked = assertMatch(await client.callTool({ name: "check_sequence", arguments: { jobId: id } }));
+    expect(assertMatch(await client.callTool({ name: "check_sequence", arguments: { jobId: id } }))).toBe(checked);
+    const missing = assertMatch(await client.callTool({ name: "check_sequence", arguments: { jobId: "seq_p3_struct_missing" } }));
+    expect(JSON.parse(missing).error).toBe("Unknown jobId");
+    expect(assertMatch(await client.callTool({ name: "check_sequence", arguments: { jobId: "seq_p3_struct_missing" } }))).toBe(missing);
+  });
+
   it("refuses a job id that could leave the jobs directory", async () => {
     for (const jobId of ["../x", "/etc/passwd", "a/b"]) {
       const result = await client.callTool({ name: "production_feed", arguments: { jobId } });
