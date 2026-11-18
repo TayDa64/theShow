@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Cloud, KeyRound, LogIn, LogOut, RefreshCw, ShieldCheck, Sparkles, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { displayName } from '../lib/displayName';
+import { displayName, HIDDEN_DISPLAY_NAME_ERROR, nameHasHiddenCharacters } from '../lib/displayName';
 
 type AuthFormMode = 'login' | 'register';
 
@@ -147,6 +147,10 @@ export function AccountDashboard() {
 
   const handleSaveDisplayName = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (nameHasHiddenCharacters(displayNameDraft)) {
+      setDisplayNameError(HIDDEN_DISPLAY_NAME_ERROR);
+      return;
+    }
     const collapsed = displayNameDraft.trim().replace(/\s+/g, ' ');
     if (!collapsed) {
       setDisplayNameError('Name is required.');

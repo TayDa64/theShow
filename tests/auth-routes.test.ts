@@ -185,6 +185,62 @@ describe('auth routes', () => {
     expect(JSON.stringify(updated.body.auditEvents)).not.toContain('@');
   });
 
+  it('rejects hidden and control characters in a display name', async () => {
+    const { agent, csrfToken } = await registerAccount('Ada Lovelace', `hidden-${Date.now()}@example.com`);
+    const rejected = ['\u0000', '\u001B', '\u009F', '\u202E', '\u2068', '\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF'];
+
+    for (const character of rejected) {
+      const response = await agent
+        .patch('/api/auth/profile')
+        .set('x-csrf-token', csrfToken)
+        .send({ name: `Ada${character}` });
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Name cannot include hidden or control characters.');
+    }
+
+    const session = await agent.get('/api/auth/session');
+    expect(session.body.user.name).toBe('Ada Lovelace');
+  });
+
+  it('keeps a display name edited locally when Google signs in again', async () => {
+    process.env.GOOGLE_OIDC_CLIENT_ID = 'google-client-id';
+    process.env.GOOGLE_OIDC_CLIENT_SECRET = 'google-client-secret';
+    process.env.GOOGLE_OIDC_REDIRECT_URI = 'http://localhost:3000/api/auth/google/callback';
+
+    const googleAuth = (globalThis as { __googleAuthState?: { verifyIdTokenImpl: { mockResolvedValue: (value: unknown) => void } } }).__googleAuthState;
+    const agent = request.agent(app);
+
+    const signIn = async (name: string) => {
+      googleAuth?.verifyIdTokenImpl.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'google-subject-edited',
+          email: 'google-given@example.com',
+          email_verified: true,
+          name,
+        }),
+      });
+      const start = await agent.get('/api/auth/google/start?mode=login');
+      expect(start.status).toBe(302);
+      const state = new URL(start.headers.location).searchParams.get('state');
+      const callback = await agent.get(`/api/auth/google/callback?state=${encodeURIComponent(state || '')}&code=mock-code`);
+      expect(callback.status).toBe(302);
+      return agent.get('/api/auth/session');
+    };
+
+    const first = await signIn('Google Given');
+    expect(first.body.user.name).toBe('Google Given');
+
+    const edited = await agent
+      .patch('/api/auth/profile')
+      .set('x-csrf-token', first.body.csrfToken)
+      .send({ name: 'Edited Locally' });
+    expect(edited.status).toBe(200);
+    expect(edited.body.user.name).toBe('Edited Locally');
+
+    const second = await signIn('Google Given');
+    expect(second.body.user.name).toBe('Edited Locally');
+  });
+
   it('creates a session from the Google OIDC callback flow', async () => {
     process.env.GOOGLE_OIDC_CLIENT_ID = 'google-client-id';
     process.env.GOOGLE_OIDC_CLIENT_SECRET = 'google-client-secret';

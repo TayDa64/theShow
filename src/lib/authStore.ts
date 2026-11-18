@@ -7,6 +7,7 @@ import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import { generateSecret, generateURI, verifySync } from 'otplib';
 import QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
+import { HIDDEN_DISPLAY_NAME_ERROR, nameHasHiddenCharacters } from './displayName';
 import { describeGrokVideoAccess, resolveVideoBackend } from './grokClipStore';
 import { engineName } from './providerCopy';
 import type {
@@ -33,6 +34,12 @@ type StoredUser = {
   id: string;
   email: string;
   name: string;
+  /**
+   * True after the person saves a display name. False when Google created the
+   * account and may still refresh the name. Absent on records written before
+   * the field existed: a non-empty name is left alone.
+   */
+  displayNameEdited?: boolean;
   passwordHash: string | null;
   passwordSalt: string | null;
   googleSub?: string | null;
@@ -829,10 +836,23 @@ function normalizeGoogleIdentityPayload(payload: Record<string, unknown>) {
   };
 }
 
+function applyGoogleDisplayName(user: StoredUser, profileName: string) {
+  if (user.displayNameEdited === true) {
+    return;
+  }
+  if (user.displayNameEdited === false) {
+    if (profileName) user.name = profileName;
+    return;
+  }
+  if (!user.name?.trim() && profileName) {
+    user.name = profileName;
+  }
+}
+
 function syncUserProfileFromGoogle(user: StoredUser, profile: ReturnType<typeof normalizeGoogleIdentityPayload>) {
   user.googleSub = profile.sub;
   user.email = profile.email;
-  user.name = profile.name || user.name;
+  applyGoogleDisplayName(user, profile.name);
   user.avatarUrl = profile.picture;
   user.updatedAt = getNowIso();
 }
@@ -843,6 +863,7 @@ function createGoogleUser(profile: ReturnType<typeof normalizeGoogleIdentityPayl
     id: uuidv4(),
     email: profile.email,
     name: profile.name,
+    displayNameEdited: false,
     passwordHash: null,
     passwordSalt: null,
     googleSub: profile.sub,
@@ -1100,6 +1121,10 @@ export function updateUserProfile(userId: string, input: { name?: unknown }) {
     throw new Error('Name is required.');
   }
 
+  if (nameHasHiddenCharacters(input.name)) {
+    throw new Error(HIDDEN_DISPLAY_NAME_ERROR);
+  }
+
   const collapsed = input.name.trim().replace(/\s+/g, ' ');
   if (!collapsed) {
     throw new Error('Name is required.');
@@ -1109,6 +1134,7 @@ export function updateUserProfile(userId: string, input: { name?: unknown }) {
   }
 
   user.name = trimName(input.name);
+  user.displayNameEdited = true;
   user.updatedAt = getNowIso();
   persistAuthStore();
   createAuditEvent(user.id, 'account.profile.updated', 'Updated the account display name.');
@@ -1138,6 +1164,7 @@ export function registerUser(input: { name: string; email: string; password: str
   const user: StoredUser = {
     id: uuidv4(),
     name,
+    displayNameEdited: true,
     email,
     passwordHash: hash,
     passwordSalt: salt,
