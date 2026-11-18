@@ -1,6 +1,6 @@
 # theShow as a Grok Plugin
 
-This turns theShow (StoryForge) into a Grok Build plugin and MCP server for controlled, continuity-first video generation. The [main README](README.md) has the proof film and the full story; this file is the component map.
+This turns theShow into a Grok Build plugin and MCP server for controlled, continuity-first video generation. The [main README](README.md) has the proof film and the short map; this file is the component map. Depth is in [docs/reference.md](docs/reference.md).
 
 ## Structure
 
@@ -127,7 +127,7 @@ A still is $0.02. The default is 720p, so a four-shot six-second film runs about
 
 ```bash
 npm run build:mcp    # mcp/server.ts → mcp/server.bundle.mjs
-npm test             # 174 tests across 15 files
+npm test             # Vitest. Sandbox only. Do not hard-code the test count here.
 ```
 
 The bundle is committed on purpose. After changing anything under `mcp/`, rebuild and commit it, or the plugin keeps running the old code.
@@ -140,4 +140,4 @@ Still open: a public write-up beyond these docs.
 
 MIT. See [LICENSE](LICENSE).
 
-See the [main README](README.md) for the proof film, the network and file access list, and running the full StoryForge Studio UI.
+See the [main README](README.md) for the proof film, and [docs/reference.md](docs/reference.md) for network and file access and for running theShow Studio.

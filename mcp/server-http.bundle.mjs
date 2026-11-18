@@ -45605,14 +45605,13 @@ function resolveVideoCredential() {
       };
     }
   }
-  const who = typeof entry2.email === "string" ? ` as ${entry2.email}` : "";
   return {
     ok: true,
     credential: {
       kind: "session",
       baseUrl: PROXY_BASE_URL,
       token: entry2.key,
-      source: `Grok CLI session${who}`,
+      source: "Grok CLI session",
       expiresAt
     }
   };

@@ -1,3 +1,5 @@
+> **Historical snapshot** at `b8bcc7315d8438b8c5ba55988cab262a5cdcb90e` (the base named below). The fifteen-tool count in this file, and the statement that Studio does not read `~/.theshow`, describe that tree. Later work added tools and a read-only production feed. This file is not the current map.
+
 # Phase 2 audit
 
 Base: `main` at `b8bcc7315d8438b8c5ba55988cab262a5cdcb90e`.

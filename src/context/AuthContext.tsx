@@ -20,6 +20,7 @@ type AuthContextValue = AuthStatus & {
   linkGeminiProvider: (input: { label?: string; apiKey: string; dailyVideoLimit?: number | null }) => Promise<AuthStatus>;
   disconnectGeminiProvider: () => Promise<AuthStatus>;
   revokeSession: (sessionId: string) => Promise<AuthStatus>;
+  updateDisplayName: (name: string) => Promise<AuthStatus>;
 };
 
 const GUEST_STATUS: AuthStatus = {
@@ -352,6 +353,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return nextState;
   }, [authFetch]);
 
+  const updateDisplayName = useCallback(async (name: string) => {
+    const response = await authFetch('/api/auth/profile', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name }),
+    });
+    const payload = await readApiPayload(response);
+
+    if (!response.ok) {
+      throw new Error((payload as { error?: string })?.error || 'Could not update the display name.');
+    }
+
+    const nextState = normalizeAuthStatus(payload as Partial<AuthStatus> | null | undefined);
+    setAuthState(nextState);
+    return nextState;
+  }, [authFetch]);
+
   const revokeSession = useCallback(async (sessionId: string) => {
     const response = await authFetch(`/api/auth/sessions/${encodeURIComponent(sessionId)}/revoke`, {
       method: 'POST',
@@ -387,6 +407,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     linkGeminiProvider,
     disconnectGeminiProvider,
     revokeSession,
+    updateDisplayName,
   }), [
     authState,
     isLoading,
@@ -407,6 +428,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     linkGeminiProvider,
     disconnectGeminiProvider,
     revokeSession,
+    updateDisplayName,
   ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

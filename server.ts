@@ -34,6 +34,7 @@ import {
   requireCsrf,
   revokeUserSession,
   saveProjectStateForUser,
+  updateUserProfile,
   userOwnsOperation,
   verifyTwoFactorChallenge,
   writeSessionToResponse,
@@ -254,6 +255,20 @@ app.get('/api/auth/google/callback', async (req, res) => {
     return res.redirect(`/?authResult=${mode === 'link' ? 'google-link-success' : 'google-login-success'}`);
   } catch (error: any) {
     return res.redirect(`/?authError=${encodeURIComponent(error?.message || 'google-auth-failed')}`);
+  }
+});
+
+app.patch('/api/auth/profile', requireAuth, requireCsrf, (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
+    updateUserProfile(userId, { name: req.body?.name });
+    return res.json(getAuthStatusForRequest(req));
+  } catch (error: any) {
+    return res.status(400).json({ error: error?.message || 'Could not update the profile.' });
   }
 });
 

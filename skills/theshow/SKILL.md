@@ -1,6 +1,6 @@
 ---
 name: theshow
-description: Controlled continuity-first video generation using theShow (StoryForge) pipeline. Plan characters and storyboards, generate sequential clips with reference images and first-frame continuity, then assemble with FFmpeg. Use when the user wants multi-shot films, consistent characters, or precise cinematic control beyond single-prompt video gen.
+description: Controlled continuity-first video generation on theShow. Plan characters and storyboards, generate sequential clips with reference images and first-frame continuity, then assemble with FFmpeg. Use when the user wants multi-shot films, consistent characters, or precise cinematic control beyond single-prompt video gen.
 when-to-use: controlled video, storyboard, continuity, multi-shot film, character consistency, theShow, StoryForge, Grok Imagine with refs
 ---
 

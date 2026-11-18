@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Cloud, KeyRound, LogIn, LogOut, RefreshCw, ShieldCheck, Sparkles, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { displayName, HIDDEN_DISPLAY_NAME_ERROR, nameHasHiddenCharacters } from '../lib/displayName';
 
 type AuthFormMode = 'login' | 'register';
 
@@ -52,6 +53,7 @@ export function AccountDashboard() {
     linkGeminiProvider,
     disconnectGeminiProvider,
     revokeSession,
+    updateDisplayName,
   } = useAuth();
 
   const [mode, setMode] = useState<AuthFormMode>('login');
@@ -69,6 +71,8 @@ export function AccountDashboard() {
   const [isLinkingProvider, setIsLinkingProvider] = useState(false);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
   const [isManagingTwoFactor, setIsManagingTwoFactor] = useState(false);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -90,6 +94,11 @@ export function AccountDashboard() {
       window.history.replaceState({}, document.title, `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`);
     }
   }, []);
+
+  useEffect(() => {
+    setDisplayNameDraft(user?.name ?? '');
+    setDisplayNameError(null);
+  }, [user?.name]);
 
   const capabilityItems = useMemo(() => ([
     {
@@ -131,6 +140,37 @@ export function AccountDashboard() {
       setPassword('');
     } catch (authError: any) {
       setError(authError?.message || 'Authentication failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveDisplayName = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (nameHasHiddenCharacters(displayNameDraft)) {
+      setDisplayNameError(HIDDEN_DISPLAY_NAME_ERROR);
+      return;
+    }
+    const collapsed = displayNameDraft.trim().replace(/\s+/g, ' ');
+    if (!collapsed) {
+      setDisplayNameError('Name is required.');
+      return;
+    }
+    if (collapsed.length > 120) {
+      setDisplayNameError('Name must be 120 characters or fewer.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setDisplayNameError(null);
+    setError(null);
+    setMessage(null);
+    try {
+      await updateDisplayName(displayNameDraft);
+      setMessage('Display name saved.');
+    } catch (profileError: unknown) {
+      const text = profileError instanceof Error ? profileError.message : 'Could not update the display name.';
+      setDisplayNameError(text);
     } finally {
       setIsSubmitting(false);
     }
@@ -397,7 +437,7 @@ export function AccountDashboard() {
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                        placeholder="operator@theshow.dev"
+                        placeholder="you@example.com"
                       />
                     </label>
 
@@ -440,12 +480,45 @@ export function AccountDashboard() {
           ) : (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/80 p-4 space-y-2">
+                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/80 p-4 space-y-3">
                   <div className="flex items-center gap-2 text-zinc-100 font-semibold">
                     <User className="w-4 h-4 text-indigo-400" />
-                    <span>{user?.name}</span>
+                    <span data-testid="account-display-name">{displayName(user)}</span>
                   </div>
-                  <p className="text-sm text-zinc-400">{user?.email}</p>
+                  <div>
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Sign-in email</p>
+                    <p className="text-sm text-zinc-400" data-testid="sign-in-email">{user?.email}</p>
+                  </div>
+                  <form onSubmit={handleSaveDisplayName} className="space-y-2">
+                    <label htmlFor="display-name" className="block space-y-1">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Display name</span>
+                      <input
+                        id="display-name"
+                        value={displayNameDraft}
+                        onChange={(event) => {
+                          setDisplayNameDraft(event.target.value);
+                          setDisplayNameError(null);
+                        }}
+                        aria-invalid={displayNameError ? true : undefined}
+                        aria-describedby={displayNameError ? 'display-name-error' : undefined}
+                        data-testid="display-name-input"
+                        className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                      />
+                    </label>
+                    {displayNameError && (
+                      <p id="display-name-error" role="alert" data-testid="display-name-error" className="text-xs text-red-300">
+                        {displayNameError}
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      data-testid="display-name-save"
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold px-3 py-2 rounded-xl"
+                    >
+                      {isSubmitting ? 'Saving…' : 'Save display name'}
+                    </button>
+                  </form>
                   <p className="text-[11px] font-mono text-zinc-500">Joined {formatDateTime(user?.createdAt)}</p>
                 </div>
 

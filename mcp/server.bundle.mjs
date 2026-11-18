@@ -43456,14 +43456,13 @@ function resolveVideoCredential() {
       };
     }
   }
-  const who = typeof entry.email === "string" ? ` as ${entry.email}` : "";
   return {
     ok: true,
     credential: {
       kind: "session",
       baseUrl: PROXY_BASE_URL,
       token: entry.key,
-      source: `Grok CLI session${who}`,
+      source: "Grok CLI session",
       expiresAt
     }
   };
