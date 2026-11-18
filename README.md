@@ -10,7 +10,7 @@ Watch the 45-second demo.
 
 https://github.com/user-attachments/assets/fa303f93-26e6-4ca6-abd1-ae7fc8ad24cc
 
-45-second landscape ad (720p, 1280×720). The current ad is used as-is, including the contract beat that still shows Veo and Gemini on screen.
+45-second demo of theShow.
 
 The proof film is a separate 24-second render. GitHub does not play a repo-relative video, so the frames below are the in-page view. Measurements, including the **$3.44** cost (4 × $0.86), are in [`docs/proof.md`](docs/proof.md).
 
