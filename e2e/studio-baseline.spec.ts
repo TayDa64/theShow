@@ -106,7 +106,7 @@ for (const viewport of viewports) {
       const watch = await openStudio(page);
       await openPopup(page, 'account-workspace-trigger', 'Account');
       await expect(page.getByTestId('account-workspace-trigger')).toHaveAttribute('aria-label', 'Account');
-      await expect(page.getByPlaceholder('operator@theshow.dev')).toBeVisible();
+      await expect(page.getByPlaceholder('you@example.com')).toBeVisible();
       await expectAxe(page);
       await expectClean(watch);
     });

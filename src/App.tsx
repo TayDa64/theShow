@@ -8,7 +8,8 @@ import {
   Film,
   X,
 } from 'lucide-react';
-import type { AppViewState, Character, Scene, CameraConfig, ExportSettings, WorkspaceSyncState } from './types';
+import type { AppViewState, Character, Scene, CameraConfig, ExportSettings, GenerationProviderMode, WorkspaceSyncState } from './types';
+import { displayFirstName, displayName, type DisplayNameUser } from './lib/displayName';
 import { CharactersList } from './components/CharactersList';
 import { CharacterEditor } from './components/CharacterEditor';
 import { ScenesView } from './components/ScenesView';
@@ -465,9 +466,9 @@ export default function App() {
               </div>
               <div>
                 <h1 className="font-semibold tracking-tight text-zinc-100 text-sm md:text-base">theShow</h1>
-                <p className="text-[10px] font-mono text-zinc-500 hidden md:block">
+                <p data-testid="header-status" className="text-[10px] font-mono text-zinc-500 hidden md:block">
                   {isAuthenticated
-                    ? `${provider.mode === 'personal' ? 'Personal provider' : provider.mode === 'workspace' ? 'Workspace provider' : 'Sandbox mode'} • ${user?.email}`
+                    ? `${providerModeLabel(provider.mode)} • ${displayName(user)}`
                     : 'Local draft mode • Sign in from Account for secure sync and AI routes'}
                 </p>
               </div>
@@ -481,13 +482,13 @@ export default function App() {
                 type="button"
                 onClick={() => openWorkspace('account')}
                 data-testid="account-workspace-trigger"
-                aria-label={accountAccessibleName(isAuthenticated, user?.name)}
+                aria-label={accountAccessibleName(isAuthenticated, user)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold transition-colors ${activePopupView === 'account'
                   ? 'bg-indigo-600/15 border-indigo-500/30 text-indigo-300'
                   : 'bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:text-zinc-100'}`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{accountVisibleLabel(isAuthenticated, user?.name)}</span>
+                <span>{accountVisibleLabel(isAuthenticated, user)}</span>
               </button>
             </div>
           </header>
@@ -596,23 +597,32 @@ export default function App() {
   );
 }
 
-function accountFirstName(name: string | undefined): string {
-  return name?.split(' ')[0]?.trim() ?? '';
+function providerModeLabel(mode: GenerationProviderMode): string {
+  switch (mode) {
+    case 'personal':
+      return 'Personal provider';
+    case 'workspace':
+      return 'Workspace provider';
+    case 'sandbox':
+      return 'Sandbox mode';
+    default: {
+      const unexpected: never = mode;
+      return unexpected;
+    }
+  }
 }
 
-/** Visible label. Signed out, and a signed-in user with no name, both say Account. */
-function accountVisibleLabel(isAuthenticated: boolean, name: string | undefined): string {
-  const firstName = accountFirstName(name);
-  return isAuthenticated && firstName ? firstName : 'Account';
+/** Visible label. Signed out says Account. Signed in shows the display name's first token. */
+function accountVisibleLabel(isAuthenticated: boolean, user: DisplayNameUser | null | undefined): string {
+  return isAuthenticated ? displayFirstName(user) : 'Account';
 }
 
 /**
- * Accessible name. Signed in, it is `${firstName} account`, which still contains
+ * Accessible name. Signed in, it is `${firstName} account`, which contains
  * the visible first name (WCAG 2.5.3). Signed out, it stays Account.
  */
-function accountAccessibleName(isAuthenticated: boolean, name: string | undefined): string {
-  const firstName = accountFirstName(name);
-  return isAuthenticated && firstName ? `${firstName} account` : 'Account';
+function accountAccessibleName(isAuthenticated: boolean, user: DisplayNameUser | null | undefined): string {
+  return isAuthenticated ? `${displayFirstName(user)} account` : 'Account';
 }
 
 function NavItem({ 

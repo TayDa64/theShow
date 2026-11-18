@@ -1,3 +1,5 @@
+> **Historical snapshot** at `3dc941e104dd9da3991082724d1fbd06a6662566` (the base named below). The "all 17 tools" count and the Studio description in this file describe that tree. The current plugin registers eighteen tools. This file is not the current map.
+
 # Pre-Phase 3 test audit
 
 Base: `3dc941e104dd9da3991082724d1fbd06a6662566`. Line numbers below are that commit unless a later sentence says the line moved. N35 edits `mcp/server.ts` and `mcp/crossFilm.ts` in place; it does not insert lines, so the tool registration lines are unchanged.

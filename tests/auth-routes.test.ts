@@ -124,6 +124,67 @@ describe('auth routes', () => {
     expect(secondRender.body.error).toMatch(/Daily video generation quota reached/i);
   });
 
+  it('stores no email local part when Google returns no name', async () => {
+    process.env.GOOGLE_OIDC_CLIENT_ID = 'google-client-id';
+    process.env.GOOGLE_OIDC_CLIENT_SECRET = 'google-client-secret';
+    process.env.GOOGLE_OIDC_REDIRECT_URI = 'http://localhost:3000/api/auth/google/callback';
+
+    const googleAuth = (globalThis as { __googleAuthState?: { verifyIdTokenImpl: { mockResolvedValue: (value: unknown) => void } } }).__googleAuthState;
+    googleAuth?.verifyIdTokenImpl.mockResolvedValue({
+      getPayload: () => ({
+        sub: 'google-subject-noname',
+        email: 'google-user@example.com',
+        email_verified: true,
+        picture: 'https://example.com/google-user.png',
+      }),
+    });
+
+    const agent = request.agent(app);
+    const start = await agent.get('/api/auth/google/start?mode=login');
+    expect(start.status).toBe(302);
+    const redirect = new URL(start.headers.location);
+    const state = redirect.searchParams.get('state');
+    const callback = await agent.get(`/api/auth/google/callback?state=${encodeURIComponent(state || '')}&code=mock-code`);
+    expect(callback.status).toBe(302);
+
+    const session = await agent.get('/api/auth/session');
+    expect(session.status).toBe(200);
+    expect(session.body.user.email).toBe('google-user@example.com');
+    expect(session.body.user.name).toBe('');
+    expect(session.body.user.name).not.toBe('google-user');
+  });
+
+  it('updates the display name through PATCH /api/auth/profile', async () => {
+    const { agent, csrfToken } = await registerAccount('Ada Lovelace', `profile-${Date.now()}@example.com`);
+
+    const missingAuth = await request(app).patch('/api/auth/profile').send({ name: 'Grace' });
+    expect(missingAuth.status).toBe(401);
+
+    const missingCsrf = await agent.patch('/api/auth/profile').send({ name: 'Grace' });
+    expect(missingCsrf.status).toBe(403);
+
+    const empty = await agent
+      .patch('/api/auth/profile')
+      .set('x-csrf-token', csrfToken)
+      .send({ name: '   ' });
+    expect(empty.status).toBe(400);
+
+    const tooLong = await agent
+      .patch('/api/auth/profile')
+      .set('x-csrf-token', csrfToken)
+      .send({ name: 'A'.repeat(121) });
+    expect(tooLong.status).toBe(400);
+
+    const updated = await agent
+      .patch('/api/auth/profile')
+      .set('x-csrf-token', csrfToken)
+      .send({ name: '  Grace Hopper  ' });
+    expect(updated.status).toBe(200);
+    expect(updated.body.user.name).toBe('Grace Hopper');
+    expect(updated.body.auditEvents.some((event: { type: string }) => event.type === 'account.profile.updated')).toBe(true);
+    expect(JSON.stringify(updated.body.auditEvents)).not.toContain('@');
+  });
+
   it('creates a session from the Google OIDC callback flow', async () => {
     process.env.GOOGLE_OIDC_CLIENT_ID = 'google-client-id';
     process.env.GOOGLE_OIDC_CLIENT_SECRET = 'google-client-secret';

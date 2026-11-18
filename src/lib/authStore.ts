@@ -813,7 +813,7 @@ export function buildAuthStatus(user: AuthUser | null, session: StoredSession | 
 function normalizeGoogleIdentityPayload(payload: Record<string, unknown>) {
   const email = typeof payload.email === 'string' ? normalizeEmail(payload.email) : '';
   const sub = typeof payload.sub === 'string' ? payload.sub : '';
-  const name = trimName(typeof payload.name === 'string' ? payload.name : (email.split('@')[0] || 'Google User'));
+  const name = typeof payload.name === 'string' ? trimName(payload.name) : '';
   const picture = typeof payload.picture === 'string' ? payload.picture : null;
   const emailVerified = payload.email_verified === true;
 
@@ -824,7 +824,7 @@ function normalizeGoogleIdentityPayload(payload: Record<string, unknown>) {
   return {
     sub,
     email,
-    name: name || email.split('@')[0] || 'Google User',
+    name,
     picture,
   };
 }
@@ -1088,6 +1088,30 @@ export function disableTwoFactor(userId: string, token: string) {
   persistAuthStore();
   createAuditEvent(user.id, 'account.2fa.disabled', 'Disabled TOTP-based two-factor authentication.');
 
+  return sanitizeUser(user);
+}
+
+export function updateUserProfile(userId: string, input: { name?: unknown }) {
+  const user = findUserById(userId);
+  if (!user) {
+    throw new Error('Account could not be found.');
+  }
+  if (typeof input.name !== 'string') {
+    throw new Error('Name is required.');
+  }
+
+  const collapsed = input.name.trim().replace(/\s+/g, ' ');
+  if (!collapsed) {
+    throw new Error('Name is required.');
+  }
+  if (collapsed.length > 120) {
+    throw new Error('Name must be 120 characters or fewer.');
+  }
+
+  user.name = trimName(input.name);
+  user.updatedAt = getNowIso();
+  persistAuthStore();
+  createAuditEvent(user.id, 'account.profile.updated', 'Updated the account display name.');
   return sanitizeUser(user);
 }
 

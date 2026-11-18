@@ -1,3 +1,5 @@
+> **Superseded.** This is a Veo-era draft (`feat/film-pipeline`, status Draft). It is not the current theShow pipeline. The MCP server and theShow Studio replaced this plan. Kept so older links still resolve. Do not implement from this file.
+
 # PR-001: World-Class Film Pipeline
 # 8-Second Clip Chain, FFmpeg Assembly & Veo API Maximization
 

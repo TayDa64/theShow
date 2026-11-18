@@ -10,6 +10,7 @@ import {
   ensureCredentialForJob,
   grokAuthFilePath,
   oauthTokenUrl,
+  resolveVideoCredential,
   sessionCoversRender,
 } from '../mcp/grok-auth.ts';
 
@@ -39,6 +40,26 @@ function writeSession(opts: { expiresAt: string; refresh?: string }) {
 }
 
 describe('session expiry before a render', () => {
+  it('does not put the operator email in the stdio auth source', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'theshow-auth-'));
+    tempDirs.push(dir);
+    const authFile = path.join(dir, 'auth.json');
+    fs.writeFileSync(authFile, JSON.stringify({
+      'https://auth.example.test/oauth2/default::test-client': {
+        key: 'test-access-token',
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        email: 'operator@example.com',
+      },
+    }));
+    process.env.GROK_AUTH_FILE = authFile;
+    delete process.env.XAI_API_KEY;
+    const result = resolveVideoCredential();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.credential.source).toBe('Grok CLI session');
+    expect(result.credential.source).not.toContain('@');
+  });
+
   it('does not read the home auth file when GROK_AUTH_FILE is unset under Vitest', () => {
     delete process.env.GROK_AUTH_FILE;
     expect(grokAuthFilePath()).toBe('/nonexistent/theshow-test-auth.json');

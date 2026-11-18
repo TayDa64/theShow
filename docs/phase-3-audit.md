@@ -1,3 +1,5 @@
+> **Historical snapshot** at `f2257136b9ac60ec05fe21894527f50defa5f69f` (the base named below). Statements in this file that no event log exists, or that Studio does not read `~/.theshow`, describe the tree before this phase landed. The current feed is read-only. This file is not the current map.
+
 # Phase 3 audit
 
 Base: `main` at `f2257136b9ac60ec05fe21894527f50defa5f69f`.

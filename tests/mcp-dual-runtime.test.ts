@@ -132,12 +132,13 @@ describe("HTTP credential boundary", () => {
     expect(result.reason).toContain("XAI_API_KEY");
   });
 
-  it("omits the auth label on HTTP and keeps it on stdio", async () => {
+  it("omits the auth label on HTTP and keeps a session label without an email on stdio", async () => {
     const hidden = await runRequest({ kind: "http", sseConnected: false }, server, async () => (
-      toolAuth("Grok CLI session as operator@example.com")
+      toolAuth("Grok CLI session")
     ));
     expect(hidden).toBeUndefined();
-    expect(toolAuth("Grok CLI session as operator@example.com")).toBe("Grok CLI session as operator@example.com");
+    expect(toolAuth("Grok CLI session")).toBe("Grok CLI session");
+    expect(toolAuth("Grok CLI session")).not.toContain("@");
   });
 
   it("rejects a bearer token whose length differs", () => {
@@ -198,6 +199,10 @@ describe("stdio bundle", () => {
     const stdio = readFileSync(path.join(ROOT, "mcp", "server.bundle.mjs"), "utf8");
     const http = readFileSync(path.join(ROOT, "mcp", "server-http.bundle.mjs"), "utf8");
     expect(stdio).not.toContain("StreamableHTTPServerTransport");
+    expect(stdio).not.toContain("node_modules/hono/");
+    expect(stdio).not.toContain("Grok CLI session as ");
     expect(http).toContain("StreamableHTTPServerTransport");
+    expect(http).toContain("node_modules/hono/");
+    expect(http).not.toContain("Grok CLI session as ");
   });
 });

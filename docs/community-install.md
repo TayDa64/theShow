@@ -56,7 +56,7 @@ One call takes 1 to 12 shots, each 1 to 15 seconds. Twelve shots of 15 seconds i
 
 A zero fade used to take the xfade path anyway. FFmpeg treats a zero-length transition as the second input starting where the first ends, and chained, that collapsed a three-shot film to the first clip: 2.04 seconds, and no error. Hard cuts now take a real concat path. `xfade` runs only when the fade is longer than zero.
 
-**Music and narration.** `assemble_film` and `render_sequence` both take `audioTrackUrl`: an https URL, a `file://` URL, or a local path, including a chat attachment. The track is mixed under the clips' own ambient audio. A short bed is looped, a long one is trimmed to the film's exact length, and it fades out at the end so nothing stops mid-note. `audioTrackVolume` defaults to 0.25, under dialogue, and `audioTrackFadeOutSeconds` defaults to 1.5. The mix uses `duration=first`, so the picture stays the authority and a long track cannot stretch the film. The card's `audioTrack` is this path.
+**Music and narration.** `assemble_film` and `render_sequence` both take `audioTrackUrl`: an https URL, a `file://` URL, or a local path, including a chat attachment. The track is mixed under the clips' own ambient audio. A short bed is refused (`mcp/media.ts` `assertBedCoversFilm`); it is not looped or padded. A long one is trimmed to the film's exact length, and it fades out at the end so nothing stops mid-note. `audioTrackVolume` defaults to 0.25, under dialogue, and `audioTrackFadeOutSeconds` defaults to 1.5. The mix uses `duration=first`, so the picture stays the authority and a long track cannot stretch the film. The card's `audioTrack` is this path.
 
 **One bad shot.** `retry_shot` re-renders a single shot of a finished film and splices it back in. Every other shot is reused at no cost, and the film is assembled again with the original resolution, joins, and audio. It is two-step, like `render_sequence`. Without `confirm` it returns the price of that one render and spends nothing. With `confirm: true` it returns a `jobId` to poll with `check_sequence`. It is honest about the seam it cannot repair: shots after the new one were chained from the original shot's last frame, so that next join is a cut, and the tool says so in `warnings`. Cost comes back three ways: `spentUsd` for this run, `filmTotalUsd` for the film as it stands, and `filmSpentIncludingReplacedUsd`, which still counts the shot you replaced. Without this, one bad shot means paying for the whole chain again. The job can be one from any earlier session; `list_films` finds it.
 
@@ -68,7 +68,7 @@ Omitting `resolution` on the API request lets the API pick a soft 848×480 frame
 
 `plan_storyboard`, an unconfirmed `render_sequence`, and an unconfirmed `retry_shot` spend nothing. Re-planning after the board was wrong is the expensive mistake. A single bad roll is `retry_shot`, priced as one shot.
 
-Each finished render reports `costUsd`, converted from `usage.cost_in_usd_ticks` at 10^10 ticks per dollar. Audit from that field. The StoryForge web app writes a JSON sidecar beside its own downloaded clips; a plugin run leaves the figure on the tool result.
+Each finished render reports `costUsd`, converted from `usage.cost_in_usd_ticks` at 10^10 ticks per dollar. Audit from that field. theShow Studio writes a JSON sidecar beside its own downloaded clips; a plugin run leaves the figure on the tool result.
 
 ## Authentication
 
@@ -85,7 +85,7 @@ Most people land on the second, which is the point. The auth file is re-read on 
 
 The plugin is the fast path. It lives inside Grok Build, where you are already talking.
 
-StoryForge Studio is the other. Clone the repository, run `npm install` and `npm run dev`, and open `http://localhost:3000`. The workspace loads in local draft mode with no account. Live video routes require a signed-in local account. The header line is the account's provider mode, or local draft mode when you are signed out. The export panel names the video backend. When a Grok credential resolved it reads "Grok Imagine Video active — billed to" the subscription or the API key. Otherwise it names the Gemini provider or sandbox preview. The Studio server prefers Grok when a credential resolves, and uses Gemini Veo, through `GEMINI_API_KEY` or a key on the account, when it does not.
+theShow Studio is the other. Clone the repository, run `npm ci`, copy `.env.example` to `.env` (the server reads `.env`, not `.env.local`), and start with `THESHOW_VIDEO_BACKEND=sandbox npm run dev`. Open `http://localhost:3000`. `PORT` defaults to 3000. The workspace loads in local draft mode with no account. Live video routes require a signed-in local account. The header line is the provider mode and the display name, or local draft mode when you are signed out. It does not show the email. `resolveVideoBackend` (`src/lib/grokClipStore.ts`) checks, in order, an explicit `THESHOW_VIDEO_BACKEND` pin (`grok`, `gemini`, or `sandbox`), then a test run (never grok), then a Grok credential, then Gemini only when a workspace or personal key exists, otherwise sandbox. An unpinned live render with no backend returns HTTP 503 `no-video-backend`. It does not fall back quietly. Set `THESHOW_VIDEO_BACKEND=sandbox` for mock previews.
 
 ## Known edges
 
