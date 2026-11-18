@@ -329,7 +329,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const payload = await readApiPayload(response);
 
     if (!response.ok) {
-      throw new Error((payload as any)?.error || 'Could not connect the Gemini provider.');
+      throw new Error((payload as any)?.error || 'Could not connect the provider.');
     }
 
     const nextState = normalizeAuthStatus(payload as Partial<AuthStatus> | null | undefined);
@@ -344,7 +344,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const payload = await readApiPayload(response);
 
     if (!response.ok) {
-      throw new Error((payload as any)?.error || 'Could not disconnect the Gemini provider.');
+      throw new Error((payload as any)?.error || 'Could not disconnect the provider.');
     }
 
     const nextState = normalizeAuthStatus(payload as Partial<AuthStatus> | null | undefined);

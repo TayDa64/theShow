@@ -82,6 +82,7 @@ describe('video backend selection', () => {
       expect(response.status).toBe(503);
       expect(response.body.code).toBe('no-video-backend');
       expect(response.body.action).toContain('grok login');
+      expect(`${response.body.error} ${response.body.action}`).not.toMatch(/\bVeo\b|Gemini/);
     } finally {
       delete process.env.GROK_AUTH_FILE;
     }
@@ -382,6 +383,9 @@ describe('studio Grok shot submission', () => {
       expect(response.body.contract.sentPrompt).toContain('The subject turns toward the camera.');
       expect(response.body.contract.quote.basis).toContain('6s at $0.14/s for 720p');
       expect(response.body.contract.pinned).toBe(false);
+      expect(response.body.contract.seedNote).not.toMatch(/\bVeo\b|Gemini/);
+      expect(response.body.contract.captionsNote).not.toMatch(/\bVeo\b|Gemini/);
+      expect(JSON.stringify(response.body.contract)).not.toMatch(/\bVeo\b|Gemini/);
       expect(calls).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;

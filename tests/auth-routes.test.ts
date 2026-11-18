@@ -70,6 +70,18 @@ describe('auth routes', () => {
     expect(betaLoad.body.characters[0].name).toBe('Beta Hero');
   });
 
+  it('rejects a missing personal key without naming an engine', async () => {
+    const { agent, csrfToken } = await registerAccount('Key Tester', `key-${Date.now()}@example.com`);
+    const response = await agent
+      .post('/api/auth/provider/gemini')
+      .set('x-csrf-token', csrfToken)
+      .send({ label: 'Personal key', apiKey: '   ' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('An API key is required.');
+    expect(response.body.error).not.toMatch(/\bVeo\b|Gemini/);
+  });
+
   it('links a personal Gemini provider and enforces the configured daily video limit', async () => {
     const { agent, csrfToken } = await registerAccount('Quota Tester', `quota-${Date.now()}@example.com`);
 

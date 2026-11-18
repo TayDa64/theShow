@@ -1,5 +1,5 @@
 {
-  "name": "StoryForge PWA",
+  "name": "theShow",
   "description": "Cross-platform character and scene builder for interactive storytelling with cloud continuity.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

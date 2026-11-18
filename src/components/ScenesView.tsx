@@ -3,6 +3,13 @@ import { Play, Plus, Trash2, Volume2, Sparkles, Edit, Check, X, Wand2, Clapperbo
 import type { ReferenceAsset, Scene, Character, DialogueLine, CameraConfig, StoryboardSeedStrategy, StoryboardShotType, StoryboardTransitionMode } from '../types';
 import { useAuth } from '../context/AuthContext';
 import {
+  normalizeVideoBackend,
+  providerCopy,
+  resultNamesGemini,
+  scenesCustomBridgeSummary,
+  scenesPreviousAnchorSummary,
+} from '../lib/providerCopy';
+import {
   applyStoryboardContinuityAutomation,
   createBlankStoryboardShot,
   getSceneBackgroundAssets,
@@ -111,15 +118,14 @@ function getTransitionSummary(
   shot: SceneStoryboardShot,
   index: number,
   storyboardFrameAssets: ReferenceAsset[],
+  backend: ReturnType<typeof normalizeVideoBackend>,
 ) {
   const previousShot = index > 0 ? scene.storyboardShots?.[index - 1] : undefined;
   const previousShotAnchor = previousShot ? storyboardFrameAssets.find(asset => asset.id === previousShot.boardImageId) : undefined;
   const customBridgeAsset = storyboardFrameAssets.find(asset => asset.id === shot.transitionInAssetId);
 
   if (shot.transitionInMode === 'custom-frame') {
-    return customBridgeAsset
-      ? `One of the 3 Veo reference slots will be reserved for the custom continuity frame “${customBridgeAsset.label}” before character/background references are added.`
-      : 'Choose or upload a custom continuity frame to reserve one Veo reference slot for the bridge-in image.';
+    return scenesCustomBridgeSummary(backend, customBridgeAsset?.label);
   }
 
   if (shot.transitionInMode === 'previous-shot') {
@@ -128,7 +134,7 @@ function getTransitionSummary(
     }
 
     return previousShotAnchor
-      ? `Shot ${index + 1} will reserve one Veo reference slot for Shot ${index}\'s anchor frame “${previousShotAnchor.label}”, then fill the remaining slots with lead character/background continuity.`
+      ? scenesPreviousAnchorSummary(backend, index + 1, index, previousShotAnchor.label)
       : `Shot ${index} does not have an anchor frame yet. Upload one on the previous card or switch this beat to a custom bridge frame.`;
   }
 
@@ -136,7 +142,8 @@ function getTransitionSummary(
 }
 
 export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesViewProps) {
-  const { authFetch, isAuthenticated } = useAuth();
+  const { authFetch, isAuthenticated, provider } = useAuth();
+  const copy = providerCopy(provider);
   const [selectedScene, setSelectedScene] = useState<Scene>(() => normalizeScene(scenes[0] || {
     id: '1',
     title: 'Act I: The Rendezvous',
@@ -149,6 +156,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
   const [selectedCharId, setSelectedCharId] = useState(characters[0]?.id || '');
   const [selectedSentiment, setSelectedSentiment] = useState<'neutral' | 'tense' | 'playful' | 'mysterious' | 'determined'>('neutral');
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
   const [isUploadingBackground, setIsUploadingBackground] = useState(false);
   const [isUploadingStoryboardFrame, setIsUploadingStoryboardFrame] = useState(false);
   const [isGeneratingStoryboard, setIsGeneratingStoryboard] = useState(false);
@@ -265,8 +273,10 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
       const data = await response.json();
       if (data && data.text) {
         setActiveDialogueInput(data.text);
+        setSuggestNote(resultNamesGemini(provider.mode, data) ? 'Suggested with Gemini.' : null);
       }
     } catch (error) {
+      setSuggestNote(null);
       console.warn('AI suggest failed, invoking robust local fallback templates:', error);
       const fallbacks: Record<string, string[]> = {
         tense: [
@@ -880,7 +890,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
               <span>Scene Storyboard</span>
             </h3>
             <p className="text-[11px] text-zinc-500 font-mono mt-1">
-              Break long dialogue into cinematic panels so each shot can render as its own Veo clip instead of being compressed into one video.
+              {copy.sceneStoryboardIntro}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1274,7 +1284,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
                           </div>
 
                           <div className="rounded-xl border border-zinc-900 bg-zinc-950/60 px-3 py-2.5 text-[10px] font-mono text-zinc-500 leading-relaxed">
-                            {getTransitionSummary(selectedScene, shot, index, storyboardFrameAssets)}
+                            {getTransitionSummary(selectedScene, shot, index, storyboardFrameAssets, copy.backend)}
                           </div>
                         </div>
                       </div>
@@ -1545,7 +1555,7 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
             onClick={handleAISuggest}
             disabled={isSuggesting}
             className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/25 text-xs font-semibold px-3 py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors sm:justify-start"
-            title="Auto-suggest dialogue using Gemini AI"
+            title={copy.aiSuggestTitle}
           >
             <Sparkles className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">{isSuggesting ? 'Drafting...' : 'AI Suggest'}</span>
@@ -1559,6 +1569,9 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
             <span>Cast</span>
           </button>
         </div>
+        {suggestNote && (
+          <p className="text-[10px] text-zinc-400">{suggestNote}</p>
+        )}
       </form>
     </div>
   );

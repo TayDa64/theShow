@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Sparkles, Image as ImageIcon, Check, RefreshCw, Upload } from 'lucide-react';
 import type { Character } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { providerCopy } from '../lib/providerCopy';
 import {
   createReferenceAsset,
   getCharacterDisplayImage,
@@ -81,7 +82,8 @@ export function CharacterEditor({
   presentation = 'fullscreen',
   closeOnSave = false,
 }: CharacterEditorProps) {
-  const { authFetch, isAuthenticated } = useAuth();
+  const { authFetch, isAuthenticated, provider } = useAuth();
+  const copy = providerCopy(provider);
   const [editedChar, setEditedChar] = useState<Character>(character);
   const [activeTab, setActiveTab] = useState<'appearance' | 'identity'>('appearance');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -568,7 +570,7 @@ export function CharacterEditor({
               {/* Style Selector */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-zinc-400 flex items-center justify-between">
-                  <span>Google Veo Character Style</span>
+                  <span>{copy.characterStyleLabel}</span>
                   <span className="text-[10px] text-zinc-500 font-mono">Anchor prompt match</span>
                 </label>
                 <div className="relative">
