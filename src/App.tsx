@@ -456,15 +456,15 @@ export default function App() {
 
   return (
     <AuthGate>
-      <div className="min-h-screen bg-zinc-950 text-zinc-50 flex justify-center font-sans select-none">
-        <div className="w-full max-w-[1680px] bg-zinc-950 min-h-screen flex flex-col relative overflow-hidden border-x md:border-x lg:border border-zinc-900 shadow-2xl">
+      <div className="h-dvh overflow-hidden bg-zinc-950 text-zinc-50 flex justify-center font-sans select-none">
+        <div className="flex h-dvh w-full max-w-[1680px] flex-col relative overflow-hidden border-x md:border-x lg:border border-zinc-900 bg-zinc-950 shadow-2xl">
           <header className="flex items-center justify-between px-4 py-3 md:px-6 lg:px-8 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-20">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded bg-indigo-500/20 flex items-center justify-center border border-indigo-500/50">
-                <span className="text-indigo-400 font-bold text-xs uppercase">SF</span>
+                <span data-testid="brand-mark" className="text-indigo-400 font-bold text-xs">tS</span>
               </div>
               <div>
-                <h1 className="font-semibold tracking-tight text-zinc-100 text-sm md:text-base">StoryForge Studio</h1>
+                <h1 className="font-semibold tracking-tight text-zinc-100 text-sm md:text-base">theShow</h1>
                 <p className="text-[10px] font-mono text-zinc-500 hidden md:block">
                   {isAuthenticated
                     ? `${provider.mode === 'personal' ? 'Personal provider' : provider.mode === 'workspace' ? 'Workspace provider' : 'Sandbox mode'} • ${user?.email}`
@@ -492,11 +492,12 @@ export default function App() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto px-3 py-3 pb-20 md:px-4 md:py-4 md:pb-24 lg:px-6 lg:py-5 relative">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-24 md:pb-28 lg:pb-0">
+          <main className="relative flex-1 px-3 py-3 md:px-4 md:py-4 lg:px-6 lg:py-5">
             {!isAuthenticated && activePopupView !== 'account' && (
               <div className="mb-4 rounded-2xl border border-amber-500/10 bg-amber-500/5 px-4 py-2.5 text-[12px] text-zinc-300 leading-relaxed">
                 <span className="font-semibold text-amber-300">Local mode active.</span>{' '}
-                Sign in from the <button type="button" onClick={() => openWorkspace('account')} className="underline underline-offset-2 text-indigo-300">Account</button> panel to enable secure cloud sync, authenticated AI routes, and isolated Gemini provider access.
+                Sign in from the <button type="button" onClick={() => openWorkspace('account')} className="underline underline-offset-2 text-indigo-300">Account</button> panel to enable secure cloud sync, authenticated AI routes, and an isolated provider connection.
               </div>
             )}
 
@@ -568,6 +569,10 @@ export default function App() {
               </div>
             )}
           </main>
+          <footer className="shrink-0 bg-zinc-950 px-4 py-3 text-center text-[11px] leading-snug text-zinc-400">
+            brought 2 you by TayDa64 from Liku Labs
+          </footer>
+          </div>
 
           <nav className="absolute text-xs bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-900 px-4 py-3 pb-5 md:px-6 lg:hidden flex items-center justify-between md:justify-center md:gap-10 z-20">
             {MOBILE_WORKSPACE_ORDER.map((view) => {

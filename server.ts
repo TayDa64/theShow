@@ -40,6 +40,7 @@ import {
   type AuthenticatedRequest,
 } from './src/lib/authStore';
 import { generateCinematicPrompt } from './src/lib/geminiDirector';
+import { contractQuoteBasis, contractSeedNote } from './src/lib/providerCopy';
 import {
   createGrokOperationName,
   describeGrokVideoAccess,
@@ -273,7 +274,7 @@ app.post('/api/auth/provider/gemini', requireAuth, requireCsrf, (req, res) => {
     linkPersonalGeminiProvider(userId, req.body || {});
     return res.json(getAuthStatusForRequest(req));
   } catch (error: any) {
-    return res.status(400).json({ error: error?.message || 'Could not connect Gemini API access.' });
+    return res.status(400).json({ error: error?.message || 'Could not connect API access.' });
   }
 });
 
@@ -343,7 +344,7 @@ app.delete('/api/auth/provider/gemini', requireAuth, requireCsrf, (req, res) => 
     disconnectPersonalGeminiProvider(userId);
     return res.json(getAuthStatusForRequest(req));
   } catch (error: any) {
-    return res.status(400).json({ error: error?.message || 'Could not disconnect Gemini API access.' });
+    return res.status(400).json({ error: error?.message || 'Could not disconnect API access.' });
   }
 });
 
@@ -1599,7 +1600,7 @@ function buildStudioGrokContract(input: {
       voiceId: voiceId ?? null,
       negativeStored: GROK_SHOT_STORED_NEGATIVE,
       quote,
-      seedNote: 'Grok does not receive the seed. The seed on this card is kept for a Veo render.',
+      seedNote: contractSeedNote('grok'),
       captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
     },
   };
@@ -1638,7 +1639,7 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
         code: 'no-video-backend',
         action:
           'Sign in with `grok login --device-code` on the server so the Grok subscription backs rendering, ' +
-          'or connect a Gemini API key in Account. Set THESHOW_VIDEO_BACKEND=sandbox to use mock previews.',
+          'or connect an API key in Account. Set THESHOW_VIDEO_BACKEND=sandbox to use mock previews.',
       });
     }
 
@@ -1774,9 +1775,9 @@ app.post('/api/generate-shot-video', generationRateLimiter, requireAuth, require
           referenceImageUrls: referenceUrls,
           voiceId: null,
           quote: backend === 'sandbox'
-            ? { totalUsd: 0, basis: 'Sandbox preview. Nothing is billed.' }
-            : { totalUsd: null, basis: 'This path uses Veo. The Grok per-second table does not price it.' },
-          seedNote: 'Veo receives the seed on this card.',
+            ? { totalUsd: 0, basis: contractQuoteBasis('sandbox') }
+            : { totalUsd: null, basis: contractQuoteBasis('gemini') },
+          seedNote: contractSeedNote(backend),
           captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
         },
       });
@@ -2469,7 +2470,7 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
           pinned: false,
           referenceImageUrls: [],
           voiceId: null,
-          quote: { totalUsd: 0, basis: 'Sandbox preview. Nothing is billed.' },
+          quote: { totalUsd: 0, basis: contractQuoteBasis('sandbox') },
           captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
         },
       });
@@ -2523,8 +2524,8 @@ app.post('/api/generate-video', generationRateLimiter, requireAuth, requireCsrf,
           startFrame: null,
           pinned: false,
           voiceId: null,
-          quote: { totalUsd: null, basis: 'This path uses Veo. The Grok per-second table does not price it.' },
-          seedNote: 'Veo receives the seed on this card.',
+          quote: { totalUsd: null, basis: contractQuoteBasis('gemini') },
+          seedNote: contractSeedNote('gemini'),
           captionsNote: 'Player captions are drawn in the app. They are not burned into the video.',
         },
       });

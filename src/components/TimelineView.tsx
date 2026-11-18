@@ -114,7 +114,7 @@ export function TimelineView({
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'storyforge-timeline-manifest.json';
+    anchor.download = 'theshow-timeline-manifest.json';
     anchor.click();
     URL.revokeObjectURL(url);
   };

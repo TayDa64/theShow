@@ -6,6 +6,20 @@ import { buildProjectTimelineManifest, createRenderSeed, getSceneDisplayBackgrou
 import type { FilmAssemblyJob } from '../types/pipeline';
 import { ProductionFeed } from './ProductionFeed';
 import { pollUntilComplete } from '../lib/veoChain';
+import {
+  engineName,
+  exportCustomBridgeSummary,
+  exportPreviousAnchorSummary,
+  normalizeVideoBackend,
+  providerCopy,
+  quotaCapacityBadge,
+  quotaExhaustedShotNote,
+  quotaExplainer,
+  referenceModeBadge,
+  renderAccessMessage,
+  renderStatusLabel,
+  renderStatusTone,
+} from '../lib/providerCopy';
 
 interface SubtitleCue {
   startRatio: number;
@@ -146,11 +160,7 @@ type VideoBackend = 'grok' | 'gemini' | 'sandbox';
 
 function formatBackendLabel(job: Pick<StoryboardJob, 'videoBackend' | 'billedTo' | 'costUsd'>) {
   if (!job.videoBackend) return null;
-  const engine = job.videoBackend === 'grok'
-    ? 'Grok Imagine Video'
-    : job.videoBackend === 'gemini'
-      ? 'Gemini Veo'
-      : 'Sandbox preview';
+  const engine = engineName(job.videoBackend);
   const payer = job.billedTo ? ` — billed to ${job.billedTo}` : '';
   const cost = typeof job.costUsd === 'number' ? ` ($${job.costUsd.toFixed(2)})` : '';
   return `${engine}${payer}${cost}`;
@@ -198,7 +208,12 @@ function getShotAnchorFrame(scene: Scene, shot: StoryboardSceneShot | undefined)
   return getSceneStoryboardFrameAsset(scene, shot.boardImageId);
 }
 
-function resolveContinuityBridge(scene: Scene, shot: StoryboardSceneShot | undefined, shotIndex: number) {
+function resolveContinuityBridge(
+  scene: Scene,
+  shot: StoryboardSceneShot | undefined,
+  shotIndex: number,
+  backend: ReturnType<typeof normalizeVideoBackend>,
+) {
   if (!shot) {
     return {
       asset: undefined,
@@ -213,7 +228,7 @@ function resolveContinuityBridge(scene: Scene, shot: StoryboardSceneShot | undef
       asset,
       sourceLabel: asset ? `Custom: ${asset.label}` : 'Custom bridge pending',
       summary: asset
-        ? `One Veo reference slot will be reserved for the custom bridge frame “${asset.label}” before character/background refs.`
+        ? exportCustomBridgeSummary(backend, asset.label)
         : 'Custom bridge mode is enabled, but no continuity frame has been selected yet.',
     };
   }
@@ -228,7 +243,7 @@ function resolveContinuityBridge(scene: Scene, shot: StoryboardSceneShot | undef
         : 'Opening shot',
       summary: previousShot
         ? (asset
-            ? `One Veo reference slot will be reserved for Shot ${shotIndex}'s anchor frame “${asset.label}”.`
+            ? exportPreviousAnchorSummary(backend, shotIndex, asset.label)
             : `This shot is configured to use Shot ${shotIndex}'s anchor frame, but that prior shot does not have one yet.`)
         : 'Opening shots do not have a previous-shot bridge, so all reference slots remain available to the current beat.',
     };
@@ -420,6 +435,8 @@ function ContractCard({ contract, title }: { contract: RenderContract; title: st
 
 export function ExportView({ settings, onUpdateSettings, onUpdateScenes, characters, scenes, camera }: ExportViewProps) {
   const { authFetch, isAuthenticated, provider } = useAuth();
+  const copy = providerCopy(provider);
+  const videoBackend = copy.backend;
   const [copied, setCopied] = useState(false);
   const [renderMode, setRenderMode] = useState<RenderMode>('quick-preview');
   const storyboardJobsRef = useRef<StoryboardJob[]>([]);
@@ -479,15 +496,25 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     () => buildStoryboardAwareSubtitleCues(selectedScene, characters),
     [selectedScene, characters],
   );
-  const renderAccessMessage = !isAuthenticated
-    ? 'Sign in from the Account dashboard to unlock secure video rendering, storyboard queues, and cloud-backed export actions.'
-    : provider.videoBackend === 'grok'
-      ? `Rendering with Grok Imagine Video, billed to your ${provider.videoBilling || 'Grok subscription'} instead of Gemini quota. Shots render live and download into this project.`
-      : provider.mode === 'personal'
-      ? `${provider.remainingToday ?? 0} of ${provider.dailyVideoLimit ?? 0} personal live video generations remain today. Sandbox fallback is still available for safe mock workflows.`
-      : provider.mode === 'workspace'
-        ? 'Authenticated and using the workspace Gemini API provider for live generation. Connect a personal key in Account if you want isolated quota ownership.'
-        : 'Authenticated in sandbox-only mode. StoryForge can still run local mock/video fallback flows until you connect a live Gemini API key.';
+  const accessMessage = renderAccessMessage({
+    isAuthenticated,
+    videoBackend: provider.videoBackend,
+    mode: provider.mode,
+    videoBilling: provider.videoBilling,
+    remainingToday: provider.remainingToday,
+    dailyVideoLimit: provider.dailyVideoLimit,
+  });
+  const statusLabel = renderStatusLabel({
+    isAuthenticated,
+    videoBackend: provider.videoBackend,
+    mode: provider.mode,
+    videoBilling: provider.videoBilling,
+  });
+  const statusTone = renderStatusTone({
+    isAuthenticated,
+    videoBackend: provider.videoBackend,
+    mode: provider.mode,
+  });
 
   const upsertScene = (updatedScene: Scene) => {
     const nextScenes = scenes.some(scene => scene.id === updatedScene.id)
@@ -778,7 +805,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       });
 
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to hand off prompt parameters to the Veo video engine.'));
+        throw new Error(await readErrorMessage(response, copy.handoffError));
       }
 
       const data = await response.json();
@@ -1255,7 +1282,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `storyforge-${settings.targetEngine}-profile.json`;
+    link.download = `theshow-${settings.targetEngine}-profile.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -1288,7 +1315,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
       },
       playlist: storyboardJobs.map((job, index) => {
         const shot = storyboardShots.find(item => item.id === job.shotId);
-        const continuityBridge = shot ? resolveContinuityBridge(selectedScene, shot, index) : null;
+        const continuityBridge = shot ? resolveContinuityBridge(selectedScene, shot, index, videoBackend) : null;
         return {
           order: index + 1,
           shotId: job.shotId,
@@ -1420,38 +1447,28 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         </p>
       </div>
 
-      <div className={`rounded-2xl border p-4 text-xs leading-relaxed ${!isAuthenticated
-        ? 'bg-amber-500/5 border-amber-500/10 text-zinc-300'
-        : provider.videoBackend === 'grok'
-          ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
-          : provider.mode === 'personal'
-          ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
-          : provider.mode === 'workspace'
-            ? 'bg-indigo-500/5 border-indigo-500/10 text-zinc-300'
-            : 'bg-zinc-900/70 border-zinc-800 text-zinc-300'}`}
+      <div className={`rounded-2xl border p-4 text-xs leading-relaxed ${
+        statusTone === 'amber'
+          ? 'bg-amber-500/5 border-amber-500/10 text-zinc-300'
+          : statusTone === 'emerald'
+            ? 'bg-emerald-500/5 border-emerald-500/10 text-zinc-300'
+            : statusTone === 'indigo'
+              ? 'bg-indigo-500/5 border-indigo-500/10 text-zinc-300'
+              : 'bg-zinc-900/70 border-zinc-800 text-zinc-300'}`}
       >
         <div className="flex items-center gap-2 font-semibold mb-1">
-          <span className={`w-2 h-2 rounded-full ${!isAuthenticated
-            ? 'bg-amber-400'
-            : provider.videoBackend === 'grok'
-              ? 'bg-emerald-400'
-              : provider.mode === 'personal'
-              ? 'bg-emerald-400'
-              : provider.mode === 'workspace'
-                ? 'bg-indigo-400'
-                : 'bg-zinc-400'}`}
+          <span className={`w-2 h-2 rounded-full ${
+            statusTone === 'amber'
+              ? 'bg-amber-400'
+              : statusTone === 'emerald'
+                ? 'bg-emerald-400'
+                : statusTone === 'indigo'
+                  ? 'bg-indigo-400'
+                  : 'bg-zinc-400'}`}
           />
-          <span>{!isAuthenticated
-            ? 'Account sign-in required'
-            : provider.videoBackend === 'grok'
-              ? `Grok Imagine Video active — billed to ${provider.videoBilling || 'Grok subscription'}`
-              : provider.mode === 'personal'
-                ? 'Personal Gemini provider active'
-                : provider.mode === 'workspace'
-                  ? 'Workspace Gemini provider active'
-                  : 'Sandbox-only render mode'}</span>
+          <span>{statusLabel}</span>
         </div>
-        <p>{renderAccessMessage}</p>
+        <p>{accessMessage}</p>
       </div>
 
       <div className="bg-gradient-to-b from-zinc-950 to-zinc-900 border border-zinc-900 rounded-2xl p-5 space-y-4 shadow-xl">
@@ -1464,17 +1481,13 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   : (storyboardRunStatus === 'rendering' ? 'bg-indigo-400 animate-pulse' : 'bg-indigo-500')
               }`} />
               <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-1.5 font-sans">
-                {renderMode === 'quick-preview'
-                  ? (provider.videoBackend === 'grok' ? 'Grok quick preview' : provider.videoBackend === 'sandbox' ? 'Sandbox quick preview' : 'Veo quick preview')
-                  : (provider.videoBackend === 'grok' ? 'Grok storyboard renderer' : provider.videoBackend === 'sandbox' ? 'Sandbox storyboard renderer' : 'Veo storyboard renderer')}
+                {renderMode === 'quick-preview' ? copy.quickPreviewTitle : copy.storyboardTitle}
               </h3>
             </div>
             <p className="text-[11px] text-zinc-400 font-mono">
               {renderMode === 'quick-preview'
                 ? 'Fast one-clip concept preview that preserves the current pipeline.'
-                : provider.videoBackend === 'grok'
-                  ? 'Each storyboard shot is its own Grok clip. Review the exact prompt and the quote, then confirm. A pinned start frame stays in the image.'
-                  : 'Continuity-first Veo 3.1 workflow: each storyboard shot becomes its own clip, with up to 3 total reference images and 8-second reference mode constraints.'}
+                : copy.storyboardBlurb}
             </p>
           </div>
 
@@ -1536,7 +1549,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <div className="flex justify-between items-center text-[10.5px] font-mono">
                   <span className="text-zinc-400 flex items-center gap-1.5">
                     <RefreshCw className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
-                    <span>{renderMessage || 'Veo Sequence compiling...'}</span>
+                    <span>{renderMessage || copy.compilingLabel}</span>
                   </span>
                   <span className="text-indigo-400 font-bold">{renderProgress}%</span>
                 </div>
@@ -1601,7 +1614,11 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                       <span>Why is Sandbox mode active?</span>
                     </div>
                     <p className="leading-relaxed">
-                      The Google GenAI Veo quick-preview model (<code className="font-mono text-[10px] bg-zinc-950 px-1 py-0.5 rounded text-indigo-300">veo-3.1-lite</code>) can return <strong className="text-amber-300">429 Resource Exhausted</strong> until billing and quota are configured.
+                      {videoBackend === 'gemini' ? (
+                        <>
+                          The Google GenAI Veo quick-preview model (<code className="font-mono text-[10px] bg-zinc-950 px-1 py-0.5 rounded text-indigo-300">veo-3.1-lite</code>) can return <strong className="text-amber-300">429 Resource Exhausted</strong> until billing and quota are configured.
+                        </>
+                      ) : quotaExplainer(videoBackend)}
                     </p>
                   </div>
                 )}
@@ -1609,7 +1626,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   {isQuotaExhausted ? (
                     <span className="text-[10px] font-mono text-amber-400 flex items-center gap-1.5 bg-amber-500/5 border border-amber-500/10 px-2 py-1 rounded">
-                      ● Veo API capacity limit reached (Sandbox pre-visualization active)
+                      ● {quotaCapacityBadge(videoBackend)}
                     </span>
                   ) : (
                     <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1 bg-emerald-500/5 border border-emerald-500/10 px-2 py-1 rounded">
@@ -1621,7 +1638,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                       onClick={() => {
                         const anchor = document.createElement('a');
                         anchor.href = `/api/video-download?operationName=${encodeURIComponent(operationName)}`;
-                        anchor.download = `storyforge-previsualization-${Date.now()}.mp4`;
+                        anchor.download = `theshow-previsualization-${Date.now()}.mp4`;
                         document.body.appendChild(anchor);
                         anchor.click();
                         document.body.removeChild(anchor);
@@ -1671,9 +1688,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   <span>Storyboard film sheet</span>
                 </div>
                 <p className="text-[11px] text-zinc-500 font-mono">
-                  {provider.videoBackend === 'grok'
-                    ? 'Review the exact prompt, the pinned frame, and the quote. Confirm spends one clip per shot. A shot set to no transition is not pinned to the previous frame.'
-                    : 'Veo 3.1 reference-image mode supports up to 3 total reference images per shot and requires 8-second shots when references are used. Successful renders auto-save anchor frames for downstream continuity.'}
+                  {copy.filmSheetNote}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1725,7 +1740,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {storyboardShots.map((shot, index) => {
                   const anchorFrame = getShotAnchorFrame(selectedScene, shot);
-                  const continuityBridge = resolveContinuityBridge(selectedScene, shot, index);
+                  const continuityBridge = resolveContinuityBridge(selectedScene, shot, index, videoBackend);
 
                   return (
                   <div key={shot.id} className="bg-zinc-950 border border-zinc-900 rounded-2xl p-4 space-y-3 shadow-lg">
@@ -1837,14 +1852,14 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                   {storyboardJobs.map((job, index) => {
                     const shot = storyboardShots.find(item => item.id === job.shotId);
                     const previousShot = index > 0 ? storyboardShots[index - 1] : undefined;
-                    const continuityBridge = shot && selectedScene ? resolveContinuityBridge(selectedScene, shot, index) : null;
+                    const continuityBridge = shot && selectedScene ? resolveContinuityBridge(selectedScene, shot, index, videoBackend) : null;
                     return (
                       <div key={job.shotId} className="bg-zinc-950 border border-zinc-900 rounded-2xl p-4 space-y-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="text-xs font-semibold text-white">Shot {index + 1}: {job.title}</div>
                             <div className="text-[10px] font-mono text-zinc-500 mt-1">
-                              {job.usingReferenceImages ? 'Reference-image mode (Veo 3.1 / 8s)' : 'Prompt-only mode'}
+                              {referenceModeBadge(!!job.usingReferenceImages, job.videoBackend ? normalizeVideoBackend(job.videoBackend) : videoBackend)}
                               {job.durationSeconds ? ` • ${job.durationSeconds}s` : ''}
                             </div>
                           </div>
@@ -1947,7 +1962,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                                 onClick={() => {
                                   const anchor = document.createElement('a');
                                   anchor.href = `/api/video-download?operationName=${encodeURIComponent(job.operationName || '')}`;
-                                  anchor.download = `storyforge-shot-${index + 1}-${Date.now()}.mp4`;
+                                  anchor.download = `theshow-shot-${index + 1}-${Date.now()}.mp4`;
                                   document.body.appendChild(anchor);
                                   anchor.click();
                                   document.body.removeChild(anchor);
@@ -1991,7 +2006,7 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
 
                         {job.isQuotaExhausted && (
                           <div className="bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-[11px] text-zinc-300">
-                            Veo quota was exhausted for this shot, so sandbox fallback media was used instead.
+                            {quotaExhaustedShotNote(job.videoBackend ? normalizeVideoBackend(job.videoBackend) : videoBackend)}
                           </div>
                         )}
                       </div>

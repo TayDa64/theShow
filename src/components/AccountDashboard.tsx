@@ -78,7 +78,7 @@ export function AccountDashboard() {
     if (authResult === 'google-login-success') {
       setMessage('Google sign-in completed successfully.');
     } else if (authResult === 'google-link-success') {
-      setMessage('Google sign-in was linked to your StoryForge account.');
+      setMessage('Google sign-in was linked to your theShow account.');
     } else if (authError) {
       setError(decodeURIComponent(authError));
     }
@@ -172,7 +172,7 @@ export function AccountDashboard() {
         dailyVideoLimit: Number(dailyVideoLimit) || 3,
       });
       setProviderApiKey('');
-      setMessage('Personal Gemini API access connected. Future live renders will use this account-specific provider.');
+      setMessage('Personal API access connected. Future live renders will use this account-specific provider.');
     } catch (providerError: any) {
       setError(providerError?.message || 'Provider connection failed.');
     } finally {
@@ -186,7 +186,7 @@ export function AccountDashboard() {
 
     try {
       await disconnectGeminiProvider();
-      setMessage('Personal Gemini provider disconnected. StoryForge will fall back to the workspace provider or sandbox mode.');
+      setMessage('Personal provider disconnected. theShow will fall back to the workspace provider or sandbox mode.');
     } catch (providerError: any) {
       setError(providerError?.message || 'Provider disconnect failed.');
     }
@@ -282,7 +282,7 @@ export function AccountDashboard() {
       <div>
         <h2 className="text-lg font-medium tracking-tight text-white">Account & Security</h2>
         <p className="text-[11px] text-zinc-500 font-mono mt-0.5">
-          Password login, Google OIDC, local TOTP-based 2FA, session controls, and Gemini provider isolation.
+          Password login, Google OIDC, local TOTP-based 2FA, session controls, and provider isolation.
         </p>
       </div>
 
@@ -301,7 +301,7 @@ export function AccountDashboard() {
                 <h3 className="text-sm font-semibold text-white">Workspace identity</h3>
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed">
-                StoryForge keeps app identity separate from Gemini provider credentials and now supports Google OIDC alongside local password login.
+                theShow keeps app identity separate from video provider credentials and now supports Google OIDC alongside local password login.
               </p>
             </div>
             <ProviderStatusPill mode={provider.mode} />
@@ -385,7 +385,7 @@ export function AccountDashboard() {
                           value={name}
                           onChange={(event) => setName(event.target.value)}
                           className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                          placeholder="StoryForge Operator"
+                          placeholder="theShow Operator"
                         />
                       </label>
                     )}
@@ -397,7 +397,7 @@ export function AccountDashboard() {
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                        placeholder="operator@storyforge.dev"
+                        placeholder="operator@theshow.dev"
                       />
                     </label>
 
@@ -616,9 +616,6 @@ export function AccountDashboard() {
                   <KeyRound className="w-4 h-4 text-indigo-400" />
                   <span>Generation provider</span>
                 </h3>
-                <p className="text-xs text-zinc-400 leading-relaxed mt-1">
-                  Link a personal Gemini API key to isolate Veo usage from any shared workspace credential. Keys are stored server-side only.
-                </p>
               </div>
               <ProviderStatusPill mode={provider.mode} />
             </div>
@@ -643,7 +640,10 @@ export function AccountDashboard() {
               )}
             </div>
 
-            <form onSubmit={handleLinkProvider} className="space-y-3">
+            <form onSubmit={handleLinkProvider} className="space-y-3" data-testid="gemini-provider-form">
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Link a personal Gemini API key to isolate Veo usage from any shared workspace credential. Keys are stored server-side only.
+              </p>
               <label className="block space-y-1">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Connection label</span>
                 <input

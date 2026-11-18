@@ -8,6 +8,7 @@ import { generateSecret, generateURI, verifySync } from 'otplib';
 import QRCode from 'qrcode';
 import { v4 as uuidv4 } from 'uuid';
 import { describeGrokVideoAccess, resolveVideoBackend } from './grokClipStore';
+import { engineName } from './providerCopy';
 import type {
   AuthAuditEvent,
   AuthIdentitySummary,
@@ -154,7 +155,7 @@ const TWO_FACTOR_CHALLENGE_TTL_MS = 1000 * 60 * 10;
 const DEFAULT_PERSONAL_VIDEO_DAILY_LIMIT = 3;
 const MAX_AUDIT_EVENTS_PER_USER = 24;
 const MAX_USAGE_EVENTS_PER_USER = 64;
-const TWO_FACTOR_ISSUER = 'StoryForge Studio';
+const TWO_FACTOR_ISSUER = 'theShow';
 
 let warnedAboutFallbackEncryptionKey = false;
 
@@ -653,7 +654,7 @@ function buildGuestProviderSummary(): ProviderConnectionSummary {
       mode: 'workspace',
       status: 'connected',
       providerType: 'workspace-key',
-      label: 'Workspace Gemini API access',
+      label: 'Workspace API access',
       maskedApiKey: maskApiKey(workspaceKey),
       connectedAt: null,
       dailyVideoLimit: workspaceLimit,
@@ -661,7 +662,7 @@ function buildGuestProviderSummary(): ProviderConnectionSummary {
       remainingToday: workspaceLimit,
       liveVideoEnabled: true,
       sandboxFallbackEnabled: true,
-      note: 'A workspace Gemini API key is configured. Sign in to use it securely from this app.',
+      note: 'A workspace API key is configured. Sign in to use it securely from this app.',
     };
   }
 
@@ -677,7 +678,7 @@ function buildGuestProviderSummary(): ProviderConnectionSummary {
     remainingToday: null,
     liveVideoEnabled: false,
     sandboxFallbackEnabled: true,
-    note: 'No live Gemini provider is configured yet. After sign-in, you can connect a personal Gemini API key or keep using sandbox fallbacks.',
+    note: 'No live video provider is configured yet. After sign-in, you can connect a personal API key in Account or keep using sandbox previews.',
   };
 }
 
@@ -698,7 +699,7 @@ function buildProviderSummaryForUser(userId: string): ProviderConnectionSummary 
       remainingToday: Math.max(dailyVideoLimit - usedToday, 0),
       liveVideoEnabled: true,
       sandboxFallbackEnabled: true,
-      note: 'Personal Gemini API access is active for this account and overrides the shared workspace provider.',
+      note: 'Personal API access is active for this account and overrides the shared workspace provider.',
     };
   }
 
@@ -710,7 +711,7 @@ function buildProviderSummaryForUser(userId: string): ProviderConnectionSummary 
       mode: 'workspace',
       status: 'connected',
       providerType: 'workspace-key',
-      label: 'Workspace Gemini API access',
+      label: 'Workspace API access',
       maskedApiKey: maskApiKey(workspaceKey),
       connectedAt: null,
       dailyVideoLimit: workspaceLimit,
@@ -718,7 +719,7 @@ function buildProviderSummaryForUser(userId: string): ProviderConnectionSummary 
       remainingToday: workspaceLimit === null ? null : Math.max(workspaceLimit - usedToday, 0),
       liveVideoEnabled: true,
       sandboxFallbackEnabled: true,
-      note: 'This account is currently using the shared workspace Gemini API key.',
+      note: 'This account is currently using the shared workspace API key.',
     };
   }
 
@@ -734,7 +735,7 @@ function buildProviderSummaryForUser(userId: string): ProviderConnectionSummary 
     remainingToday: null,
     liveVideoEnabled: false,
     sandboxFallbackEnabled: true,
-    note: 'No live Gemini API key is active for this account. Video routes can still fall back to local sandbox/mock generation.',
+    note: 'No live video API key is active for this account. Video routes can still fall back to local sandbox previews.',
   };
 }
 
@@ -788,11 +789,7 @@ function withVideoBackend(summary: ProviderConnectionSummary): ProviderConnectio
   return {
     ...summary,
     videoBackend: backend,
-    videoBackendLabel: backend === 'grok'
-      ? 'Grok Imagine Video'
-      : backend === 'gemini'
-        ? 'Gemini Veo'
-        : 'Sandbox preview',
+    videoBackendLabel: engineName(backend),
     videoBilling: backend === 'grok' ? (grok.billedTo || 'Grok subscription') : backend === 'gemini' ? 'Gemini API quota' : null,
   };
 }
@@ -859,7 +856,7 @@ function createGoogleUser(profile: ReturnType<typeof normalizeGoogleIdentityPayl
 
   authStore.users.unshift(user);
   persistAuthStore();
-  createAuditEvent(user.id, 'account.created.google', 'Created a StoryForge account with Google sign-in.');
+  createAuditEvent(user.id, 'account.created.google', 'Created a theShow account with Google sign-in.');
   return user;
 }
 
@@ -934,7 +931,7 @@ export async function completeGoogleAuthentication(input: {
 
     const existingGoogleUser = findUserByGoogleSub(profile.sub);
     if (existingGoogleUser && existingGoogleUser.id !== user.id) {
-      throw new Error('That Google account is already linked to a different StoryForge account.');
+      throw new Error('That Google account is already linked to a different theShow account.');
     }
 
     syncUserProfileFromGoogle(user, profile);
@@ -945,7 +942,7 @@ export async function completeGoogleAuthentication(input: {
     if (existingEmailUser) {
       const existingGoogleUser = findUserByGoogleSub(profile.sub);
       if (existingGoogleUser && existingGoogleUser.id !== existingEmailUser.id) {
-        throw new Error('That Google account is already linked to another StoryForge account.');
+        throw new Error('That Google account is already linked to another theShow account.');
       }
 
       syncUserProfileFromGoogle(existingEmailUser, profile);
@@ -1131,7 +1128,7 @@ export function registerUser(input: { name: string; email: string; password: str
 
   authStore.users.unshift(user);
   persistAuthStore();
-  createAuditEvent(user.id, 'account.created', 'Created a new StoryForge account.');
+  createAuditEvent(user.id, 'account.created', 'Created a new theShow account.');
 
   const session = createSession(user.id, metadata);
   createAuditEvent(user.id, 'account.login', 'Signed in after account creation.');
@@ -1167,7 +1164,7 @@ export function authenticateUser(input: { email: string; password: string }, met
   }
 
   const session = createSession(user.id, metadata);
-  createAuditEvent(user.id, 'account.login.password', 'Signed in to StoryForge with password authentication.');
+  createAuditEvent(user.id, 'account.login.password', 'Signed in to theShow with password authentication.');
 
   return {
     user: sanitizeUser(user),
@@ -1220,7 +1217,7 @@ export function logoutSession(sessionId: string | null | undefined) {
 
   session.revokedAt = getNowIso();
   persistAuthStore();
-  createAuditEvent(session.userId, 'account.logout', 'Signed out of StoryForge.');
+  createAuditEvent(session.userId, 'account.logout', 'Signed out of theShow.');
 }
 
 export function revokeUserSession(userId: string, sessionId: string) {
@@ -1273,10 +1270,10 @@ export function loadProjectStateForUser(userId: string): StoredProjectState {
 export function linkPersonalGeminiProvider(userId: string, input: UserConnectionInput) {
   const apiKey = input.apiKey.trim();
   if (!apiKey) {
-    throw new Error('A Gemini API key is required.');
+    throw new Error('An API key is required.');
   }
 
-  const label = trimName(input.label || 'Personal Gemini API key');
+  const label = trimName(input.label || 'Personal API key');
   const dailyVideoLimit = parsePositiveInt(input.dailyVideoLimit, DEFAULT_PERSONAL_VIDEO_DAILY_LIMIT);
   const currentProvider = getActiveProviderRecord(userId);
   if (currentProvider) {
@@ -1287,7 +1284,7 @@ export function linkPersonalGeminiProvider(userId: string, input: UserConnection
     id: uuidv4(),
     userId,
     type: 'gemini-api-key',
-    label: label || 'Personal Gemini API key',
+    label: label || 'Personal API key',
     encryptedApiKey: encryptSecret(apiKey),
     maskedApiKey: maskApiKey(apiKey),
     dailyVideoLimit,
@@ -1296,18 +1293,18 @@ export function linkPersonalGeminiProvider(userId: string, input: UserConnection
   });
 
   persistAuthStore();
-  createAuditEvent(userId, 'provider.connected', `Connected personal Gemini API access${label ? ` (${label})` : ''}.`);
+  createAuditEvent(userId, 'provider.connected', `Connected personal API access${label ? ` (${label})` : ''}.`);
 }
 
 export function disconnectPersonalGeminiProvider(userId: string) {
   const provider = getActiveProviderRecord(userId);
   if (!provider) {
-    throw new Error('No personal Gemini provider is currently linked.');
+    throw new Error('No personal provider is currently linked.');
   }
 
   provider.disconnectedAt = getNowIso();
   persistAuthStore();
-  createAuditEvent(userId, 'provider.disconnected', 'Disconnected personal Gemini API access.');
+  createAuditEvent(userId, 'provider.disconnected', 'Disconnected personal API access.');
 }
 
 export function getVideoGenerationAccessForUser(userId: string): VideoGenerationAccess {

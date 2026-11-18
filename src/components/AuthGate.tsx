@@ -18,7 +18,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <div className="space-y-1">
           <h1 className="text-lg font-semibold text-white">Restoring secure workspace session…</h1>
           <p className="text-sm text-zinc-400 leading-relaxed">
-            StoryForge is checking your account session, provider status, and sync permissions before loading the workspace.
+            theShow is checking your account session, provider status, and sync permissions before loading the workspace.
           </p>
         </div>
       </div>

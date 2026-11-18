@@ -30,7 +30,7 @@ function watchPage(page: Page): Watch {
 async function openStudio(page: Page): Promise<Watch> {
   const watch = watchPage(page);
   await page.goto('/');
-  await expect(page).toHaveTitle('StoryForge Studio');
+  await expect(page).toHaveTitle('theShow');
   await expect(page.getByTestId('timeline-shell')).toBeVisible();
   await page.waitForTimeout(1500);
   return watch;
@@ -106,7 +106,7 @@ for (const viewport of viewports) {
       const watch = await openStudio(page);
       await openPopup(page, 'account-workspace-trigger', 'Account');
       await expect(page.getByTestId('account-workspace-trigger')).toHaveAttribute('aria-label', 'Account');
-      await expect(page.getByPlaceholder('operator@storyforge.dev')).toBeVisible();
+      await expect(page.getByPlaceholder('operator@theshow.dev')).toBeVisible();
       await expectAxe(page);
       await expectClean(watch);
     });
