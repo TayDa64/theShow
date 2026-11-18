@@ -271,7 +271,9 @@ test.describe('theShow branding', () => {
     await closePopup(page);
     await page.getByTestId('workspace-button-scenes').click();
     await expect(page.getByTestId('workspace-popup-title')).toHaveText('Scenes');
-    await expect(page.getByRole('button', { name: 'Auto-suggest dialogue using Gemini AI' })).toBeVisible();
+    const suggest = page.getByRole('button', { name: 'AI Suggest' });
+    await expect(suggest).toBeVisible();
+    await expect(suggest).toHaveAttribute('title', 'Auto-suggest dialogue using Gemini AI');
   });
 
   test('mocked Grok backend does not name Veo or Gemini', async ({ page }) => {
@@ -309,7 +311,9 @@ test.describe('theShow branding', () => {
     await closePopup(page);
     await page.getByTestId('workspace-button-scenes').click();
     await expect(page.getByTestId('workspace-popup-title')).toHaveText('Scenes');
-    await expect(page.getByRole('button', { name: 'Auto-suggest dialogue' })).toBeVisible();
+    const suggest = page.getByRole('button', { name: 'AI Suggest' });
+    await expect(suggest).toBeVisible();
+    await expect(suggest).toHaveAttribute('title', 'Auto-suggest dialogue');
     await assertNoProviderBrands(page);
 
     await closePopup(page);

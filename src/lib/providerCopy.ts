@@ -94,6 +94,21 @@ export function contractSeedNote(backend: VideoBackendId): string {
   }
 }
 
+/** Player-drawn captions. Same sentence for every engine, and it names none of them. */
+export function contractCaptionsNote(): string {
+  return 'Player captions are drawn in the app. They are not burned into the video.';
+}
+
+/** Shown when no live backend is configured and sandbox was not requested. */
+export function noVideoBackendAction(): string {
+  return 'Sign in with `grok login --device-code` on the server so the Grok subscription backs rendering, or connect an API key in Account. Set THESHOW_VIDEO_BACKEND=sandbox to use mock previews.';
+}
+
+/** Fallback when connecting a personal key fails without a more specific message. */
+export function providerKeyConnectError(): string {
+  return 'Could not connect API access.';
+}
+
 export function contractQuoteBasis(backend: VideoBackendId): string {
   switch (backend) {
     case 'grok':

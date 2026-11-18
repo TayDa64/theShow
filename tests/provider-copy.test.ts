@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contractCaptionsNote,
   contractQuoteBasis,
   contractSeedNote,
+  noVideoBackendAction,
+  providerKeyConnectError,
   engineName,
   exportCustomBridgeSummary,
   exportPreviousAnchorSummary,
@@ -171,6 +174,12 @@ describe('providerCopy', () => {
     expect(contractSeedNote('gemini')).toBe('Veo receives the seed on this card.');
     expect(contractQuoteBasis('gemini')).toMatch(/uses Veo/);
     expect(contractSeedNote('grok')).not.toMatch(BRAND);
+    expect(contractCaptionsNote()).toBe('Player captions are drawn in the app. They are not burned into the video.');
+    expect(contractCaptionsNote()).not.toMatch(BRAND);
+    expect(noVideoBackendAction()).toContain('grok login');
+    expect(noVideoBackendAction()).not.toMatch(BRAND);
+    expect(providerKeyConnectError()).toBe('Could not connect API access.');
+    expect(providerKeyConnectError()).not.toMatch(BRAND);
     expect(quotaExhaustedShotNote('sandbox')).not.toMatch(BRAND);
     expect(quotaExhaustedShotNote('gemini')).toMatch(/Veo quota/);
   });

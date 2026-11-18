@@ -1556,7 +1556,6 @@ export function ScenesView({ scenes, characters, camera, onSaveScenes }: ScenesV
             disabled={isSuggesting}
             className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/25 text-xs font-semibold px-3 py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors sm:justify-start"
             title={copy.aiSuggestTitle}
-            aria-label={copy.aiSuggestTitle}
           >
             <Sparkles className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">{isSuggesting ? 'Drafting...' : 'AI Suggest'}</span>
