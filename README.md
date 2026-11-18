@@ -6,13 +6,11 @@ You describe a film once. The plugin prices the work before it spends, boards st
 
 ## Demo
 
-<!-- DEMO_VIDEO_URL: Eshetie to paste user-attachments URL here -->
+Watch the 45-second demo.
 
-45-second landscape ad (720p, 1280×720). GitHub plays a README video only from a `https://github.com/user-attachments/assets/…` URL, which Eshetie pastes on the line above. This placeholder is the only blocker. The current ad is used as-is, including the contract beat that still shows Veo and Gemini on screen.
+https://github.com/user-attachments/assets/fa303f93-26e6-4ca6-abd1-ae7fc8ad24cc
 
-<!-- TODO: poster path. A poster JPG is not in the repo. When that still exists, link it here to the user-attachments URL above so viewers that do not render the player still get the hero frame. -->
-
-Poster fallback: TODO. The poster JPG is not in this repo, so this line is not an image link yet. Point it at the user-attachments URL above once the file exists.
+45-second landscape ad (720p, 1280×720). The current ad is used as-is, including the contract beat that still shows Veo and Gemini on screen.
 
 The proof film is a separate 24-second render. GitHub does not play a repo-relative video, so the frames below are the in-page view. Measurements, including the **$3.44** cost (4 × $0.86), are in [`docs/proof.md`](docs/proof.md).
 
