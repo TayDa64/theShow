@@ -6,7 +6,9 @@ import {
   exportCustomBridgeSummary,
   exportPreviousAnchorSummary,
   providerCopy,
+  quotaCapacityBadge,
   quotaExhaustedShotNote,
+  quotaExplainer,
   renderAccessMessage,
   renderStatusLabel,
   resultNamesGemini,
@@ -81,12 +83,63 @@ describe('providerCopy', () => {
       mode: 'personal',
       videoBilling: 'Grok subscription',
     })).toBe('Grok Imagine Video active — billed to Grok subscription');
-    expect(renderAccessMessage({
+    const access = renderAccessMessage({
       isAuthenticated: true,
       videoBackend: 'grok',
       mode: 'personal',
       videoBilling: 'Grok subscription',
-    })).toContain('instead of Gemini quota');
+    });
+    expect(access).toContain('Rendering with Grok Imagine Video, billed to your Grok subscription.');
+    expect(access).not.toMatch(BRAND);
+    expect(contractSeedNote('grok')).toBe('Grok does not receive the seed. The seed stays on this card.');
+    expect(contractSeedNote('grok')).not.toMatch(BRAND);
+  });
+
+  it('keeps Veo and Gemini out of every Grok and sandbox video string, even when a text key exists', () => {
+    const brand = /\bVeo\b|Gemini/;
+    for (const backend of ['grok', 'sandbox'] as const) {
+      for (const mode of ['none', 'sandbox', 'personal', 'workspace'] as const) {
+        const copy = providerCopy({ videoBackend: backend, mode, videoBilling: 'Grok subscription' });
+        const videoStrings = [
+          copy.engineName,
+          copy.quickPreviewTitle,
+          copy.storyboardTitle,
+          copy.storyboardBlurb,
+          copy.filmSheetNote,
+          copy.characterStyleLabel,
+          copy.sceneStoryboardIntro,
+          copy.compilingLabel,
+          copy.handoffError,
+          contractSeedNote(backend),
+          contractQuoteBasis(backend),
+          renderStatusLabel({ isAuthenticated: true, videoBackend: backend, mode, videoBilling: 'Grok subscription' }),
+          renderAccessMessage({
+            isAuthenticated: true,
+            videoBackend: backend,
+            mode,
+            videoBilling: 'Grok subscription',
+            remainingToday: 1,
+            dailyVideoLimit: 3,
+          }),
+          exportCustomBridgeSummary(backend, 'Bridge'),
+          exportPreviousAnchorSummary(backend, 2, 'Anchor'),
+          scenesCustomBridgeSummary(backend, 'Bridge'),
+          scenesCustomBridgeSummary(backend, undefined),
+          scenesPreviousAnchorSummary(backend, 2, 1, 'Anchor'),
+          quotaExhaustedShotNote(backend),
+          quotaCapacityBadge(backend),
+          quotaExplainer(backend),
+        ];
+        for (const line of videoStrings) {
+          expect(line, `${backend}/${mode}: ${line}`).not.toMatch(brand);
+        }
+        if (mode === 'personal' || mode === 'workspace') {
+          expect(copy.aiSuggestTitle).toBe('Auto-suggest dialogue using Gemini AI');
+        } else {
+          expect(copy.aiSuggestTitle).not.toMatch(brand);
+        }
+      }
+    }
   });
 
   it('names Gemini on AI text only when a personal or workspace key exists, and on a result only when it is not a fallback', () => {
@@ -117,7 +170,7 @@ describe('providerCopy', () => {
     expect(contractQuoteBasis('sandbox')).toBe('Sandbox preview. Nothing is billed.');
     expect(contractSeedNote('gemini')).toBe('Veo receives the seed on this card.');
     expect(contractQuoteBasis('gemini')).toMatch(/uses Veo/);
-    expect(contractSeedNote('grok')).toContain('kept for a Veo render');
+    expect(contractSeedNote('grok')).not.toMatch(BRAND);
     expect(quotaExhaustedShotNote('sandbox')).not.toMatch(BRAND);
     expect(quotaExhaustedShotNote('gemini')).toMatch(/Veo quota/);
   });

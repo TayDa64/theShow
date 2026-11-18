@@ -273,6 +273,58 @@ test.describe('theShow branding', () => {
     await expect(page.getByTestId('workspace-popup-title')).toHaveText('Scenes');
     await expect(page.getByRole('button', { name: 'Auto-suggest dialogue using Gemini AI' })).toBeVisible();
   });
+
+  test('mocked Grok backend does not name Veo or Gemini', async ({ page }) => {
+    await page.route('**/api/auth/session', async (route: Route) => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      payload.provider = {
+        ...(payload.provider || {}),
+        mode: 'sandbox',
+        status: 'disconnected',
+        videoBackend: 'grok',
+        videoBackendLabel: 'Grok Imagine Video',
+        videoBilling: 'Grok subscription',
+        liveVideoEnabled: true,
+      };
+      await route.fulfill({ response, json: payload });
+    });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/');
+    await expect(page.getByTestId('timeline-shell')).toBeVisible();
+    await register(page, `brand-grok-${Date.now()}@example.com`);
+    await assertNoProviderBrands(page);
+
+    await page.getByTestId('prompt-open-pipeline').click();
+    await expect(page.getByTestId('workspace-popup-title')).toHaveText('Pipeline');
+    await expect(page.getByRole('heading', { name: 'Grok quick preview' })).toBeVisible();
+    await expect(page.getByText('Grok Imagine Video active — billed to Grok subscription')).toBeVisible();
+    await expect(page.getByText('Rendering with Grok Imagine Video, billed to your Grok subscription.')).toBeVisible();
+    await assertNoProviderBrands(page);
+    await page.getByRole('button', { name: 'Storyboard Mode' }).click();
+    await expect(page.getByRole('heading', { name: 'Grok storyboard renderer' })).toBeVisible();
+    await expect(page.getByText('Each storyboard shot is its own Grok clip.')).toBeVisible();
+    await assertNoProviderBrands(page);
+
+    await closePopup(page);
+    await page.getByTestId('workspace-button-scenes').click();
+    await expect(page.getByTestId('workspace-popup-title')).toHaveText('Scenes');
+    await expect(page.getByRole('button', { name: 'Auto-suggest dialogue' })).toBeVisible();
+    await assertNoProviderBrands(page);
+
+    await closePopup(page);
+    await page.getByTestId('workspace-button-characters').click();
+    await expect(page.getByTestId('workspace-popup-title')).toHaveText('Roster');
+    await page.getByText('Kaelen Thorne').first().click();
+    await expect(page.getByText('Character style')).toBeVisible();
+    await assertNoProviderBrands(page);
+
+    await closePopup(page);
+    await page.getByTestId('account-workspace-trigger').click();
+    await expect(page.getByTestId('workspace-popup-title')).toHaveText('Account');
+    await expect(page.getByTestId('gemini-provider-form')).toBeVisible();
+    await assertNoProviderBrands(page);
+  });
 });
 
 test.describe('axe still covers branded chrome', () => {

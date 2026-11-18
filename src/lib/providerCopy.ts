@@ -82,7 +82,7 @@ export function resultNamesGemini(
 export function contractSeedNote(backend: VideoBackendId): string {
   switch (backend) {
     case 'grok':
-      return 'Grok does not receive the seed. The seed on this card is kept for a Veo render.';
+      return 'Grok does not receive the seed. The seed stays on this card.';
     case 'gemini':
       return 'Veo receives the seed on this card.';
     case 'sandbox':
@@ -226,7 +226,7 @@ export function renderAccessMessage(input: ProviderCopySource & {
   const billing = input.videoBilling || 'Grok subscription';
   switch (backend) {
     case 'grok':
-      return `Rendering with Grok Imagine Video, billed to your ${billing} instead of Gemini quota. Shots render live and download into this project.`;
+      return `Rendering with Grok Imagine Video, billed to your ${billing}. Shots render live and download into this project.`;
     case 'gemini':
       if (input.mode === 'personal') {
         return `${input.remainingToday ?? 0} of ${input.dailyVideoLimit ?? 0} personal live video generations remain today. Sandbox fallback is still available for safe mock workflows.`;
