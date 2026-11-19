@@ -44472,210 +44472,6 @@ var EMPTY_COMPLETION_RESULT = {
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 
-// mcp/admission.ts
-import { rm } from "node:fs/promises";
-
-// mcp/promptLint.ts
-var FORBIDDEN = [
-  /floor lamp/i,
-  /table lamp/i,
-  /amber lamp/i,
-  /wall lamp/i,
-  /\blamps?\b/i,
-  /door handle/i,
-  /\bhandle\b/i,
-  /\bknob\b/i,
-  /\blever\b/i,
-  /\bpull\b/i,
-  /door seals/i,
-  /\bgasket\b/i,
-  /weatherstripping/i,
-  /\bhinged\b/i,
-  /door's swing/i,
-  /swings the door/i,
-  /second doorway/i,
-  /extra door/i,
-  /\bno tie\b/i,
-  /\btie\b/i,
-  /\bsubtitles?\b/i,
-  /\bcaptions?\b/i,
-  /\bwatermark\b/i,
-  /\blogos?\b/i,
-  /\bmusic\b/i,
-  /\bscore\b/i,
-  /easy natural pace/i,
-  /never sped/i
-];
-var NEGATION = /\b(never|don't|do not|does not|didn't|avoid|nothing|without|n't)\b|\bno\b/i;
-function negativePhrases(negative) {
-  if (!negative?.trim()) return [];
-  const seen2 = /* @__PURE__ */ new Set();
-  const phrases = [];
-  for (const part of negative.split(/[\n,]+/)) {
-    const phrase = part.trim();
-    if (phrase.length < 3) continue;
-    const key = phrase.toLowerCase();
-    if (seen2.has(key)) continue;
-    seen2.add(key);
-    phrases.push(phrase);
-  }
-  return phrases;
-}
-function lintSentPrompt(prompt, negative) {
-  const hits = [];
-  for (const pattern of FORBIDDEN) {
-    const found = pattern.exec(prompt);
-    if (found) hits.push({ kind: "forbidden", match: found[0] });
-  }
-  const negation = NEGATION.exec(prompt);
-  if (negation) hits.push({ kind: "negation", match: negation[0] });
-  const haystack = prompt.toLowerCase();
-  for (const phrase of negativePhrases(negative)) {
-    if (haystack.includes(phrase.toLowerCase())) {
-      hits.push({ kind: "negative", match: phrase });
-    }
-  }
-  return hits;
-}
-function lintFailure(prompt, negative) {
-  const hits = lintSentPrompt(prompt, negative);
-  if (hits.length === 0) return { ok: true };
-  const listed = hits.map((hit) => `${hit.kind} "${hit.match}"`).join(", ");
-  return {
-    ok: false,
-    hits,
-    reason: `Prompt rejected before any paid call: ${listed}. Say what is in the frame. The negative list stays off the request.`
-  };
-}
-
-// mcp/admission.ts
-var TALL_ADULT = {
-  minLegToStature: 0.42,
-  maxShoulderToStature: 0.3,
-  minTorsoToLeg: 0.75,
-  maxTorsoToLeg: 1.35
-};
-var placedObject = external_exports.object({
-  id: external_exports.string(),
-  room: external_exports.string(),
-  label: external_exports.string().optional()
-});
-var TakeAdmissionSchema = external_exports.object({
-  priorObjects: external_exports.array(placedObject).optional(),
-  objects: external_exports.array(placedObject).optional(),
-  torsoPx: external_exports.number().optional(),
-  legPx: external_exports.number().optional(),
-  shoulderPx: external_exports.number().optional(),
-  staturePx: external_exports.number().optional(),
-  vocalEndSeconds: external_exports.number().optional(),
-  timedEndSeconds: external_exports.number().optional()
-});
-function roomKey(room) {
-  return room.trim().toLowerCase();
-}
-function reviewTake(report, negative) {
-  if (!report && !negative?.trim()) return { ok: true };
-  const failures = [];
-  const current = report?.objects ?? [];
-  const prior = report?.priorObjects;
-  if (prior) {
-    const priorById = new Map(prior.map((object3) => [object3.id, object3]));
-    for (const object3 of current) {
-      const before = priorById.get(object3.id);
-      if (!before) {
-        failures.push(
-          `Object "${object3.id}" is not in the prior frame, so this still added it.`
-        );
-        continue;
-      }
-      if (roomKey(before.room) !== roomKey(object3.room)) {
-        failures.push(
-          `Object "${object3.id}" changed rooms, from "${before.room}" to "${object3.room}".`
-        );
-      }
-    }
-  }
-  for (const phrase of negativePhrases(negative)) {
-    const needle = phrase.toLowerCase();
-    for (const object3 of current) {
-      const label = `${object3.id} ${object3.label ?? ""}`.toLowerCase();
-      if (label.includes(needle)) {
-        failures.push(
-          `Object "${object3.id}" matches a known hallucination ("${phrase}").`
-        );
-      }
-    }
-  }
-  const { torsoPx, legPx, shoulderPx, staturePx } = report ?? {};
-  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx < TALL_ADULT.minTorsoToLeg) {
-    failures.push("Squashed torso: torso length is short for a tall adult.");
-  }
-  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx > TALL_ADULT.maxTorsoToLeg) {
-    failures.push("Shortened legs: the legs are short relative to the torso.");
-  }
-  if (legPx !== void 0 && staturePx !== void 0 && staturePx > 0 && legPx / staturePx < TALL_ADULT.minLegToStature) {
-    failures.push("Shortened legs: leg length is short for a tall adult's stature.");
-  }
-  if (shoulderPx !== void 0 && staturePx !== void 0 && staturePx > 0 && shoulderPx / staturePx > TALL_ADULT.maxShoulderToStature) {
-    failures.push("Widened body: the shoulders are wide for a tall adult's stature.");
-  }
-  if (report?.vocalEndSeconds !== void 0 && report.timedEndSeconds !== void 0 && report.vocalEndSeconds > report.timedEndSeconds) {
-    failures.push(
-      `Vocal ends at ${report.vocalEndSeconds}s, past the pre-timed end of ${report.timedEndSeconds}s.`
-    );
-  }
-  if (failures.length === 0) return { ok: true };
-  return { ok: false, failures };
-}
-async function discardTake(path) {
-  if (!path) return;
-  await rm(path, { force: true });
-}
-async function acceptRenderedTake(path, report, negative) {
-  const review = reviewTake(report, negative);
-  if (review.ok) return { ok: true, path };
-  await discardTake(path);
-  return review;
-}
-
-// mcp/beats.ts
-function resolveBeatShotType(beat, index) {
-  const named = beat.framing?.trim() || beat.shotType?.trim();
-  if (named) return named;
-  return index === 0 ? "wide" : "medium";
-}
-function durationFromLine(text, delivery = "spoken") {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  const wordsPerSecond = delivery === "sung" ? 2 : 3;
-  return Math.min(15, Math.max(4, Math.ceil(words / wordsPerSecond)));
-}
-function resolveBeatDuration(beat, evenSplitSeconds) {
-  if (typeof beat.durationSeconds === "number" && Number.isFinite(beat.durationSeconds)) {
-    return Math.min(15, Math.max(1, Math.round(beat.durationSeconds)));
-  }
-  const line = beat.line?.text?.trim();
-  if (line) return durationFromLine(line, beat.line?.delivery === "sung" ? "sung" : "spoken");
-  return evenSplitSeconds;
-}
-
-// mcp/cutout.ts
-import { execFile as execFile4 } from "node:child_process";
-import { readFile as readFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join2, parse as parse3 } from "node:path";
-import { promisify as promisify4 } from "node:util";
-
-// mcp/media.ts
-import { execFile as execFile3 } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir as mkdir2, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { promisify as promisify3 } from "node:util";
-
-// src/lib/assembleShared.ts
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
-
 // src/lib/detectChain.ts
 import { execFile as execFile2 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
@@ -45294,6 +45090,210 @@ async function detectChainFrame(input2) {
     return void 0;
   }
 }
+
+// mcp/admission.ts
+import { rm } from "node:fs/promises";
+
+// mcp/promptLint.ts
+var FORBIDDEN = [
+  /floor lamp/i,
+  /table lamp/i,
+  /amber lamp/i,
+  /wall lamp/i,
+  /\blamps?\b/i,
+  /door handle/i,
+  /\bhandle\b/i,
+  /\bknob\b/i,
+  /\blever\b/i,
+  /\bpull\b/i,
+  /door seals/i,
+  /\bgasket\b/i,
+  /weatherstripping/i,
+  /\bhinged\b/i,
+  /door's swing/i,
+  /swings the door/i,
+  /second doorway/i,
+  /extra door/i,
+  /\bno tie\b/i,
+  /\btie\b/i,
+  /\bsubtitles?\b/i,
+  /\bcaptions?\b/i,
+  /\bwatermark\b/i,
+  /\blogos?\b/i,
+  /\bmusic\b/i,
+  /\bscore\b/i,
+  /easy natural pace/i,
+  /never sped/i
+];
+var NEGATION = /\b(never|don't|do not|does not|didn't|avoid|nothing|without|n't)\b|\bno\b/i;
+function negativePhrases(negative) {
+  if (!negative?.trim()) return [];
+  const seen2 = /* @__PURE__ */ new Set();
+  const phrases = [];
+  for (const part of negative.split(/[\n,]+/)) {
+    const phrase = part.trim();
+    if (phrase.length < 3) continue;
+    const key = phrase.toLowerCase();
+    if (seen2.has(key)) continue;
+    seen2.add(key);
+    phrases.push(phrase);
+  }
+  return phrases;
+}
+function lintSentPrompt(prompt, negative) {
+  const hits = [];
+  for (const pattern of FORBIDDEN) {
+    const found = pattern.exec(prompt);
+    if (found) hits.push({ kind: "forbidden", match: found[0] });
+  }
+  const negation = NEGATION.exec(prompt);
+  if (negation) hits.push({ kind: "negation", match: negation[0] });
+  const haystack = prompt.toLowerCase();
+  for (const phrase of negativePhrases(negative)) {
+    if (haystack.includes(phrase.toLowerCase())) {
+      hits.push({ kind: "negative", match: phrase });
+    }
+  }
+  return hits;
+}
+function lintFailure(prompt, negative) {
+  const hits = lintSentPrompt(prompt, negative);
+  if (hits.length === 0) return { ok: true };
+  const listed = hits.map((hit) => `${hit.kind} "${hit.match}"`).join(", ");
+  return {
+    ok: false,
+    hits,
+    reason: `Prompt rejected before any paid call: ${listed}. Say what is in the frame. The negative list stays off the request.`
+  };
+}
+
+// mcp/admission.ts
+var TALL_ADULT = {
+  minLegToStature: 0.42,
+  maxShoulderToStature: 0.3,
+  minTorsoToLeg: 0.75,
+  maxTorsoToLeg: 1.35
+};
+var placedObject = external_exports.object({
+  id: external_exports.string(),
+  room: external_exports.string(),
+  label: external_exports.string().optional()
+});
+var TakeAdmissionSchema = external_exports.object({
+  priorObjects: external_exports.array(placedObject).optional(),
+  objects: external_exports.array(placedObject).optional(),
+  torsoPx: external_exports.number().optional(),
+  legPx: external_exports.number().optional(),
+  shoulderPx: external_exports.number().optional(),
+  staturePx: external_exports.number().optional(),
+  vocalEndSeconds: external_exports.number().optional(),
+  timedEndSeconds: external_exports.number().optional()
+});
+function roomKey(room) {
+  return room.trim().toLowerCase();
+}
+function reviewTake(report, negative) {
+  if (!report && !negative?.trim()) return { ok: true };
+  const failures = [];
+  const current = report?.objects ?? [];
+  const prior = report?.priorObjects;
+  if (prior) {
+    const priorById = new Map(prior.map((object3) => [object3.id, object3]));
+    for (const object3 of current) {
+      const before = priorById.get(object3.id);
+      if (!before) {
+        failures.push(
+          `Object "${object3.id}" is not in the prior frame, so this still added it.`
+        );
+        continue;
+      }
+      if (roomKey(before.room) !== roomKey(object3.room)) {
+        failures.push(
+          `Object "${object3.id}" changed rooms, from "${before.room}" to "${object3.room}".`
+        );
+      }
+    }
+  }
+  for (const phrase of negativePhrases(negative)) {
+    const needle = phrase.toLowerCase();
+    for (const object3 of current) {
+      const label = `${object3.id} ${object3.label ?? ""}`.toLowerCase();
+      if (label.includes(needle)) {
+        failures.push(
+          `Object "${object3.id}" matches a known hallucination ("${phrase}").`
+        );
+      }
+    }
+  }
+  const { torsoPx, legPx, shoulderPx, staturePx } = report ?? {};
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx < TALL_ADULT.minTorsoToLeg) {
+    failures.push("Squashed torso: torso length is short for a tall adult.");
+  }
+  if (torsoPx !== void 0 && legPx !== void 0 && legPx > 0 && torsoPx / legPx > TALL_ADULT.maxTorsoToLeg) {
+    failures.push("Shortened legs: the legs are short relative to the torso.");
+  }
+  if (legPx !== void 0 && staturePx !== void 0 && staturePx > 0 && legPx / staturePx < TALL_ADULT.minLegToStature) {
+    failures.push("Shortened legs: leg length is short for a tall adult's stature.");
+  }
+  if (shoulderPx !== void 0 && staturePx !== void 0 && staturePx > 0 && shoulderPx / staturePx > TALL_ADULT.maxShoulderToStature) {
+    failures.push("Widened body: the shoulders are wide for a tall adult's stature.");
+  }
+  if (report?.vocalEndSeconds !== void 0 && report.timedEndSeconds !== void 0 && report.vocalEndSeconds > report.timedEndSeconds) {
+    failures.push(
+      `Vocal ends at ${report.vocalEndSeconds}s, past the pre-timed end of ${report.timedEndSeconds}s.`
+    );
+  }
+  if (failures.length === 0) return { ok: true };
+  return { ok: false, failures };
+}
+async function discardTake(path) {
+  if (!path) return;
+  await rm(path, { force: true });
+}
+async function acceptRenderedTake(path, report, negative) {
+  const review = reviewTake(report, negative);
+  if (review.ok) return { ok: true, path };
+  await discardTake(path);
+  return review;
+}
+
+// mcp/beats.ts
+function resolveBeatShotType(beat, index) {
+  const named = beat.framing?.trim() || beat.shotType?.trim();
+  if (named) return named;
+  return index === 0 ? "wide" : "medium";
+}
+function durationFromLine(text, delivery = "spoken") {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  const wordsPerSecond = delivery === "sung" ? 2 : 3;
+  return Math.min(15, Math.max(4, Math.ceil(words / wordsPerSecond)));
+}
+function resolveBeatDuration(beat, evenSplitSeconds) {
+  if (typeof beat.durationSeconds === "number" && Number.isFinite(beat.durationSeconds)) {
+    return Math.min(15, Math.max(1, Math.round(beat.durationSeconds)));
+  }
+  const line = beat.line?.text?.trim();
+  if (line) return durationFromLine(line, beat.line?.delivery === "sung" ? "sung" : "spoken");
+  return evenSplitSeconds;
+}
+
+// mcp/cutout.ts
+import { execFile as execFile4 } from "node:child_process";
+import { readFile as readFile2 } from "node:fs/promises";
+import { dirname as dirname2, join as join2, parse as parse3 } from "node:path";
+import { promisify as promisify4 } from "node:util";
+
+// mcp/media.ts
+import { execFile as execFile3 } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir as mkdir2, readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promisify as promisify3 } from "node:util";
+
+// src/lib/assembleShared.ts
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 // src/lib/joinGraph.ts
 var SAMPLE_RATE = 48e3;
@@ -54898,10 +54898,51 @@ async function interruptedJobHasUsableProvenance(job) {
   }
   return usable;
 }
+async function recordedChainAgrees(job) {
+  for (let index = 0; index < job.shots.length; index += 1) {
+    const shot = job.shots[index];
+    const recorded = shot.chainFrameIndex;
+    if (recorded === void 0 || !shot.localPath) continue;
+    let frameCount = 0;
+    let fps = 0;
+    try {
+      const probe2 = await probeVideo(shot.localPath);
+      frameCount = probe2.frameCount;
+      fps = probe2.fps;
+    } catch {
+      return { ok: false, reason: "The chain clip could not be read." };
+    }
+    if (typeof recorded !== "number" || !Number.isInteger(recorded) || recorded < 0 || recorded >= frameCount) continue;
+    const pts = shot.chainFramePts;
+    if (typeof pts === "number" && Number.isFinite(pts) && pts >= 0 && fps > 0) {
+      const halfFrame = 0.5 / fps;
+      if (Math.abs(pts - recorded / fps) > halfFrame) {
+        return {
+          ok: false,
+          reason: `chainFramePts ${pts} is more than half a frame from chainFrameIndex ${recorded} at ${fps} fps.`
+        };
+      }
+    }
+    const next = job.shots[index + 1];
+    if (!next?.localPath) continue;
+    const detected = await detectChainFrame({
+      outgoingFile: shot.localPath,
+      incomingFile: next.localPath,
+      outgoingFrameCount: frameCount
+    });
+    if (!detected || detected.index !== recorded) {
+      return {
+        ok: false,
+        reason: `chainFrameIndex ${recorded} does not match the frame detected from the clips (${detected ? detected.index : "none"}).`
+      };
+    }
+  }
+  return { ok: true };
+}
 server.registerTool(
   "check_sequence",
   {
-    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries valid join provenance, has its local join finished. A job saved before that provenance, or whose provenance is missing or not usable, is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
+    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries valid join provenance which matches the clips, has its local join finished. A job saved before that provenance, or whose provenance is missing, not usable, or does not match the clips, is left byte-for-byte unchanged, and the reply says why and to call assemble_film. Otherwise it only reads the job.",
     inputSchema: external_exports.object({
       jobId: external_exports.string().describe("The jobId render_sequence returned.")
     })
@@ -54919,7 +54960,8 @@ server.registerTool(
     const shotsReady = job.shots.length > 0 && job.shots.length === job.shotCount && job.shots.every((shot) => Boolean(shot.localPath));
     const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed");
     const provenance = interrupted && await interruptedJobHasUsableProvenance(job);
-    if (provenance) {
+    const trust = provenance ? await recordedChainAgrees(job) : { ok: true };
+    if (provenance && trust.ok) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,
@@ -54938,6 +54980,9 @@ server.registerTool(
     const legacyNote = interrupted && !provenance ? {
       assembleAvailable: true,
       message: "Shots are on disk, but this job was saved before join provenance was recorded, so the file was left unchanged. Call assemble_film with those shot files to build the film."
+    } : interrupted && !trust.ok ? {
+      assembleAvailable: true,
+      message: `Shots are on disk, but the recorded chain frame was not trusted, so the file was left unchanged. ${trust.reason} Call assemble_film with those shot files to build the film.`
     } : {};
     return structuredText({ ...jobPayload(job), ...legacyNote, ...queuedFields(queued) });
   }

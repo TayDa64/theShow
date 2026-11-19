@@ -15,6 +15,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { detectChainFrame } from "../src/lib/detectChain.ts";
 import { acceptRenderedTake, TakeAdmissionSchema, type TakeReport } from "./admission.ts";
 import { resolveBeatDuration, resolveBeatShotType } from "./beats.ts";
 import { featheredSubjectCutout } from "./cutout.ts";
@@ -5044,6 +5045,56 @@ async function interruptedJobHasUsableProvenance(job: SequenceJob): Promise<bool
   return usable;
 }
 
+type ChainTrust = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A chain index that is merely inside the file can still be the wrong frame.
+ * Pts has to name that same frame, within half a frame, and the free local
+ * detector has to name it too. One tail decode per join. Indexes that are not
+ * whole, negative, or past the last frame are refused above, not here.
+ */
+async function recordedChainAgrees(job: SequenceJob): Promise<ChainTrust> {
+  for (let index = 0; index < job.shots.length; index += 1) {
+    const shot = job.shots[index];
+    const recorded = shot.chainFrameIndex;
+    if (recorded === undefined || !shot.localPath) continue;
+    let frameCount = 0;
+    let fps = 0;
+    try {
+      const probe = await probeVideo(shot.localPath);
+      frameCount = probe.frameCount;
+      fps = probe.fps;
+    } catch {
+      return { ok: false, reason: "The chain clip could not be read." };
+    }
+    if (typeof recorded !== "number" || !Number.isInteger(recorded) || recorded < 0 || recorded >= frameCount) continue;
+    const pts = shot.chainFramePts;
+    if (typeof pts === "number" && Number.isFinite(pts) && pts >= 0 && fps > 0) {
+      const halfFrame = 0.5 / fps;
+      if (Math.abs(pts - recorded / fps) > halfFrame) {
+        return {
+          ok: false,
+          reason: `chainFramePts ${pts} is more than half a frame from chainFrameIndex ${recorded} at ${fps} fps.`,
+        };
+      }
+    }
+    const next = job.shots[index + 1];
+    if (!next?.localPath) continue;
+    const detected = await detectChainFrame({
+      outgoingFile: shot.localPath,
+      incomingFile: next.localPath,
+      outgoingFrameCount: frameCount,
+    });
+    if (!detected || detected.index !== recorded) {
+      return {
+        ok: false,
+        reason: `chainFrameIndex ${recorded} does not match the frame detected from the clips (${detected ? detected.index : "none"}).`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * Poll a render_sequence job.
  *
@@ -5056,9 +5107,9 @@ server.registerTool(
     description:
       "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. " +
       "A job from this version that was interrupted after its shots were saved, and that carries valid join " +
-      "provenance, has its local join finished. A job saved before that provenance, or whose provenance is " +
-      "missing or not usable, is left byte-for-byte unchanged, and the reply says to call assemble_film. " +
-      "Otherwise it only reads the job.",
+      "provenance which matches the clips, has its local join finished. A job saved before that provenance, " +
+      "or whose provenance is missing, not usable, or does not match the clips, is left byte-for-byte " +
+      "unchanged, and the reply says why and to call assemble_film. Otherwise it only reads the job.",
     inputSchema: z.object({
       jobId: z.string().describe("The jobId render_sequence returned."),
     }),
@@ -5079,7 +5130,8 @@ server.registerTool(
     const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false
       && (job.state === "stopped" || job.state === "failed");
     const provenance = interrupted && await interruptedJobHasUsableProvenance(job);
-    if (provenance) {
+    const trust = provenance ? await recordedChainAgrees(job) : { ok: true as const };
+    if (provenance && trust.ok) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,
@@ -5100,7 +5152,12 @@ server.registerTool(
           assembleAvailable: true,
           message: "Shots are on disk, but this job was saved before join provenance was recorded, so the file was left unchanged. Call assemble_film with those shot files to build the film.",
         }
-      : {};
+      : interrupted && !trust.ok
+        ? {
+            assembleAvailable: true,
+            message: `Shots are on disk, but the recorded chain frame was not trusted, so the file was left unchanged. ${trust.reason} Call assemble_film with those shot files to build the film.`,
+          }
+        : {};
     return structuredText({ ...jobPayload(job), ...legacyNote, ...queuedFields(queued) });
   }
 );
