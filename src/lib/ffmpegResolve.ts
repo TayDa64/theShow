@@ -12,7 +12,7 @@ export type ToolPaths = { ffmpeg: string; ffprobe: string; hasXfade: boolean };
 let toolCache: { key: string; value: Promise<ToolPaths> } | undefined;
 
 function cacheKey(): string {
-  return `${process.env.FFMPEG_PATH ?? ''}|${process.env.FFPROBE_PATH ?? ''}`;
+  return `${process.env.FFMPEG_PATH ?? ''}|${process.env.FFPROBE_PATH ?? ''}|${process.env.THESHOW_NO_FFPROBE ?? ''}`;
 }
 
 async function binaryVersion(bin: string): Promise<string | undefined> {
@@ -37,6 +37,54 @@ export function resetToolCache(): void {
   toolCache = undefined;
 }
 
+/** The installer build ships ffmpeg only. A derived ffprobe path that is not a binary must not be used. */
+async function resolveFfprobe(ffmpegPath: string): Promise<string> {
+  if (process.env.THESHOW_NO_FFPROBE === '1') return '';
+  const candidates: string[] = [];
+  if (process.env.FFPROBE_PATH) candidates.push(process.env.FFPROBE_PATH);
+  if (ffmpegPath !== 'ffmpeg') candidates.push(ffmpegPath.replace(/ffmpeg$/, 'ffprobe'));
+  candidates.push('/usr/bin/ffprobe', 'ffprobe');
+  for (const candidate of candidates) {
+    if (await binaryVersion(candidate)) return candidate;
+  }
+  return '';
+}
+
+async function readFfmpegBanner(file: string): Promise<string> {
+  const { ffmpeg } = await resolveTools();
+  try {
+    const { stderr } = await exec(ffmpeg, ['-hide_banner', '-i', file]);
+    return `${stderr}`;
+  } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error
+      ? String((error as { stderr?: unknown }).stderr ?? '')
+      : '';
+    if (stderr.includes('Duration:')) return stderr;
+    throw error;
+  }
+}
+
+function clockToSeconds(clock: string): number {
+  const match = clock.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+  return (Number(match[1]) * 3600) + (Number(match[2]) * 60) + Number(match[3]);
+}
+
+async function countFramesWithFfmpeg(file: string): Promise<number> {
+  const { ffmpeg } = await resolveTools();
+  const { stdout } = await exec(ffmpeg, [
+    '-hide_banner', '-nostats',
+    '-i', file,
+    '-map', '0:v:0',
+    '-f', 'null',
+    '-progress', 'pipe:1',
+    '-',
+  ], { maxBuffer: 8 * 1024 * 1024 });
+  const frames = [...String(stdout).matchAll(/^frame=(\d+)/gm)];
+  const last = frames.at(-1);
+  return last ? Number.parseInt(last[1], 10) : 0;
+}
+
 /** Pick the best available FFmpeg. A newer system binary beats the 2018 installer. */
 export function resolveTools(): Promise<ToolPaths> {
   const key = cacheKey();
@@ -57,8 +105,7 @@ export function resolveTools(): Promise<ToolPaths> {
         for (const candidate of candidates) {
           const version = await binaryVersion(candidate);
           if (!version) continue;
-          const ffprobe = process.env.FFPROBE_PATH
-            || (candidate === 'ffmpeg' ? 'ffprobe' : candidate.replace(/ffmpeg$/, 'ffprobe'));
+          const ffprobe = await resolveFfprobe(candidate);
           return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, 'xfade') };
         }
         throw new Error('No working FFmpeg binary found. Set FFMPEG_PATH.');
@@ -102,6 +149,7 @@ function parseRate(value: string | undefined): number {
 
 export async function probeVideo(file: string): Promise<VideoProbe> {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) return probeVideoWithFfmpeg(file);
   const { stdout } = await exec(ffprobe, [
     '-v', 'error',
     '-select_streams', 'v:0',
@@ -141,8 +189,42 @@ export async function probeVideo(file: string): Promise<VideoProbe> {
   };
 }
 
+async function probeVideoWithFfmpeg(file: string): Promise<VideoProbe> {
+  const banner = await readFfmpegBanner(file);
+  const video = banner.split('\n').find((line) => line.includes('Video:'));
+  if (!video) throw new Error(`Could not read video geometry of ${file}`);
+  const size = video.match(/(\d{2,5})x(\d{2,5})/);
+  const fpsMatch = video.match(/(\d+(?:\.\d+)?) fps/) ?? video.match(/(\d+(?:\.\d+)?) tbr/);
+  const sar = video.match(/SAR (\d+:\d+)/)?.[1] ?? '1:1';
+  const duration = clockToSeconds(banner.match(/Duration:\s*([0-9:.]+)/)?.[1] ?? '');
+  const width = Number.parseInt(size?.[1] ?? '', 10);
+  const height = Number.parseInt(size?.[2] ?? '', 10);
+  const fps = Number.parseFloat(fpsMatch?.[1] ?? '');
+  const frameCount = await countFramesWithFfmpeg(file);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !(fps > 0) || !(frameCount > 0)) {
+    throw new Error(`Could not read frame geometry of ${file}`);
+  }
+  return {
+    width,
+    height,
+    fps,
+    frameCount,
+    duration: duration > 0 ? duration : frameCount / fps,
+    sar,
+  };
+}
+
 export async function probeDuration(file: string): Promise<number | undefined> {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) {
+    try {
+      const banner = await readFfmpegBanner(file);
+      const seconds = clockToSeconds(banner.match(/Duration:\s*([0-9:.]+)/)?.[1] ?? '');
+      return seconds > 0 ? seconds : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   try {
     const { stdout } = await exec(ffprobe, [
       '-v', 'error',
@@ -159,6 +241,7 @@ export async function probeDuration(file: string): Promise<number | undefined> {
 
 export async function probeAudioDuration(file: string): Promise<number | undefined> {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) return probeDuration(file);
   try {
     const { stdout } = await exec(ffprobe, [
       '-v', 'error',
@@ -176,6 +259,14 @@ export async function probeAudioDuration(file: string): Promise<number | undefin
 
 export async function hasAudioStream(file: string): Promise<boolean> {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) {
+    try {
+      const banner = await readFfmpegBanner(file);
+      return banner.includes('Audio:');
+    } catch {
+      return false;
+    }
+  }
   try {
     const { stdout } = await exec(ffprobe, [
       '-v', 'error',

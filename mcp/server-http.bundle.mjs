@@ -44961,7 +44961,7 @@ import { promisify } from "node:util";
 var exec = promisify(execFile);
 var toolCache;
 function cacheKey2() {
-  return `${process.env.FFMPEG_PATH ?? ""}|${process.env.FFPROBE_PATH ?? ""}`;
+  return `${process.env.FFMPEG_PATH ?? ""}|${process.env.FFPROBE_PATH ?? ""}|${process.env.THESHOW_NO_FFPROBE ?? ""}`;
 }
 async function binaryVersion(bin) {
   try {
@@ -44978,6 +44978,52 @@ async function hasFilter(ffmpeg, filter) {
   } catch {
     return false;
   }
+}
+async function resolveFfprobe(ffmpegPath) {
+  if (process.env.THESHOW_NO_FFPROBE === "1") return "";
+  const candidates = [];
+  if (process.env.FFPROBE_PATH) candidates.push(process.env.FFPROBE_PATH);
+  if (ffmpegPath !== "ffmpeg") candidates.push(ffmpegPath.replace(/ffmpeg$/, "ffprobe"));
+  candidates.push("/usr/bin/ffprobe", "ffprobe");
+  for (const candidate of candidates) {
+    if (await binaryVersion(candidate)) return candidate;
+  }
+  return "";
+}
+async function readFfmpegBanner(file2) {
+  const { ffmpeg } = await resolveTools();
+  try {
+    const { stderr } = await exec(ffmpeg, ["-hide_banner", "-i", file2]);
+    return `${stderr}`;
+  } catch (error62) {
+    const stderr = error62 && typeof error62 === "object" && "stderr" in error62 ? String(error62.stderr ?? "") : "";
+    if (stderr.includes("Duration:")) return stderr;
+    throw error62;
+  }
+}
+function clockToSeconds(clock) {
+  const match = clock.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+async function countFramesWithFfmpeg(file2) {
+  const { ffmpeg } = await resolveTools();
+  const { stdout } = await exec(ffmpeg, [
+    "-hide_banner",
+    "-nostats",
+    "-i",
+    file2,
+    "-map",
+    "0:v:0",
+    "-f",
+    "null",
+    "-progress",
+    "pipe:1",
+    "-"
+  ], { maxBuffer: 8 * 1024 * 1024 });
+  const frames = [...String(stdout).matchAll(/^frame=(\d+)/gm)];
+  const last = frames.at(-1);
+  return last ? Number.parseInt(last[1], 10) : 0;
 }
 function resolveTools() {
   const key = cacheKey2();
@@ -44997,7 +45043,7 @@ function resolveTools() {
         for (const candidate of candidates) {
           const version2 = await binaryVersion(candidate);
           if (!version2) continue;
-          const ffprobe = process.env.FFPROBE_PATH || (candidate === "ffmpeg" ? "ffprobe" : candidate.replace(/ffmpeg$/, "ffprobe"));
+          const ffprobe = await resolveFfprobe(candidate);
           return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, "xfade") };
         }
         throw new Error("No working FFmpeg binary found. Set FFMPEG_PATH.");
@@ -45028,6 +45074,7 @@ function parseRate(value) {
 }
 async function probeVideo(file2) {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) return probeVideoWithFfmpeg(file2);
   const { stdout } = await exec(ffprobe, [
     "-v",
     "error",
@@ -45074,8 +45121,41 @@ async function probeVideo(file2) {
     sar: stream.sample_aspect_ratio || "1:1"
   };
 }
+async function probeVideoWithFfmpeg(file2) {
+  const banner = await readFfmpegBanner(file2);
+  const video = banner.split("\n").find((line) => line.includes("Video:"));
+  if (!video) throw new Error(`Could not read video geometry of ${file2}`);
+  const size = video.match(/(\d{2,5})x(\d{2,5})/);
+  const fpsMatch = video.match(/(\d+(?:\.\d+)?) fps/) ?? video.match(/(\d+(?:\.\d+)?) tbr/);
+  const sar = video.match(/SAR (\d+:\d+)/)?.[1] ?? "1:1";
+  const duration3 = clockToSeconds(banner.match(/Duration:\s*([0-9:.]+)/)?.[1] ?? "");
+  const width = Number.parseInt(size?.[1] ?? "", 10);
+  const height = Number.parseInt(size?.[2] ?? "", 10);
+  const fps = Number.parseFloat(fpsMatch?.[1] ?? "");
+  const frameCount = await countFramesWithFfmpeg(file2);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !(fps > 0) || !(frameCount > 0)) {
+    throw new Error(`Could not read frame geometry of ${file2}`);
+  }
+  return {
+    width,
+    height,
+    fps,
+    frameCount,
+    duration: duration3 > 0 ? duration3 : frameCount / fps,
+    sar
+  };
+}
 async function probeDuration(file2) {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) {
+    try {
+      const banner = await readFfmpegBanner(file2);
+      const seconds2 = clockToSeconds(banner.match(/Duration:\s*([0-9:.]+)/)?.[1] ?? "");
+      return seconds2 > 0 ? seconds2 : void 0;
+    } catch {
+      return void 0;
+    }
+  }
   try {
     const { stdout } = await exec(ffprobe, [
       "-v",
@@ -45094,6 +45174,14 @@ async function probeDuration(file2) {
 }
 async function hasAudioStream(file2) {
   const { ffprobe } = await resolveTools();
+  if (!ffprobe) {
+    try {
+      const banner = await readFfmpegBanner(file2);
+      return banner.includes("Audio:");
+    } catch {
+      return false;
+    }
+  }
   try {
     const { stdout } = await exec(ffprobe, [
       "-v",

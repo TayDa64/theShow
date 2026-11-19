@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { assembleClips, extractLastFrame as extractMcpFrame } from '../mcp/media';
 import { assembleFilm, extractLastFrame as extractStudioFrame } from '../src/lib/ffmpegComposer';
 import { assemblePlanned } from '../src/lib/assembleShared';
-import { resetToolCache } from '../src/lib/ffmpegResolve';
+import { probeVideo, resetToolCache } from '../src/lib/ffmpegResolve';
 import { app } from '../server';
 
 const exec = promisify(execFile);
@@ -102,6 +102,7 @@ describe('frame-exact joins', () => {
   afterEach(async () => {
     delete process.env.FFMPEG_PATH;
     delete process.env.FFPROBE_PATH;
+    delete process.env.THESHOW_NO_FFPROBE;
     delete process.env.THESHOW_VIDEO_BACKEND;
     resetToolCache();
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -356,6 +357,22 @@ describe('frame-exact joins', () => {
       outputSize: { width: Number.NaN, height: Number.NaN },
     })).rejects.toThrow(/Invalid|Option not found|Error initializing/);
   }, 60_000);
+
+  it('probes frame geometry with ffmpeg when ffprobe is not installed', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const file = path.join(dir, 'a.mp4');
+    await indexClip(file, { frames: 24, width: 320, height: 180 });
+    process.env.FFMPEG_PATH = BUNDLED;
+    process.env.FFPROBE_PATH = '/nonexistent/ffprobe';
+    process.env.THESHOW_NO_FFPROBE = '1';
+    resetToolCache();
+    const probe = await probeVideo(file);
+    expect(probe.frameCount).toBe(24);
+    expect(probe.width).toBe(320);
+    expect(probe.height).toBe(180);
+    expect(probe.fps).toBe(24);
+  }, 30_000);
 
   it('extracts the true last frame from both composers', async () => {
     const dir = await withDir();
