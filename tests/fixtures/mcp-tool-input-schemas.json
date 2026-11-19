@@ -2690,7 +2690,7 @@
     },
     {
       "name": "check_sequence",
-      "description": "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries join provenance, has its local join finished. A job saved before that provenance is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
+      "description": "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries valid join provenance, has its local join finished. A job saved before that provenance, or whose provenance is missing or not usable, is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
       "inputSchema": {
         "type": "object",
         "properties": {

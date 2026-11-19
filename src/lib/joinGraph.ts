@@ -48,6 +48,8 @@ function audioTap(input: {
   labelIndex: number;
   hasAudio: boolean;
   startFrame: number;
+  /** Source-frame rate. The trim index is a source frame, including a chain's dropped frame 0. */
+  sourceFps: number;
   frames: number;
   fps: number;
   sampleRate: number;
@@ -55,7 +57,8 @@ function audioTap(input: {
   fadeOut: boolean;
 }): string {
   const lengthSamples = Math.max(1, Math.round(input.frames / input.fps * input.sampleRate));
-  const startSamples = Math.max(0, Math.round(input.startFrame / input.fps * input.sampleRate));
+  const sourceFps = input.sourceFps > 0 ? input.sourceFps : input.fps;
+  const startSamples = Math.max(0, Math.round(input.startFrame / sourceFps * input.sampleRate));
   const endSamples = startSamples + lengthSamples;
   const fadeSamples = Math.max(1, Math.round(input.sampleRate / input.fps * AUDIO_MICRO_FADE_FRAMES));
   const fade = Math.min(fadeSamples, Math.max(1, lengthSamples - 1));
@@ -115,6 +118,7 @@ export function buildJoinFilterGraph(input: JoinGraphInput): JoinGraph {
       labelIndex: index,
       hasAudio: clip.hasAudio,
       startFrame: clip.startFrame,
+      sourceFps: clip.sourceFps,
       frames: clip.outputFrames,
       fps,
       sampleRate,

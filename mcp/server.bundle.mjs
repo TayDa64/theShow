@@ -43080,11 +43080,18 @@ function chooseChainIndex(scores, threshold) {
   let best;
   for (const score of scores) {
     if (score.correlation < threshold) continue;
-    const better = best === void 0 || score.correlation > best.correlation + 1e-3;
-    const tied = best !== void 0 && Math.abs(score.correlation - best.correlation) <= 1e-3 && score.index > best.index;
-    if (better || tied) best = score;
+    if (best === void 0 || chainScoreBeats(score, best)) best = score;
   }
   return best;
+}
+function chainScoreBeats(score, best) {
+  if (score.correlation > best.correlation + 1e-3) return true;
+  if (best.correlation > score.correlation + 1e-3) return false;
+  if (score.mae !== void 0 && best.mae !== void 0) {
+    if (score.mae < best.mae - 1e-6) return true;
+    if (best.mae < score.mae - 1e-6) return false;
+  }
+  return score.index > best.index;
 }
 function meanAbs(left, right) {
   let difference = 0;
@@ -43149,10 +43156,11 @@ async function detectChainFrame(input2) {
     const firstIndex = Math.max(input2.outgoingFrameCount - outgoing.length, 0);
     const scores = [];
     outgoing.forEach((frame, offset) => {
-      if (meanAbs(frame, incoming) > 18) return;
+      const mae = meanAbs(frame, incoming);
+      if (mae > 18) return;
       const correlation = correlateGrayBuffers(grayFromRgb(frame), incomingGray) ?? flatFrameMatch(grayFromRgb(frame), incomingGray);
       if (correlation === void 0) return;
-      scores.push({ index: firstIndex + offset, correlation });
+      scores.push({ index: firstIndex + offset, correlation, mae });
     });
     return chooseChainIndex(scores, threshold);
   } catch {
@@ -43171,7 +43179,8 @@ function butt(join11) {
 }
 function audioTap(input2) {
   const lengthSamples = Math.max(1, Math.round(input2.frames / input2.fps * input2.sampleRate));
-  const startSamples = Math.max(0, Math.round(input2.startFrame / input2.fps * input2.sampleRate));
+  const sourceFps = input2.sourceFps > 0 ? input2.sourceFps : input2.fps;
+  const startSamples = Math.max(0, Math.round(input2.startFrame / sourceFps * input2.sampleRate));
   const endSamples = startSamples + lengthSamples;
   const fadeSamples = Math.max(1, Math.round(input2.sampleRate / input2.fps * AUDIO_MICRO_FADE_FRAMES));
   const fade = Math.min(fadeSamples, Math.max(1, lengthSamples - 1));
@@ -43213,6 +43222,7 @@ function buildJoinFilterGraph(input2) {
       labelIndex: index,
       hasAudio: clip.hasAudio,
       startFrame: clip.startFrame,
+      sourceFps: clip.sourceFps,
       frames: clip.outputFrames,
       fps,
       sampleRate,
@@ -52713,10 +52723,48 @@ server.registerTool(
     });
   }
 );
+var JOIN_KINDS = ["chain", "board-match", "cut", "crossfade"];
+var JOIN_REQUESTS = ["auto", "chain", "board-match", "cut", "crossfade"];
+function isOneOf(value, allowed) {
+  return typeof value === "string" && allowed.includes(value);
+}
+async function interruptedJobHasUsableProvenance(job) {
+  let usable = false;
+  if (job.joins !== void 0) {
+    if (!Array.isArray(job.joins) || job.joins.length !== Math.max(job.shots.length - 1, 0)) return false;
+    for (const join11 of job.joins) {
+      if (!join11 || typeof join11 !== "object" || !isOneOf(join11.type, JOIN_KINDS)) return false;
+    }
+    usable = true;
+  }
+  const outputFps = job.settings?.outputFps;
+  if (outputFps !== void 0) {
+    if (typeof outputFps !== "number" || !Number.isFinite(outputFps) || outputFps <= 0) return false;
+    usable = true;
+  }
+  for (const shot of job.shots) {
+    if (shot.joinIn !== void 0 && !isOneOf(shot.joinIn, JOIN_REQUESTS)) return false;
+    if (shot.chainFramePts !== void 0) {
+      if (typeof shot.chainFramePts !== "number" || !Number.isFinite(shot.chainFramePts) || shot.chainFramePts < 0) return false;
+    }
+    if (shot.chainFrameIndex !== void 0) {
+      if (typeof shot.chainFrameIndex !== "number" || !Number.isInteger(shot.chainFrameIndex) || shot.chainFrameIndex < 0) return false;
+      if (!shot.localPath) return false;
+      try {
+        const probe2 = await probeVideo(shot.localPath);
+        if (shot.chainFrameIndex >= probe2.frameCount) return false;
+      } catch {
+        return false;
+      }
+      usable = true;
+    }
+  }
+  return usable;
+}
 server.registerTool(
   "check_sequence",
   {
-    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries join provenance, has its local join finished. A job saved before that provenance is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
+    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries valid join provenance, has its local join finished. A job saved before that provenance, or whose provenance is missing or not usable, is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
     inputSchema: external_exports.object({
       jobId: external_exports.string().describe("The jobId render_sequence returned.")
     })
@@ -52733,8 +52781,8 @@ server.registerTool(
     }
     const shotsReady = job.shots.length > 0 && job.shots.length === job.shotCount && job.shots.every((shot) => Boolean(shot.localPath));
     const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed");
-    const provenance = job.settings?.outputFps !== void 0 || job.joins !== void 0 || job.shots.some((shot) => shot.chainFrameIndex !== void 0 || shot.chainFramePts !== void 0 || shot.joinIn !== void 0);
-    if (interrupted && provenance) {
+    const provenance = interrupted && await interruptedJobHasUsableProvenance(job);
+    if (provenance) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,

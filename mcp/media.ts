@@ -19,13 +19,14 @@ import { correlateGrayBuffers } from "../src/lib/frameMatch";
 import {
   hasAudioStream,
   probeDuration,
+  probeVideo,
   resolveTools,
 } from "../src/lib/ffmpegResolve";
 import type { JoinRequest, PlannedJoin, TrimEndSource } from "../src/lib/joinPlan";
 
 const exec = promisify(execFile);
 
-export { assertBedCoversFilm, correlateGrayBuffers, hasAudioStream, probeDuration, resolveTools };
+export { assertBedCoversFilm, correlateGrayBuffers, hasAudioStream, probeDuration, probeVideo, resolveTools };
 
 /**
  * Where generated frames and films land.

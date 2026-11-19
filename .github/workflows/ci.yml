@@ -80,8 +80,10 @@ jobs:
       - run: npm ci
       - name: install ffmpeg 7.1
         run: |
-          curl -fsSL -o /tmp/ffmpeg71.tar.xz \
-            https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz
+          # Pinned autobuild. sha256sum -c fails the job when the archive changes.
+          url=https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz
+          curl -fsSL -o /tmp/ffmpeg71.tar.xz "$url"
+          echo "c1e6caf48923dd8e6bc5e54d51ba70c321175b8162ae9c414c392990e72f0e79  /tmp/ffmpeg71.tar.xz" | sha256sum -c -
           mkdir -p /tmp/ffmpeg71-src
           tar -xJf /tmp/ffmpeg71.tar.xz -C /tmp/ffmpeg71-src --strip-components=1
           /tmp/ffmpeg71-src/bin/ffmpeg -version | head -1

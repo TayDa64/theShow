@@ -131,6 +131,64 @@ describe('legacy jobs and local recovery', () => {
     expect(sha(await readFile(file, 'utf8'))).toBe(sha(original));
   });
 
+  it.each([
+    ['joins:null', { joins: null }],
+    ['settings.outputFps:null', { settings: { outputFps: null } }],
+    ['a single joinIn', { shot: { joinIn: 'chain' } }],
+    ["chainFrameIndex:'999'", { shot: { chainFrameIndex: '999' } }],
+  ])('leaves a forged stopped job byte-identical (%s)', async (_label, forged) => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forged-stopped-'));
+    const clip = path.join(dir, 'a.mp4');
+    await exec('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=24:d=0.2',
+      '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo',
+      '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      clip,
+    ]);
+    const id = `seq_forged_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const shotExtra = 'shot' in forged ? forged.shot : {};
+    const settingsExtra = 'settings' in forged ? forged.settings : {};
+    const top: Record<string, unknown> = {};
+    if ('joins' in forged) top.joins = forged.joins;
+    const original = JSON.stringify({
+      id,
+      startedAt: 10,
+      state: 'stopped',
+      shotCount: 1,
+      completed: 1,
+      estimateUsd: 0,
+      spentUsd: 0,
+      error: 'The server stopped while this film was rendering.',
+      shots: [{
+        index: 1,
+        title: 'Old',
+        status: 'completed',
+        localPath: clip,
+        prompt: 'A lantern.',
+        durationSeconds: 1,
+        ...shotExtra,
+      }],
+      settings: {
+        aspectRatio: '16:9',
+        resolution: '720p',
+        model: 'grok-imagine-video-1.5',
+        fadeDuration: 0,
+        assemble: true,
+        pin: 'start',
+        ...settingsExtra,
+      },
+      ...top,
+    });
+    const file = path.join(JOBS_DIR, `${id}.json`);
+    await writeFile(file, original);
+    const checked = JSON.parse(toolText(await client.callTool({ name: 'check_sequence', arguments: { jobId: id } })));
+    expect(checked.state).toBe('stopped');
+    expect(checked.filmPath).toBeUndefined();
+    expect(checked.assembleAvailable).toBe(true);
+    expect(sha(await readFile(file, 'utf8'))).toBe(sha(original));
+  });
+
   it('finishes a killed assembly from the job file alone', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'recover-'));
     const clips = [path.join(dir, 'a.mp4'), path.join(dir, 'b.mp4')];

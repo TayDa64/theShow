@@ -32,6 +32,7 @@ import {
   grayscaleStillCorrelation,
   pathToDataUrl,
   probeDuration,
+  probeVideo,
 } from "./media.ts";
 import {
   costUsdFromUsage,
@@ -4997,6 +4998,52 @@ server.registerTool(
   }
 );
 
+const JOIN_KINDS = ["chain", "board-match", "cut", "crossfade"] as const;
+const JOIN_REQUESTS = ["auto", "chain", "board-match", "cut", "crossfade"] as const;
+
+function isOneOf(value: unknown, allowed: readonly string[]): boolean {
+  return typeof value === "string" && allowed.includes(value);
+}
+
+/**
+ * Interrupted jobs are finished only from provenance this version actually wrote.
+ * A present key is not enough: null, a wrong type, a join list of the wrong
+ * length, or one join field by itself is left unread, the same as a legacy job.
+ */
+async function interruptedJobHasUsableProvenance(job: SequenceJob): Promise<boolean> {
+  let usable = false;
+  if (job.joins !== undefined) {
+    if (!Array.isArray(job.joins) || job.joins.length !== Math.max(job.shots.length - 1, 0)) return false;
+    for (const join of job.joins) {
+      if (!join || typeof join !== "object" || !isOneOf((join as { type?: unknown }).type, JOIN_KINDS)) return false;
+    }
+    usable = true;
+  }
+  const outputFps = job.settings?.outputFps as unknown;
+  if (outputFps !== undefined) {
+    if (typeof outputFps !== "number" || !Number.isFinite(outputFps) || outputFps <= 0) return false;
+    usable = true;
+  }
+  for (const shot of job.shots) {
+    if (shot.joinIn !== undefined && !isOneOf(shot.joinIn, JOIN_REQUESTS)) return false;
+    if (shot.chainFramePts !== undefined) {
+      if (typeof shot.chainFramePts !== "number" || !Number.isFinite(shot.chainFramePts) || shot.chainFramePts < 0) return false;
+    }
+    if (shot.chainFrameIndex !== undefined) {
+      if (typeof shot.chainFrameIndex !== "number" || !Number.isInteger(shot.chainFrameIndex) || shot.chainFrameIndex < 0) return false;
+      if (!shot.localPath) return false;
+      try {
+        const probe = await probeVideo(shot.localPath);
+        if (shot.chainFrameIndex >= probe.frameCount) return false;
+      } catch {
+        return false;
+      }
+      usable = true;
+    }
+  }
+  return usable;
+}
+
 /**
  * Poll a render_sequence job.
  *
@@ -5008,9 +5055,10 @@ server.registerTool(
   {
     description:
       "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. " +
-      "A job from this version that was interrupted after its shots were saved, and that carries join " +
-      "provenance, has its local join finished. A job saved before that provenance is left byte-for-byte " +
-      "unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
+      "A job from this version that was interrupted after its shots were saved, and that carries valid join " +
+      "provenance, has its local join finished. A job saved before that provenance, or whose provenance is " +
+      "missing or not usable, is left byte-for-byte unchanged, and the reply says to call assemble_film. " +
+      "Otherwise it only reads the job.",
     inputSchema: z.object({
       jobId: z.string().describe("The jobId render_sequence returned."),
     }),
@@ -5030,10 +5078,8 @@ server.registerTool(
       && job.shots.every((shot) => Boolean(shot.localPath));
     const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false
       && (job.state === "stopped" || job.state === "failed");
-    const provenance = job.settings?.outputFps !== undefined
-      || job.joins !== undefined
-      || job.shots.some((shot) => shot.chainFrameIndex !== undefined || shot.chainFramePts !== undefined || shot.joinIn !== undefined);
-    if (interrupted && provenance) {
+    const provenance = interrupted && await interruptedJobHasUsableProvenance(job);
+    if (provenance) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,

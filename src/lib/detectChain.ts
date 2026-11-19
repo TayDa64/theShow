@@ -10,23 +10,33 @@ const RGB_FRAME_BYTES = 32 * 32 * 3;
 export interface ChainScore {
   index: number;
   correlation: number;
+  /** Mean absolute RGB difference against the incoming frame. Lower is a closer picture. */
+  mae?: number;
 }
 
 /**
- * Among scores at or above the threshold, keep the latest frame of the best
- * correlation. Equal scores, within the 0.001 rounding of the gray correlation,
- * are a tie and the later frame wins. An earlier frame used to win, which
- * pulled a low-texture chain back to the start of the 12-frame window.
+ * Among scores at or above the threshold, keep the closest picture.
+ * Correlation within 0.001 is a tie. That tie breaks on the lowest RGB error,
+ * and only an equal error keeps the later frame. Taking the later frame first
+ * repeats the frame after a low-texture chain.
  */
 export function chooseChainIndex(scores: ChainScore[], threshold: number): ChainScore | undefined {
   let best: ChainScore | undefined;
   for (const score of scores) {
     if (score.correlation < threshold) continue;
-    const better = best === undefined || score.correlation > best.correlation + 0.001;
-    const tied = best !== undefined && Math.abs(score.correlation - best.correlation) <= 0.001 && score.index > best.index;
-    if (better || tied) best = score;
+    if (best === undefined || chainScoreBeats(score, best)) best = score;
   }
   return best;
+}
+
+function chainScoreBeats(score: ChainScore, best: ChainScore): boolean {
+  if (score.correlation > best.correlation + 0.001) return true;
+  if (best.correlation > score.correlation + 0.001) return false;
+  if (score.mae !== undefined && best.mae !== undefined) {
+    if (score.mae < best.mae - 1e-6) return true;
+    if (best.mae < score.mae - 1e-6) return false;
+  }
+  return score.index > best.index;
 }
 
 function meanAbs(left: Buffer, right: Buffer): number {
@@ -85,8 +95,8 @@ export interface ChainDetection {
 
 /**
  * Compare the incoming clip's frame 0 with the outgoing clip's last 12 frames.
- * One seek reads that tail. Frame 0 is read once. The best correlation at or
- * above the threshold wins, and a tie keeps the later frame.
+ * One seek reads that tail. Frame 0 is read once. Scores at or above the
+ * threshold break ties on RGB error, then on the later frame.
  */
 export async function detectChainFrame(input: {
   outgoingFile: string;
@@ -109,10 +119,11 @@ export async function detectChainFrame(input: {
     const firstIndex = Math.max(input.outgoingFrameCount - outgoing.length, 0);
     const scores: ChainScore[] = [];
     outgoing.forEach((frame, offset) => {
-      if (meanAbs(frame, incoming) > 18) return;
+      const mae = meanAbs(frame, incoming);
+      if (mae > 18) return;
       const correlation = correlateGrayBuffers(grayFromRgb(frame), incomingGray) ?? flatFrameMatch(grayFromRgb(frame), incomingGray);
       if (correlation === undefined) return;
-      scores.push({ index: firstIndex + offset, correlation });
+      scores.push({ index: firstIndex + offset, correlation, mae });
     });
     return chooseChainIndex(scores, threshold);
   } catch {

@@ -35,9 +35,9 @@ function filmPath(result: { path?: string; outputPath?: string }): string {
   return result.outputPath ?? result.path ?? '';
 }
 
-async function cueTimes(file: string): Promise<{ flashes: number[]; beeps: number[] }> {
+async function cueTimes(file: string, fps = 24): Promise<{ flashes: number[]; beeps: number[] }> {
   const frames = await yavgs(file);
-  const flashes = frames.flatMap((value, index) => (value > 200 ? [index / 24] : []));
+  const flashes = frames.flatMap((value, index) => (value > 200 ? [index / fps] : []));
   const audio = await exec('ffmpeg', [
     '-v', 'error', '-i', file, '-map', '0:a:0', '-ac', '1', '-f', 'f32le', '-',
   ], { encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 });
@@ -546,6 +546,109 @@ describe('frame-exact joins', () => {
       const beep = cues.beeps[1];
       expect(Math.abs(flash - (59 / 24))).toBeLessThan(1 / 24);
       expect(Math.abs(beep - flash)).toBeLessThan(0.025);
+    }
+  }, 60_000);
+
+  it('keeps a flash and a beep together when a 30 fps clip is trimmed inside a 24 fps film', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const quiet = async (file: string, fps: number, frames: number) => {
+      await exec('ffmpeg', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=${fps},geq=lum=30:cb=128:cr=128`,
+        '-f', 'lavfi', '-i', `aevalsrc=exprs=0:sample_rate=48000:duration=${(frames / fps).toFixed(3)}`,
+        '-frames:v', String(frames),
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+        file,
+      ]);
+    };
+    const cued = async (file: string, fps: number, frames: number, eventFrame: number) => {
+      const at = (eventFrame / fps).toFixed(3);
+      const until = (eventFrame / fps + 0.01).toFixed(3);
+      await exec('ffmpeg', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=${fps},geq=lum='if(eq(N\\,${eventFrame})\\,235\\,30)':cb=128:cr=128`,
+        '-f', 'lavfi', '-i', `aevalsrc=exprs='sin(2*PI*1000*t)*between(t\\,${at}\\,${until})':sample_rate=48000:duration=${(frames / fps).toFixed(3)}`,
+        '-frames:v', String(frames),
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+        file,
+      ]);
+    };
+    await quiet(path.join(dir, 'lead24.mp4'), 24, 48);
+    await cued(path.join(dir, 'cue30.mp4'), 30, 120, 90);
+    const trimmed30 = await both(dir, 'mix-30-24', [
+      { file: path.join(dir, 'lead24.mp4'), join: 'cut' },
+      { file: path.join(dir, 'cue30.mp4'), join: 'cut', trimStart: 1 },
+    ], 0);
+    await quiet(path.join(dir, 'lead30.mp4'), 30, 60);
+    await cued(path.join(dir, 'cue25.mp4'), 25, 100, 75);
+    const trimmed25 = await both(dir, 'mix-25-30', [
+      { file: path.join(dir, 'lead30.mp4'), join: 'cut' },
+      { file: path.join(dir, 'cue25.mp4'), join: 'cut', trimStart: 1 },
+    ], 0);
+    for (const result of [trimmed30.studio, trimmed30.mcp]) {
+      expect(result.outputFps).toBe(24);
+      const cues = await cueTimes(filmPath(result), 24);
+      expect(cues.flashes).toHaveLength(1);
+      expect(cues.beeps).toHaveLength(1);
+      const offset = Math.abs(cues.beeps[0] - cues.flashes[0]);
+      expect(offset, `30-into-24 flash ${cues.flashes[0]} beep ${cues.beeps[0]}`).toBeLessThan(0.001);
+    }
+    for (const result of [trimmed25.studio, trimmed25.mcp]) {
+      expect(result.outputFps).toBe(30);
+      const cues = await cueTimes(filmPath(result), 30);
+      expect(cues.flashes).toHaveLength(1);
+      expect(cues.beeps).toHaveLength(1);
+      const offset = Math.abs(cues.beeps[0] - cues.flashes[0]);
+      expect(offset, `25-into-30 flash ${cues.flashes[0]} beep ${cues.beeps[0]}`).toBeLessThan(0.001);
+    }
+  }, 60_000);
+
+  it('detects a chain when the incoming clip starts at frame 192', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    await indexClip(path.join(dir, 'a.mp4'), { frames: 193, audioSeconds: 8 });
+    await indexClip(path.join(dir, 'b.mp4'), { start: 192, frames: 193, audioSeconds: 8 });
+    const { studio, mcp } = await both(dir, 'ac2', [
+      { file: path.join(dir, 'a.mp4') },
+      { file: path.join(dir, 'b.mp4'), join: 'auto' },
+    ], 0);
+    for (const result of [studio, mcp]) {
+      expect(result.joins[0]).toMatchObject({ type: 'chain', chainFrameIndex: 192, detected: true });
+      const frames = await yavgs(filmPath(result));
+      expect(frames).toHaveLength(385);
+      expectIndices(frames, 0);
+    }
+  }, 60_000);
+
+  it('picks the closer low-texture frame instead of the later correlated one', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const pattern = '40+30*sin(X/5)';
+    const shifted = '43+30*sin(X/5)';
+    const other = '180+40*sin(Y/4)';
+    await exec('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=24,geq=lum='if(eq(N\\,191)\\,${pattern}\\,if(eq(N\\,192)\\,${shifted}\\,if(gte(N\\,181)\\,${other}\\,16)))':cb=128:cr=128`,
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=9',
+      '-frames:v', '193', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      path.join(dir, 'a.mp4'),
+    ]);
+    await exec('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=24,geq=lum='${pattern}':cb=128:cr=128`,
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=2',
+      '-frames:v', '48', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      path.join(dir, 'b.mp4'),
+    ]);
+    const { studio, mcp } = await both(dir, 'mae-tie', [
+      { file: path.join(dir, 'a.mp4') },
+      { file: path.join(dir, 'b.mp4'), join: 'auto' },
+    ], 0);
+    for (const result of [studio, mcp]) {
+      expect(result.joins[0]).toMatchObject({ type: 'chain', chainFrameIndex: 191, detected: true });
+      const frames = await yavgs(filmPath(result));
+      expect(frames).toHaveLength(192 + 47);
     }
   }, 60_000);
 

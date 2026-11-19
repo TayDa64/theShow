@@ -159,10 +159,17 @@ describe('join plan', () => {
 
   it('keeps the latest frame when chain scores tie', () => {
     expect(chooseChainIndex([
-      { index: 181, correlation: 1 },
-      { index: 186, correlation: 1 },
-      { index: 192, correlation: 1 },
+      { index: 181, correlation: 1, mae: 0.4 },
+      { index: 186, correlation: 1, mae: 0.4 },
+      { index: 192, correlation: 1, mae: 0.4 },
     ], CHAIN_MATCH_THRESHOLD)?.index).toBe(192);
+  });
+
+  it('breaks a correlation tie on the lowest RGB error, not the later frame', () => {
+    expect(chooseChainIndex([
+      { index: 191, correlation: 1, mae: 0.4 },
+      { index: 192, correlation: 1, mae: 3.2 },
+    ], CHAIN_MATCH_THRESHOLD)?.index).toBe(191);
   });
 
   it('stamps the output fps on every video tap, including matching rates', () => {
@@ -188,6 +195,69 @@ describe('join plan', () => {
     expect(graph.filterComplex).toContain('[1:v]trim=start_frame=1:end_frame=48,setpts=PTS-STARTPTS,fps=24,');
     expect(graph.filterComplex).toContain('atrim=start_sample=48000:end_sample=96000');
     expect(graph.filterComplex).toContain('atrim=start_sample=2000:');
+  });
+
+  it('trims mixed-rate audio from the source fps, including a dropped chain frame', () => {
+    const into24 = buildJoinFilterGraph({
+      plan: planJoins({
+        outputFps: 24,
+        crossfadeSeconds: 0,
+        xfadeAvailable: true,
+        clips: [
+          { frameCount: 24, fps: 24 },
+          { frameCount: 90, fps: 30, trimStartFrame: 30, join: 'cut' },
+        ],
+      }),
+      clips: [
+        { inputIndex: 0, hasAudio: true, sourceFps: 24, startFrame: 0, endFrame: 24, outputFrames: 24 },
+        { inputIndex: 1, hasAudio: true, sourceFps: 30, startFrame: 30, endFrame: 90, outputFrames: 48 },
+      ],
+      outputWidth: 320,
+      outputHeight: 180,
+      xfadeAvailable: true,
+    });
+    // 30 source frames at 30 fps is 1.0 s, not 30/24 s.
+    expect(into24.filterComplex).toContain('[1:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,atrim=start_sample=48000:');
+    const dropped = buildJoinFilterGraph({
+      plan: planJoins({
+        outputFps: 24,
+        crossfadeSeconds: 0,
+        xfadeAvailable: true,
+        clips: [
+          { frameCount: 24, fps: 24, chainFrameIndex: 23 },
+          { frameCount: 60, fps: 30, join: 'chain' },
+        ],
+      }),
+      clips: [
+        { inputIndex: 0, hasAudio: true, sourceFps: 24, startFrame: 0, endFrame: 24, outputFrames: 24 },
+        { inputIndex: 1, hasAudio: true, sourceFps: 30, startFrame: 1, endFrame: 60, outputFrames: 47 },
+      ],
+      outputWidth: 320,
+      outputHeight: 180,
+      xfadeAvailable: true,
+    });
+    // Dropping incoming frame 0 skips 1/30 s, which is 1600 samples, not 1/24 s.
+    expect(dropped.filterComplex).toContain('atrim=start_sample=1600:');
+    const into30 = buildJoinFilterGraph({
+      plan: planJoins({
+        outputFps: 30,
+        crossfadeSeconds: 0,
+        xfadeAvailable: true,
+        clips: [
+          { frameCount: 30, fps: 30 },
+          { frameCount: 75, fps: 25, trimStartFrame: 25, join: 'cut' },
+        ],
+      }),
+      clips: [
+        { inputIndex: 0, hasAudio: true, sourceFps: 30, startFrame: 0, endFrame: 30, outputFrames: 30 },
+        { inputIndex: 1, hasAudio: true, sourceFps: 25, startFrame: 25, endFrame: 75, outputFrames: 60 },
+      ],
+      outputWidth: 320,
+      outputHeight: 180,
+      xfadeAvailable: true,
+    });
+    expect(into30.filterComplex).toContain('atrim=start_sample=48000:');
+    expect(into30.filterComplex).not.toContain('atrim=start_sample=40000:');
   });
 
   it('names timeline joins for screen readers', () => {
