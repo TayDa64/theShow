@@ -4599,8 +4599,8 @@ var require_core = __commonJS({
             return this;
           }
           case "object": {
-            const cacheKey = schemaKeyRef;
-            this._cache.delete(cacheKey);
+            const cacheKey2 = schemaKeyRef;
+            this._cache.delete(cacheKey2);
             let id = schemaKeyRef[this.opts.schemaId];
             if (id) {
               id = (0, resolve_1.normalizeId)(id);
@@ -10497,8 +10497,8 @@ var require_core3 = __commonJS({
             return this;
           }
           case "object": {
-            const cacheKey = schemaKeyRef;
-            this._cache.delete(cacheKey);
+            const cacheKey2 = schemaKeyRef;
+            this._cache.delete(cacheKey2);
             let id = schemaKeyRef[this.opts.schemaId];
             if (id) {
               id = (0, resolve_1.normalizeId)(id);
@@ -42532,22 +42532,310 @@ function resolveBeatDuration(beat, evenSplitSeconds) {
 }
 
 // mcp/cutout.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { readFile as readFile2 } from "node:fs/promises";
-import { dirname, join as join2, parse as parse3 } from "node:path";
-import { promisify as promisify2 } from "node:util";
+import { dirname as dirname2, join as join2, parse as parse3 } from "node:path";
+import { promisify as promisify4 } from "node:util";
 
 // mcp/media.ts
-import { execFile } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir as mkdir2, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify as promisify3 } from "node:util";
+
+// src/lib/assembleShared.ts
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+
+// src/lib/detectChain.ts
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+
+// src/lib/joinPlan.ts
+var CHAIN_MATCH_THRESHOLD = 0.9;
+var CHAIN_TAIL_FRAMES = 12;
+var AUDIO_MICRO_FADE_FRAMES = 1;
+function chooseOutputFps(rates) {
+  if (rates.length === 0) return 24;
+  const grouped = /* @__PURE__ */ new Map();
+  rates.forEach((rate, index) => {
+    const key = Math.round(rate * 1e3) / 1e3;
+    const existing = grouped.get(key);
+    if (existing) existing.count += 1;
+    else grouped.set(key, { count: 1, first: index });
+  });
+  let bestRate = Math.round(rates[0] * 1e3) / 1e3;
+  let bestCount = -1;
+  let bestFirst = Number.POSITIVE_INFINITY;
+  for (const [rate, info] of grouped) {
+    if (info.count > bestCount || info.count === bestCount && info.first < bestFirst) {
+      bestRate = rate;
+      bestCount = info.count;
+      bestFirst = info.first;
+    }
+  }
+  return bestRate;
+}
+function sameFrameRate(left, right) {
+  return Math.abs(left - right) < 1e-3;
+}
+function chooseOutputSize(input2) {
+  const project = input2.project;
+  if (project) {
+    return { width: Math.round(project.width), height: Math.round(project.height) };
+  }
+  return {
+    width: Math.max(2, Math.round(input2.first.width)),
+    height: Math.max(2, Math.round(input2.first.height))
+  };
+}
+function frameIndexAtOrAfter(seconds2, fps) {
+  if (!(fps > 0) || !(seconds2 > 0)) return 0;
+  return Math.max(0, Math.ceil(seconds2 * fps - 1e-6));
+}
+function exclusiveFrameAt(seconds2, fps) {
+  if (!(fps > 0)) return 0;
+  if (!(seconds2 > 0)) return 0;
+  return Math.max(0, Math.ceil(seconds2 * fps - 1e-6));
+}
+function outputFramesFor(sourceFrames, sourceFps, outputFps) {
+  if (sourceFrames <= 0) return 0;
+  if (sameFrameRate(sourceFps, outputFps)) return sourceFrames;
+  return Math.max(1, Math.round(sourceFrames * outputFps / sourceFps));
+}
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function formatSeconds(seconds2) {
+  const rounded = Math.round(seconds2 * 1e3) / 1e3;
+  return `${Number(rounded.toFixed(3))} s`;
+}
+function joinPresentation(index, kind, crossfadeSeconds = 0) {
+  const from = index + 1;
+  const to = index + 2;
+  switch (kind) {
+    case "chain":
+      return {
+        label: "Exact frame join (chained)",
+        accessibleName: `Join ${from} \u2192 ${to}: exact frame join (chained)`
+      };
+    case "board-match":
+      return {
+        label: "Matched board frame",
+        accessibleName: `Join ${from} \u2192 ${to}: matched board frame`
+      };
+    case "cut":
+      return {
+        label: "Cut",
+        accessibleName: `Join ${from} \u2192 ${to}: cut`
+      };
+    case "crossfade":
+      return {
+        label: `Crossfade ${formatSeconds(crossfadeSeconds)}`,
+        accessibleName: `Join ${from} \u2192 ${to}: crossfade ${formatSeconds(crossfadeSeconds)}`
+      };
+    case "broken":
+      return {
+        label: "Chain broken by trim",
+        accessibleName: `Join ${from} \u2192 ${to}: chain broken by trim`
+      };
+    default: {
+      const unexpected = kind;
+      throw new Error(`Unexpected join presentation ${unexpected}`);
+    }
+  }
+}
+function classifyJoin(prev, next, crossfadeSeconds, xfadeAvailable, index) {
+  const requested = next.join ?? "auto";
+  const recorded = Number.isInteger(prev.chainFrameIndex) ? prev.chainFrameIndex : void 0;
+  const detected = Number.isInteger(next.detectedChainFrame) ? next.detectedChainFrame : void 0;
+  const userTrim = prev.trimEndSource === "user";
+  const chainIndex = recorded ?? detected;
+  const detectedUsed = recorded === void 0 && detected !== void 0;
+  let type = "cut";
+  let reason;
+  let usedIndex;
+  let detectedFlag = false;
+  if (requested === "cut") {
+    type = "cut";
+  } else if (requested === "crossfade") {
+    type = crossfadeSeconds > 0 ? "crossfade" : "cut";
+  } else if (requested === "board-match" || requested === "auto" && next.boardMatch) {
+    type = "board-match";
+    usedIndex = chainIndex ?? Math.max((prev.frameCount || 1) - 1, 0);
+    detectedFlag = detectedUsed && recorded === void 0 && detected !== void 0 && usedIndex === detected;
+  } else if (requested === "chain" || requested === "auto") {
+    const hinted = requested === "chain" || Boolean(next.chainedFromPrevious);
+    if (chainIndex !== void 0 && (hinted || detected !== void 0 || recorded !== void 0)) {
+      type = "chain";
+      usedIndex = chainIndex;
+      detectedFlag = detectedUsed;
+    } else if (hinted) {
+      type = crossfadeSeconds > 0 ? "crossfade" : "cut";
+      reason = "chain-frame-unresolved";
+    } else if (crossfadeSeconds > 0) {
+      type = "crossfade";
+    } else {
+      type = "cut";
+    }
+  } else {
+    const unexpected = requested;
+    throw new Error(`Unexpected join request ${unexpected}`);
+  }
+  if ((type === "chain" || type === "board-match") && userTrim) {
+    type = crossfadeSeconds > 0 ? "crossfade" : "cut";
+    reason = "chain-broken-by-trim";
+    usedIndex = void 0;
+    detectedFlag = false;
+  }
+  let applied = type;
+  if (type === "crossfade" && !xfadeAvailable) {
+    applied = "emulated";
+    reason = reason ?? "xfade-unavailable";
+  }
+  const intactSeam = (type === "chain" || type === "board-match") && reason !== "chain-broken-by-trim";
+  return {
+    requested,
+    type,
+    applied,
+    reason,
+    chainFrameIndex: intactSeam ? usedIndex : void 0,
+    detected: intactSeam ? detectedFlag : void 0,
+    brokenByTrim: reason === "chain-broken-by-trim",
+    intactSeam
+  };
+}
+function sourceWindow(clip, incomingSeam, outgoing) {
+  const frameCount = Math.max(clip.frameCount, 1);
+  let start = clamp(clip.trimStartFrame ?? 0, 0, frameCount - 1);
+  let end = clamp(clip.trimEndFrame ?? frameCount, start + 1, frameCount);
+  if (outgoing?.intactSeam && outgoing.chainFrameIndex !== void 0 && clip.trimEndSource !== "user") {
+    const through = clamp(outgoing.chainFrameIndex + 1, 1, frameCount);
+    end = through;
+    if (end <= start) end = Math.min(frameCount, start + 1);
+  }
+  if (incomingSeam && start === 0 && end > 1) start = 1;
+  if (end <= start) end = Math.min(frameCount, start + 1);
+  return { start, end };
+}
+function planJoins(input2) {
+  if (input2.clips.length < 1) {
+    throw new Error("At least one clip is required to assemble a film.");
+  }
+  const outputFps = input2.outputFps > 0 ? input2.outputFps : 24;
+  const classified = input2.clips.map((clip, index) => {
+    if (index === 0) return void 0;
+    return classifyJoin(input2.clips[index - 1], clip, input2.crossfadeSeconds, input2.xfadeAvailable, index - 1);
+  });
+  const windows = input2.clips.map((clip, index) => sourceWindow(
+    clip,
+    Boolean(classified[index]?.intactSeam),
+    classified[index + 1]
+  ));
+  const segments = windows.map((window, index) => {
+    const clip = input2.clips[index];
+    const sourceFrames = window.end - window.start;
+    return {
+      clipIndex: index,
+      startFrame: window.start,
+      endFrame: window.end,
+      frameCount: outputFramesFor(sourceFrames, clip.fps, outputFps)
+    };
+  });
+  const joins = [];
+  let elapsed = segments[0]?.frameCount ?? 0;
+  for (let index = 1; index < input2.clips.length; index += 1) {
+    const decision = classified[index];
+    if (!decision) continue;
+    const left = segments[index - 1].frameCount;
+    const right = segments[index].frameCount;
+    let crossfadeFrames = 0;
+    if (decision.type === "crossfade") {
+      const requestedFrames = Math.max(0, Math.round(input2.crossfadeSeconds * outputFps));
+      const maxFrames = Math.max(0, Math.min(left, right) - 1);
+      crossfadeFrames = Math.min(requestedFrames, maxFrames);
+      if (crossfadeFrames <= 0) {
+        decision.type = "cut";
+        decision.applied = "cut";
+        decision.intactSeam = false;
+      }
+    }
+    const presentationKind = decision.brokenByTrim ? "broken" : decision.type === "chain" ? "chain" : decision.type === "board-match" ? "board-match" : decision.type === "crossfade" ? "crossfade" : "cut";
+    const presentation = joinPresentation(index - 1, presentationKind, input2.crossfadeSeconds);
+    const offsetFrames = Math.max(0, elapsed - crossfadeFrames);
+    joins.push({
+      index: index - 1,
+      type: decision.type,
+      requested: decision.requested,
+      applied: decision.applied,
+      ...decision.reason ? { reason: decision.reason } : {},
+      ...decision.chainFrameIndex !== void 0 && decision.intactSeam ? { chainFrameIndex: decision.chainFrameIndex } : {},
+      ...decision.detected ? { detected: true } : {},
+      crossfadeFrames,
+      offsetFrames,
+      label: presentation.label,
+      accessibleName: presentation.accessibleName
+    });
+    elapsed = offsetFrames + right;
+  }
+  return {
+    outputFps,
+    crossfadeSeconds: input2.crossfadeSeconds,
+    segments,
+    joins,
+    totalFrames: input2.clips.length === 1 ? segments[0].frameCount : elapsed
+  };
+}
+function assemblyMode(plan) {
+  if (plan.segments.length <= 1) return "single";
+  if (plan.joins.some((join11) => join11.applied === "emulated")) return "emulated";
+  if (plan.joins.some((join11) => join11.applied === "crossfade")) return "xfade";
+  return "concat";
+}
+function assemblyNotice(joins) {
+  const affected = joins.filter((join11) => join11.reason === "xfade-unavailable" || join11.applied === "emulated");
+  if (affected.length === 0) return void 0;
+  if (affected.some((join11) => join11.applied === "emulated")) {
+    return "Crossfades were emulated because this ffmpeg has no xfade filter. Chain and cut joins are unchanged.";
+  }
+  return "Crossfades became hard cuts because this ffmpeg has no xfade filter. Chain and cut joins are unchanged.";
+}
+
+// src/lib/frameMatch.ts
+function correlateGrayBuffers(left, right) {
+  if (left.length < 1024 || right.length < 1024) return void 0;
+  let meanLeft = 0;
+  let meanRight = 0;
+  for (let index = 0; index < 1024; index += 1) {
+    meanLeft += left[index];
+    meanRight += right[index];
+  }
+  meanLeft /= 1024;
+  meanRight /= 1024;
+  let numerator = 0;
+  let leftSquare = 0;
+  let rightSquare = 0;
+  for (let index = 0; index < 1024; index += 1) {
+    const x = left[index] - meanLeft;
+    const y = right[index] - meanRight;
+    numerator += x * y;
+    leftSquare += x * x;
+    rightSquare += y * y;
+  }
+  if (leftSquare === 0 || rightSquare === 0) return void 0;
+  return Math.round(numerator / Math.sqrt(leftSquare * rightSquare) * 1e3) / 1e3;
+}
+
+// src/lib/ffmpegResolve.ts
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
-var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join(homedir(), ".theshow", "media");
-var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join(homedir(), ".theshow", "jobs");
 var toolCache;
+function cacheKey() {
+  return `${process.env.FFMPEG_PATH ?? ""}|${process.env.FFPROBE_PATH ?? ""}`;
+}
 async function binaryVersion(bin) {
   try {
     const { stdout, stderr } = await exec(bin, ["-hide_banner", "-version"]);
@@ -42565,29 +42853,99 @@ async function hasFilter(ffmpeg, filter) {
   }
 }
 function resolveTools() {
-  toolCache ??= (async () => {
-    const candidates = [];
-    if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
-    candidates.push("/usr/bin/ffmpeg", "ffmpeg");
-    try {
-      const installer = await import("@ffmpeg-installer/ffmpeg");
-      const p = (installer.default ?? installer).path;
-      if (p) candidates.push(p);
-    } catch {
-    }
-    for (const candidate of candidates) {
-      const version2 = await binaryVersion(candidate);
-      if (!version2) continue;
-      const ffprobe = process.env.FFPROBE_PATH || (candidate === "ffmpeg" ? "ffprobe" : candidate.replace(/ffmpeg$/, "ffprobe"));
-      return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, "xfade") };
-    }
-    throw new Error("No working FFmpeg binary found. Set FFMPEG_PATH.");
-  })();
-  return toolCache;
+  const key = cacheKey();
+  if (!toolCache || toolCache.key !== key) {
+    toolCache = {
+      key,
+      value: (async () => {
+        const candidates = [];
+        if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
+        candidates.push("/usr/bin/ffmpeg", "ffmpeg");
+        try {
+          const installer = await import("@ffmpeg-installer/ffmpeg");
+          const resolved = installer.default ?? installer;
+          if (resolved.path) candidates.push(resolved.path);
+        } catch {
+        }
+        for (const candidate of candidates) {
+          const version2 = await binaryVersion(candidate);
+          if (!version2) continue;
+          const ffprobe = process.env.FFPROBE_PATH || (candidate === "ffmpeg" ? "ffprobe" : candidate.replace(/ffmpeg$/, "ffprobe"));
+          return { ffmpeg: candidate, ffprobe, hasXfade: await hasFilter(candidate, "xfade") };
+        }
+        throw new Error("No working FFmpeg binary found. Set FFMPEG_PATH.");
+      })()
+    };
+  }
+  return toolCache.value;
 }
-async function ensureOutputDir() {
-  await mkdir(OUTPUT_DIR, { recursive: true });
-  return OUTPUT_DIR;
+async function runFfmpeg(args, maxBuffer = 64 * 1024 * 1024) {
+  const { ffmpeg } = await resolveTools();
+  try {
+    await exec(ffmpeg, args, { maxBuffer });
+  } catch (error62) {
+    const stderr = error62 && typeof error62 === "object" && "stderr" in error62 ? String(error62.stderr ?? "") : "";
+    const message = error62 instanceof Error ? error62.message : String(error62);
+    const detail = `${message}
+${stderr}`.trim();
+    throw new Error(detail);
+  }
+}
+function parseRate(value) {
+  if (!value) return 0;
+  const [num, den] = value.split("/");
+  const numerator = Number(num);
+  const denominator = Number(den ?? 1);
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return 0;
+  return numerator / denominator;
+}
+async function probeVideo(file2) {
+  const { ffprobe } = await resolveTools();
+  const { stdout } = await exec(ffprobe, [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames,duration,sample_aspect_ratio",
+    "-of",
+    "json",
+    file2
+  ]);
+  const parsed = JSON.parse(stdout);
+  const stream = parsed.streams?.[0];
+  if (!stream) throw new Error(`Could not read video geometry of ${file2}`);
+  const fps = parseRate(stream.r_frame_rate) || parseRate(stream.avg_frame_rate);
+  const width = Number.parseInt(stream.width ?? "", 10);
+  const height = Number.parseInt(stream.height ?? "", 10);
+  let frameCount = Number.parseInt(stream.nb_frames ?? "", 10);
+  if (!Number.isFinite(frameCount) || frameCount <= 0) {
+    const counted = await exec(ffprobe, [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-count_frames",
+      "-show_entries",
+      "stream=nb_read_frames",
+      "-of",
+      "default=nw=1:nk=1",
+      file2
+    ]);
+    frameCount = Number.parseInt(counted.stdout.trim(), 10);
+  }
+  const duration3 = Number.parseFloat(stream.duration ?? "");
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !(fps > 0) || !(frameCount > 0)) {
+    throw new Error(`Could not read frame geometry of ${file2}`);
+  }
+  return {
+    width,
+    height,
+    fps,
+    frameCount,
+    duration: Number.isFinite(duration3) && duration3 > 0 ? duration3 : frameCount / fps,
+    sar: stream.sample_aspect_ratio || "1:1"
+  };
 }
 async function probeDuration(file2) {
   const { ffprobe } = await resolveTools();
@@ -42601,30 +42959,8 @@ async function probeDuration(file2) {
       "default=nw=1:nk=1",
       file2
     ]);
-    const seconds = Number.parseFloat(stdout.trim());
-    return Number.isFinite(seconds) ? seconds : void 0;
-  } catch {
-    return void 0;
-  }
-}
-async function probeVideoGeometry(file2) {
-  const { ffprobe } = await resolveTools();
-  try {
-    const { stdout } = await exec(ffprobe, [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=width,height",
-      "-of",
-      "default=nw=1",
-      file2
-    ]);
-    const width = Number.parseInt(stdout.match(/width=(\d+)/)?.[1] ?? "", 10);
-    const height = Number.parseInt(stdout.match(/height=(\d+)/)?.[1] ?? "", 10);
-    if (!Number.isFinite(width) || !Number.isFinite(height)) return void 0;
-    return { width, height };
+    const seconds2 = Number.parseFloat(stdout.trim());
+    return Number.isFinite(seconds2) ? seconds2 : void 0;
   } catch {
     return void 0;
   }
@@ -42643,15 +42979,433 @@ async function hasAudioStream(file2) {
       "default=nw=1",
       file2
     ]);
-    return stdout.includes("codec_type=audio");
+    return stdout.includes("audio");
   } catch {
     return false;
   }
 }
+async function readGrayFrame(file2, frameIndex) {
+  const { ffmpeg } = await resolveTools();
+  const { stdout } = await exec(ffmpeg, [
+    "-v",
+    "error",
+    "-i",
+    file2,
+    "-map",
+    "0:v:0",
+    "-an",
+    "-vf",
+    `select=eq(n\\,${frameIndex}),scale=32:32,format=gray`,
+    "-frames:v",
+    "1",
+    "-f",
+    "rawvideo",
+    "-"
+  ], { encoding: "buffer", maxBuffer: 4 << 20 });
+  return stdout.subarray(0, 32 * 32);
+}
+async function readGrayTail(file2, frameCount, tail) {
+  const { ffmpeg } = await resolveTools();
+  const start = Math.max(frameCount - tail, 0);
+  const { stdout } = await exec(ffmpeg, [
+    "-v",
+    "error",
+    "-i",
+    file2,
+    "-map",
+    "0:v:0",
+    "-an",
+    "-vf",
+    `select=gte(n\\,${start}),setpts=PTS-STARTPTS,scale=32:32,format=gray`,
+    "-frames:v",
+    String(Math.min(tail, frameCount)),
+    "-f",
+    "rawvideo",
+    "-"
+  ], { encoding: "buffer", maxBuffer: 8 << 20 });
+  const buffer = stdout;
+  const frames = [];
+  const count = Math.min(tail, frameCount);
+  for (let index = 0; index < count; index += 1) {
+    const slice = buffer.subarray(index * 1024, (index + 1) * 1024);
+    if (slice.length < 1024) break;
+    frames.push(slice);
+  }
+  return frames;
+}
+
+// src/lib/detectChain.ts
+var exec2 = promisify2(execFile2);
+async function readRgbFrame(file2, frameIndex) {
+  const { ffmpeg } = await resolveTools();
+  const { stdout } = await exec2(ffmpeg, [
+    "-v",
+    "error",
+    "-i",
+    file2,
+    "-map",
+    "0:v:0",
+    "-an",
+    "-vf",
+    `select=eq(n\\,${frameIndex}),scale=32:32,format=rgb24`,
+    "-frames:v",
+    "1",
+    "-f",
+    "rawvideo",
+    "-"
+  ], { encoding: "buffer", maxBuffer: 4 << 20 });
+  const buffer = stdout;
+  return buffer.length >= 32 * 32 * 3 ? buffer.subarray(0, 32 * 32 * 3) : void 0;
+}
+function meanAbs(left, right) {
+  let difference = 0;
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) difference += Math.abs(left[index] - right[index]);
+  return difference / length;
+}
+function flatFrameMatch(left, right) {
+  if (left.length < 1024 || right.length < 1024) return void 0;
+  let difference = 0;
+  for (let index = 0; index < 1024; index += 1) difference += Math.abs(left[index] - right[index]);
+  return difference / 1024 <= 1 ? 1 : void 0;
+}
+async function detectChainFrame(input2) {
+  const threshold = input2.threshold ?? CHAIN_MATCH_THRESHOLD;
+  const tail = input2.tail ?? CHAIN_TAIL_FRAMES;
+  try {
+    const incoming = await readGrayFrame(input2.incomingFile, 0);
+    const outgoing = await readGrayTail(input2.outgoingFile, input2.outgoingFrameCount, tail);
+    if (incoming.length < 1024 || outgoing.length === 0) return void 0;
+    const firstIndex = Math.max(input2.outgoingFrameCount - outgoing.length, 0);
+    let best;
+    for (let offset = 0; offset < outgoing.length; offset += 1) {
+      const textured = correlateGrayBuffers(outgoing[offset], incoming);
+      const correlation = textured ?? flatFrameMatch(outgoing[offset], incoming);
+      if (correlation === void 0 || correlation < threshold) continue;
+      const index = firstIndex + offset;
+      const [left, right] = await Promise.all([
+        readRgbFrame(input2.outgoingFile, index),
+        readRgbFrame(input2.incomingFile, 0)
+      ]);
+      if (!left || !right || meanAbs(left, right) > 18) continue;
+      if (!best || correlation > best.correlation) best = { index, correlation };
+    }
+    return best;
+  } catch {
+    return void 0;
+  }
+}
+
+// src/lib/joinGraph.ts
+var SAMPLE_RATE = 48e3;
+function seconds(frames, fps) {
+  return (frames / fps).toFixed(6);
+}
+function butt(join11) {
+  if (!join11) return false;
+  return join11.applied === "chain" || join11.applied === "board-match" || join11.applied === "cut";
+}
+function audioTap(input2) {
+  const samples = Math.max(1, Math.round(input2.frames / input2.fps * input2.sampleRate));
+  const fadeSamples = Math.max(1, Math.round(input2.sampleRate / input2.fps * AUDIO_MICRO_FADE_FRAMES));
+  const fade = Math.min(fadeSamples, Math.max(1, samples - 1));
+  const fades = [];
+  if (input2.fadeIn) fades.push(`afade=t=in:ss=0:ns=${fade}:curve=qsin`);
+  if (input2.fadeOut) fades.push(`afade=t=out:ss=${Math.max(samples - fade, 0)}:ns=${fade}:curve=qsin`);
+  const fadeChain = fades.length ? `,${fades.join(",")}` : "";
+  const label = `[a${input2.labelIndex}]`;
+  if (input2.hasAudio) {
+    return `[${input2.streamIndex}:a]aformat=sample_fmts=fltp:sample_rates=${input2.sampleRate}:channel_layouts=stereo,atrim=end_sample=${samples},apad=whole_len=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+  }
+  return `anullsrc=channel_layout=stereo:sample_rate=${input2.sampleRate},atrim=end_sample=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+}
+function emulateCrossfade(input2) {
+  const { filters, token } = input2;
+  const duration3 = seconds(input2.fadeFrames, input2.fps);
+  const headEnd = input2.leftFrames - input2.fadeFrames;
+  filters.push(`[${input2.left}]split[${token}lh][${token}lt]`);
+  filters.push(`[${input2.right}]split[${token}rh][${token}rt]`);
+  filters.push(`[${token}lh]trim=end_frame=${headEnd},setpts=PTS-STARTPTS[${token}head]`);
+  filters.push(`[${token}lt]trim=start_frame=${headEnd},setpts=PTS-STARTPTS,format=yuva420p,fade=t=out:st=0:d=${duration3}:alpha=1[${token}af]`);
+  filters.push(`[${token}rh]trim=end_frame=${input2.fadeFrames},setpts=PTS-STARTPTS,format=yuva420p,fade=t=in:st=0:d=${duration3}:alpha=1[${token}bf]`);
+  filters.push(`[${token}rt]trim=start_frame=${input2.fadeFrames},setpts=PTS-STARTPTS[${token}tail]`);
+  filters.push(`[${token}af][${token}bf]overlay=eof_action=pass:format=auto,format=yuv420p[${token}mid]`);
+  filters.push(`[${token}head][${token}mid][${token}tail]concat=n=3:v=1:a=0[${input2.label}]`);
+}
+function buildJoinFilterGraph(input2) {
+  const fps = input2.plan.outputFps;
+  const sampleRate = input2.sampleRate ?? SAMPLE_RATE;
+  const filters = [];
+  let usesFpsFilter = false;
+  input2.clips.forEach((clip, index) => {
+    const fpsFilter = sameFrameRate(clip.sourceFps, fps) ? "" : `,fps=${fps}`;
+    if (fpsFilter) usesFpsFilter = true;
+    filters.push(
+      `[${clip.inputIndex}:v]trim=start_frame=${clip.startFrame}:end_frame=${clip.endFrame},setpts=PTS-STARTPTS${fpsFilter},scale=${input2.outputWidth}:${input2.outputHeight}:force_original_aspect_ratio=decrease,pad=${input2.outputWidth}:${input2.outputHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${index}]`
+    );
+    const previous = index > 0 ? input2.plan.joins[index - 1] : void 0;
+    const next = input2.plan.joins[index];
+    filters.push(audioTap({
+      streamIndex: clip.inputIndex,
+      labelIndex: index,
+      hasAudio: clip.hasAudio,
+      frames: clip.outputFrames,
+      fps,
+      sampleRate,
+      fadeIn: butt(previous),
+      fadeOut: butt(next)
+    }));
+  });
+  if (input2.clips.length === 1) {
+    return {
+      filterComplex: filters.join(";"),
+      videoLabel: "v0",
+      audioLabel: "a0",
+      usesXfade: false,
+      usesFpsFilter
+    };
+  }
+  let video = "v0";
+  let audio = "a0";
+  let videoFrames = input2.clips[0].outputFrames;
+  let usesXfade = false;
+  input2.plan.joins.forEach((join11, index) => {
+    const right = index + 1;
+    const videoLabel = index === input2.plan.joins.length - 1 ? "vout" : `vx${index}`;
+    const audioLabel = index === input2.plan.joins.length - 1 ? "aout" : `ax${index}`;
+    const overlap = join11.applied === "crossfade" || join11.applied === "emulated" ? join11.crossfadeFrames : 0;
+    if (join11.applied === "crossfade" && input2.xfadeAvailable && overlap > 0) {
+      usesXfade = true;
+      const offset = seconds(Math.max(videoFrames - overlap, 0), fps);
+      const duration3 = seconds(overlap, fps);
+      filters.push(`[${video}][v${right}]xfade=transition=fade:duration=${duration3}:offset=${offset}[${videoLabel}]`);
+      filters.push(`[${audio}][a${right}]acrossfade=d=${duration3}:c1=qsin:c2=qsin[${audioLabel}]`);
+    } else if (join11.applied === "emulated" && overlap > 0) {
+      emulateCrossfade({
+        filters,
+        left: video,
+        right: `v${right}`,
+        leftFrames: videoFrames,
+        fadeFrames: overlap,
+        fps,
+        label: videoLabel,
+        token: index
+      });
+      const duration3 = seconds(overlap, fps);
+      filters.push(`[${audio}][a${right}]acrossfade=d=${duration3}:c1=qsin:c2=qsin[${audioLabel}]`);
+    } else {
+      filters.push(`[${video}][v${right}]concat=n=2:v=1:a=0[${videoLabel}]`);
+      filters.push(`[${audio}][a${right}]concat=n=2:v=0:a=1[${audioLabel}]`);
+    }
+    video = videoLabel;
+    audio = audioLabel;
+    videoFrames = Math.max(videoFrames - overlap, 0) + input2.clips[right].outputFrames;
+  });
+  return {
+    filterComplex: filters.join(";"),
+    videoLabel: video,
+    audioLabel: audio,
+    usesXfade,
+    usesFpsFilter
+  };
+}
+
+// src/lib/assembleShared.ts
+function assertBedCoversFilm(bedSeconds, filmSeconds) {
+  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
+    throw new Error(
+      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
+    );
+  }
+}
+function needsDetection(clip, previous) {
+  if (!previous) return false;
+  if (Number.isInteger(previous.chainFrameIndex)) return false;
+  const requested = clip.join ?? "auto";
+  if (requested === "cut" || requested === "crossfade") return false;
+  return true;
+}
+async function planAssembly(request) {
+  const { hasXfade } = await resolveTools();
+  const probes = [];
+  const audioFlags = [];
+  for (const clip of request.clips) {
+    probes.push(await probeVideo(clip.file));
+    audioFlags.push(await hasAudioStream(clip.file));
+  }
+  const detected = request.clips.map(() => void 0);
+  for (let index = 1; index < request.clips.length; index += 1) {
+    const clip = request.clips[index];
+    const previous = request.clips[index - 1];
+    if (!needsDetection(clip, previous)) continue;
+    const match = await detectChainFrame({
+      outgoingFile: previous.file,
+      incomingFile: clip.file,
+      outgoingFrameCount: probes[index - 1].frameCount
+    });
+    if (match) detected[index] = match.index;
+  }
+  const outputFps = chooseOutputFps(probes.map((probe2) => probe2.fps));
+  const inputs = request.clips.map((clip, index) => {
+    const probe2 = probes[index];
+    const trimStartFrame = clip.trimStart !== void 0 ? frameIndexAtOrAfter(clip.trimStart, probe2.fps) : 0;
+    const trimEndFrame = clip.trimEnd !== void 0 ? exclusiveFrameAt(clip.trimEnd, probe2.fps) : probe2.frameCount;
+    return {
+      frameCount: probe2.frameCount,
+      fps: probe2.fps,
+      trimStartFrame,
+      trimEndFrame: Math.min(Math.max(trimEndFrame, trimStartFrame + 1), probe2.frameCount),
+      trimEndSource: clip.trimEndSource,
+      join: clip.join,
+      chainFrameIndex: clip.chainFrameIndex,
+      detectedChainFrame: detected[index],
+      chainedFromPrevious: clip.chainedFromPrevious,
+      boardMatch: clip.boardMatch
+    };
+  });
+  const plan = planJoins({
+    clips: inputs,
+    crossfadeSeconds: request.crossfadeSeconds,
+    outputFps,
+    xfadeAvailable: hasXfade
+  });
+  return { plan, probes, hasAudio: audioFlags, hasXfade };
+}
+async function assemblePlanned(request) {
+  if (request.clips.length < 1) throw new Error("No clips to assemble.");
+  const { plan, probes, hasAudio, hasXfade } = await planAssembly(request);
+  const size = chooseOutputSize({
+    project: request.outputSize,
+    first: probes[0]
+  });
+  const clipAudio = request.clipAudio ?? "keep";
+  const graphClips = plan.segments.map((segment, index) => ({
+    inputIndex: index,
+    hasAudio: clipAudio === "keep" && hasAudio[index],
+    sourceFps: probes[index].fps,
+    startFrame: segment.startFrame,
+    endFrame: segment.endFrame,
+    outputFrames: segment.frameCount
+  }));
+  const graph = buildJoinFilterGraph({
+    plan,
+    clips: graphClips,
+    outputWidth: size.width,
+    outputHeight: size.height,
+    xfadeAvailable: hasXfade
+  });
+  const durationSeconds = plan.totalFrames / plan.outputFps;
+  const filters = graph.filterComplex.split(";").filter(Boolean);
+  let audioMap = `[${graph.audioLabel}]`;
+  const args = ["-y", "-hide_banner", "-loglevel", "error"];
+  request.clips.forEach((clip) => {
+    args.push("-i", clip.file);
+  });
+  const bedGain = request.audioTrackVolume ?? 0.25;
+  const wantBed = Boolean(request.audioTrackFile) && bedGain > 0;
+  if (wantBed && request.audioTrackFile) {
+    const bedSeconds = await probeDuration(request.audioTrackFile);
+    assertBedCoversFilm(bedSeconds, durationSeconds);
+    const bedIndex = request.clips.length;
+    const gain = Math.min(Math.max(bedGain, 0), 4);
+    const fadeOut = Math.min(request.audioTrackFadeOutSeconds ?? 1.5, Math.max(durationSeconds / 2, 0.1));
+    args.push("-i", request.audioTrackFile);
+    const bedFilter = `[${bedIndex}:a]atrim=0:${durationSeconds.toFixed(6)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(durationSeconds - fadeOut, 0).toFixed(6)}:d=${fadeOut.toFixed(6)}`;
+    if (clipAudio === "replace") {
+      filters.push(`${bedFilter}[aoutmix]`);
+    } else {
+      filters.push(`${bedFilter}[bed]`);
+      filters.push(`[${graph.audioLabel}][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]`);
+    }
+    audioMap = "[aoutmix]";
+  }
+  args.push(
+    "-filter_complex",
+    filters.join(";"),
+    "-map",
+    `[${graph.videoLabel}]`,
+    "-map",
+    audioMap,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "18",
+    "-pix_fmt",
+    "yuv420p",
+    "-r",
+    String(plan.outputFps),
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ar",
+    "48000",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
+    request.outputPath
+  );
+  await mkdir(dirname(request.outputPath), { recursive: true });
+  await runFfmpeg(args);
+  const notice = assemblyNotice(plan.joins);
+  const fadeSeconds = plan.joins.some((join11) => join11.applied === "crossfade" || join11.applied === "emulated") ? request.crossfadeSeconds : 0;
+  return {
+    path: request.outputPath,
+    mode: assemblyMode(plan),
+    hasXfade,
+    fadeSeconds,
+    joins: plan.joins,
+    totalFrames: plan.totalFrames,
+    outputFps: plan.outputFps,
+    durationSeconds,
+    filterGraph: filters.join(";"),
+    ...notice ? { notice } : {},
+    audioBed: wantBed,
+    width: size.width,
+    height: size.height
+  };
+}
+async function extractExactLastFrame(input2) {
+  const probe2 = await probeVideo(input2.file);
+  const frameIndex = probe2.frameCount - 1;
+  await runFfmpeg([
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-sseof",
+    "-1",
+    "-i",
+    input2.file,
+    "-update",
+    "1",
+    "-q:v",
+    "2",
+    input2.dest
+  ]);
+  return {
+    path: input2.dest,
+    frameIndex,
+    framePts: frameIndex / probe2.fps,
+    fps: probe2.fps
+  };
+}
+
+// mcp/media.ts
+var exec3 = promisify3(execFile3);
+var OUTPUT_DIR = process.env.THESHOW_OUTPUT_DIR || join(homedir(), ".theshow", "media");
+var JOBS_DIR = process.env.THESHOW_JOBS_DIR || join(homedir(), ".theshow", "jobs");
+async function ensureOutputDir() {
+  await mkdir2(OUTPUT_DIR, { recursive: true });
+  return OUTPUT_DIR;
+}
 async function extractFirstFrame(file2, destDir) {
   const { ffmpeg } = await resolveTools();
   const dir = destDir ?? await ensureOutputDir();
-  if (destDir) await mkdir(destDir, { recursive: true });
+  if (destDir) await mkdir2(destDir, { recursive: true });
   const digest = createHash("sha1").update(`first:${file2}`).digest("hex").slice(0, 16);
   const outPath = join(dir, `frame-first-${digest}.png`);
   try {
@@ -42660,7 +43414,7 @@ async function extractFirstFrame(file2, destDir) {
   } catch {
   }
   try {
-    await exec(ffmpeg, [
+    await exec3(ffmpeg, [
       "-y",
       "-hide_banner",
       "-loglevel",
@@ -42685,33 +43439,20 @@ async function extractLastFrame(input2) {
   const dir = await ensureOutputDir();
   const digest = createHash("sha1").update(`${input2.file}:${Date.now()}`).digest("hex").slice(0, 12);
   const outPath = join(dir, `frame-${digest}.png`);
-  const seek = input2.seekBackSeconds ?? 0.15;
-  const attempts = [
-    // Preferred: seek near the end, decode one frame.
-    ["-y", "-hide_banner", "-loglevel", "error", "-sseof", `-${seek}`, "-i", input2.file, "-vframes", "1", "-q:v", "2", outPath],
-    // Fallback: decode from the start and keep the genuinely last frame.
-    ["-y", "-hide_banner", "-loglevel", "error", "-i", input2.file, "-update", "1", "-vf", "reverse", "-vframes", "1", outPath]
-  ];
-  let lastError;
-  for (const args of attempts) {
-    try {
-      await exec(ffmpeg, args, { maxBuffer: 16 * 1024 * 1024 });
-      const info = await stat(outPath);
-      if (info.size > 0) {
-        return { path: outPath, bytes: info.size, ffmpeg };
-      }
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw new Error(
-    `Could not extract a frame from ${input2.file}: ${lastError instanceof Error ? lastError.message : "unknown error"}`
-  );
+  const frame = await extractExactLastFrame({ file: input2.file, dest: outPath });
+  const info = await stat(outPath);
+  return {
+    path: frame.path,
+    bytes: info.size,
+    ffmpeg,
+    frameIndex: frame.frameIndex,
+    framePts: frame.framePts
+  };
 }
 async function closingFrameAgreement(input2) {
   const { ffmpeg } = await resolveTools();
   const thumb = async (args) => {
-    const { stdout } = await exec(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
+    const { stdout } = await exec3(ffmpeg, args, { encoding: "buffer", maxBuffer: 4 << 20 });
     const buf = stdout;
     return buf.subarray(0, 32 * 32);
   };
@@ -42755,33 +43496,10 @@ async function closingFrameAgreement(input2) {
     return void 0;
   }
 }
-function correlateGrayBuffers(left, right) {
-  if (left.length < 1024 || right.length < 1024) return void 0;
-  let ma = 0;
-  let mb = 0;
-  for (let i = 0; i < 1024; i += 1) {
-    ma += left[i];
-    mb += right[i];
-  }
-  ma /= 1024;
-  mb /= 1024;
-  let num = 0;
-  let da = 0;
-  let db = 0;
-  for (let i = 0; i < 1024; i += 1) {
-    const x = left[i] - ma;
-    const y = right[i] - mb;
-    num += x * y;
-    da += x * x;
-    db += y * y;
-  }
-  if (da === 0 || db === 0) return void 0;
-  return Math.round(num / Math.sqrt(da * db) * 1e3) / 1e3;
-}
 async function grayscaleStillCorrelation(left, right) {
   const { ffmpeg } = await resolveTools();
   const thumb = async (file2) => {
-    const { stdout } = await exec(ffmpeg, [
+    const { stdout } = await exec3(ffmpeg, [
       "-v",
       "error",
       "-i",
@@ -42806,180 +43524,33 @@ async function grayscaleStillCorrelation(left, right) {
   }
 }
 var CLOSING_FRAME_MATCH_THRESHOLD = 0.6;
-function assertBedCoversFilm(bedSeconds, filmSeconds) {
-  if (bedSeconds === void 0 || bedSeconds + 0.05 < filmSeconds) {
-    throw new Error(
-      "Audio bed is shorter than the film, so it was refused instead of being padded or looped."
-    );
-  }
-}
-function planClipAudioFilters(input2) {
-  const mode = input2.clipAudio ?? "keep";
-  return input2.durations.map((duration3, index) => {
-    const useClip = mode === "keep" && Boolean(input2.clipHasAudio[index]);
-    if (useClip) {
-      return `[${index}:a]asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a${index}]`;
-    }
-    return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${duration3},asetpts=PTS-STARTPTS[a${index}]`;
-  });
-}
 async function assembleClips(input2) {
-  const { ffmpeg, hasXfade } = await resolveTools();
   const dir = await ensureOutputDir();
-  const digest = createHash("sha1").update(input2.clips.map((c) => `${c.file}:${c.trimStart ?? ""}:${c.trimEnd ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
+  const digest = createHash("sha1").update(input2.clips.map((clip) => `${clip.file}:${clip.trimStart ?? ""}:${clip.trimEnd ?? ""}:${clip.join ?? ""}:${clip.chainFrameIndex ?? ""}`).join("|") + Date.now()).digest("hex").slice(0, 12);
   const outPath = join(dir, `film-${digest}.mp4`);
-  if (input2.clips.length === 0) throw new Error("No clips to assemble.");
-  const clipAudio = input2.clipAudio ?? "keep";
-  const bedGain = input2.audioTrackVolume ?? 0.25;
-  const wantBed = Boolean(input2.audioTrackFile) && bedGain > 0;
-  if (input2.clips.length === 1 && clipAudio === "keep" && !wantBed) {
-    await exec(ffmpeg, [
-      "-y",
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      input2.clips[0].file,
-      "-c",
-      "copy",
-      outPath
-    ], { maxBuffer: 32 * 1024 * 1024 });
-    return { path: outPath, mode: "single", hasXfade };
-  }
-  const durations = [];
-  for (const clip of input2.clips) {
-    const full = await probeDuration(clip.file);
-    if (full === void 0) throw new Error(`Could not read duration of ${clip.file}`);
-    const start = clip.trimStart ?? 0;
-    const end = clip.trimEnd ?? full;
-    durations.push(Math.max(0.1, end - start));
-  }
-  const wantsFade = input2.fadeDuration > 0;
-  const fade = wantsFade ? Math.min(input2.fadeDuration, Math.min(...durations) / 2) : 0;
-  if (!wantsFade && !hasXfade) {
-    const listPath = join(dir, `concat-${digest}.txt`);
-    const lines = input2.clips.map((c) => `file '${c.file.replace(/'/g, "'\\''")}'`);
-    await writeFile(listPath, `${lines.join("\n")}
-`, "utf8");
-    const copyOut = join(dir, `film-copy-${digest}.mp4`);
-    try {
-      await exec(ffmpeg, [
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        listPath,
-        "-c",
-        "copy",
-        copyOut
-      ], { maxBuffer: 32 * 1024 * 1024 });
-      const copied = await probeDuration(copyOut);
-      if (copied !== void 0) {
-        return { path: copyOut, mode: "concat", hasXfade };
-      }
-    } catch {
-    }
-  }
-  const args = ["-y", "-hide_banner", "-loglevel", "error"];
-  for (let i = 0; i < input2.clips.length; i++) {
-    const clip = input2.clips[i];
-    const start = clip.trimStart ?? 0;
-    const end = clip.trimEnd ?? durations[i] + start;
-    args.push("-ss", String(start), "-to", String(end), "-i", clip.file);
-  }
-  const geometry = await probeVideoGeometry(input2.clips[0].file);
-  const width = geometry?.width ?? 1280;
-  const height = geometry?.height ?? 720;
-  const fps = 24;
-  const withAudio = await Promise.all(input2.clips.map((clip) => hasAudioStream(clip.file)));
-  const filters = [];
-  const n = input2.clips.length;
-  for (let i = 0; i < n; i++) {
-    filters.push(
-      `[${i}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
-    );
-  }
-  filters.push(...planClipAudioFilters({
-    durations,
-    clipHasAudio: withAudio,
-    clipAudio
-  }));
-  let mode;
-  let totalDuration2 = durations.reduce((sum, d) => sum + d, 0);
-  if (fade === 0) {
-    const videoInputs = Array.from({ length: n }, (_, i) => `[v${i}]`).join("");
-    const audioInputs = Array.from({ length: n }, (_, i) => `[a${i}]`).join("");
-    filters.push(`${videoInputs}concat=n=${n}:v=1:a=0[vout]`);
-    filters.push(`${audioInputs}concat=n=${n}:v=0:a=1[aout]`);
-    mode = "concat";
-  } else {
-    let previousV = "v0";
-    let previousA = "a0";
-    let elapsed = durations[0];
-    for (let i = 1; i < n; i++) {
-      const offset = Math.max(0, elapsed - fade);
-      const isLast = i === n - 1;
-      const vLabel = isLast ? "vout" : `vx${i}`;
-      const aLabel = isLast ? "aout" : `ax${i}`;
-      filters.push(`[${previousV}][v${i}]xfade=transition=fade:duration=${fade}:offset=${offset}[${vLabel}]`);
-      filters.push(`[${previousA}][a${i}]acrossfade=d=${fade}:c1=tri:c2=tri[${aLabel}]`);
-      previousV = vLabel;
-      previousA = aLabel;
-      elapsed = offset + durations[i];
-    }
-    totalDuration2 = elapsed;
-    mode = "xfade";
-  }
-  let audioMap = "[aout]";
-  if (wantBed && input2.audioTrackFile) {
-    const bedSeconds = await probeDuration(input2.audioTrackFile);
-    assertBedCoversFilm(bedSeconds, totalDuration2);
-    const bedIndex = input2.clips.length;
-    const gain = Math.min(Math.max(bedGain, 0), 4);
-    const fadeOut = Math.min(
-      input2.audioTrackFadeOutSeconds ?? 1.5,
-      Math.max(totalDuration2 / 2, 0.1)
-    );
-    args.push("-i", input2.audioTrackFile);
-    const bedFilter = `[${bedIndex}:a]atrim=0:${totalDuration2.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${gain.toFixed(3)},afade=t=out:st=${Math.max(totalDuration2 - fadeOut, 0).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
-    if (clipAudio === "replace") {
-      filters.push(`${bedFilter}[aoutmix]`);
-    } else {
-      filters.push(`${bedFilter}[bed]`);
-      filters.push("[aout][bed]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aoutmix]");
-    }
-    audioMap = "[aoutmix]";
-  }
-  args.push(
-    "-filter_complex",
-    filters.join(";"),
-    "-map",
-    "[vout]",
-    "-map",
-    audioMap,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-crf",
-    "20",
-    "-pix_fmt",
-    "yuv420p",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "128k",
-    "-movflags",
-    "+faststart",
-    outPath
-  );
-  await exec(ffmpeg, args, { maxBuffer: 64 * 1024 * 1024 });
-  return mode === "xfade" ? { path: outPath, mode, hasXfade, fadeSeconds: fade, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration2 } : { path: outPath, mode, hasXfade, fadeSeconds: 0, audioBed: Boolean(input2.audioTrackFile), durationSeconds: totalDuration2 };
+  const assembled = await assemblePlanned({
+    clips: input2.clips,
+    crossfadeSeconds: input2.fadeDuration,
+    outputPath: outPath,
+    outputSize: input2.outputSize,
+    audioTrackFile: input2.audioTrackFile,
+    audioTrackVolume: input2.audioTrackVolume,
+    audioTrackFadeOutSeconds: input2.audioTrackFadeOutSeconds,
+    clipAudio: input2.clipAudio
+  });
+  return {
+    path: assembled.path,
+    mode: assembled.mode,
+    hasXfade: assembled.hasXfade,
+    fadeSeconds: assembled.fadeSeconds,
+    audioBed: assembled.audioBed,
+    durationSeconds: assembled.durationSeconds,
+    joins: assembled.joins,
+    outputFps: assembled.outputFps,
+    totalFrames: assembled.totalFrames,
+    filterGraph: assembled.filterGraph,
+    ...assembled.notice ? { notice: assembled.notice } : {}
+  };
 }
 async function pathToDataUrl(file2, mime = "image/png") {
   const buffer = await readFile(file2);
@@ -42987,11 +43558,11 @@ async function pathToDataUrl(file2, mime = "image/png") {
 }
 
 // mcp/cutout.ts
-var exec2 = promisify2(execFile2);
+var exec4 = promisify4(execFile4);
 async function featheredSubjectCutout(sourcePath) {
   const before = await readFile2(sourcePath);
   const parsed = parse3(sourcePath);
-  const dest = join2(dirname(sourcePath), `${parsed.name}.cutout.png`);
+  const dest = join2(dirname2(sourcePath), `${parsed.name}.cutout.png`);
   if (dest === sourcePath) {
     return { ok: false, reason: "Cutout path collided with the original portrait." };
   }
@@ -42999,7 +43570,7 @@ async function featheredSubjectCutout(sourcePath) {
     const { ffmpeg } = await resolveTools();
     const alpha = "255*exp(-((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2))/(2*(W*0.28)*(W*0.28)))";
     const filter = `format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alpha}'`;
-    await exec2(ffmpeg, [
+    await exec4(ffmpeg, [
       "-y",
       "-hide_banner",
       "-loglevel",
@@ -43027,14 +43598,14 @@ async function featheredSubjectCutout(sourcePath) {
 import { randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname3, join as join4 } from "node:path";
+import { dirname as dirname4, join as join4 } from "node:path";
 
 // mcp/runtime.ts
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash as createHash2, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir as mkdir2, open as open2, readdir, readFile as readFile3, rename, rm as rm2, stat as stat2, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir3, open as open2, readdir, readFile as readFile3, rename, rm as rm2, stat as stat2, unlink, writeFile } from "node:fs/promises";
 import { hostname as hostname3 } from "node:os";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { dirname as dirname3, join as join3 } from "node:path";
 var processToken = randomUUID();
 var processHost = hostname3();
 var scopeStore = new AsyncLocalStorage();
@@ -43165,10 +43736,10 @@ async function sweepStaleReviewFrames(dir) {
   }
 }
 async function atomicWriteFile(path, data) {
-  await mkdir2(dirname2(path), { recursive: true });
-  await sweepOrphanTemps(dirname2(path));
+  await mkdir3(dirname3(path), { recursive: true });
+  await sweepOrphanTemps(dirname3(path));
   const tmp = `${path}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
-  await writeFile2(tmp, data, "utf8");
+  await writeFile(tmp, data, "utf8");
   if (beforeRename) await beforeRename();
   await rename(tmp, path);
 }
@@ -43184,9 +43755,9 @@ function exclusiveTempPath(dest) {
   return `${dest}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
 }
 async function publishExclusive(dest, body) {
-  await mkdir2(dirname2(dest), { recursive: true });
+  await mkdir3(dirname3(dest), { recursive: true });
   const tmp = exclusiveTempPath(dest);
-  await writeFile2(tmp, body, "utf8");
+  await writeFile(tmp, body, "utf8");
   try {
     try {
       await exclusiveFs.link(tmp, dest);
@@ -43324,7 +43895,7 @@ function grokSessionRefreshEnabled() {
 }
 var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
 function writeSessionFileAtomic(path, contents) {
-  const tmp = join4(dirname3(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+  const tmp = join4(dirname4(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
   try {
     writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
     chmodSync(tmp, 384);
@@ -43717,13 +44288,13 @@ function renderSectionsV2(beat, ctx) {
 }
 
 // mcp/grokVideo.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile5 } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile4, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
+import { mkdir as mkdir4, readFile as readFile4, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname as dirname4, join as join5, resolve, sep } from "node:path";
-import { promisify as promisify3 } from "node:util";
-var exec3 = promisify3(execFile3);
+import { basename, dirname as dirname5, join as join5, resolve, sep } from "node:path";
+import { promisify as promisify5 } from "node:util";
+var exec5 = promisify5(execFile5);
 var USD_TICKS_PER_DOLLAR = 1e10;
 function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
@@ -43763,7 +44334,7 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
   let lastUrl = "";
   for (const attempt of attempts) {
     const target = join5(tmpdir(), `grok-ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
-    await exec3(ffmpeg, [
+    await exec5(ffmpeg, [
       "-y",
       "-hide_banner",
       "-loglevel",
@@ -43812,7 +44383,7 @@ function localImageRefAllowed(ref, roots) {
       real = missing.reduceRight((path, part) => join5(path, part), realpathSync(current));
       break;
     } catch {
-      const parent = dirname4(current);
+      const parent = dirname5(current);
       if (parent === current) break;
       missing.push(basename(current));
       current = parent;
@@ -44165,7 +44736,7 @@ async function generateGrokStillNow(job, opts) {
   };
 }
 async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
-  await mkdir3(outputDir, { recursive: true });
+  await mkdir4(outputDir, { recursive: true });
   const ext = mimeType?.includes("jpeg") || mimeType?.includes("jpg") ? "jpg" : mimeType?.includes("webp") ? "webp" : "png";
   const digest = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const named = filename && !/\.[a-z0-9]{2,5}$/i.test(filename) ? `${filename}.${ext}` : filename;
@@ -44173,14 +44744,14 @@ async function downloadGrokStill(imageUrl, outputDir, mimeType, filename) {
   if (imageUrl.startsWith("data:")) {
     const comma = imageUrl.indexOf(",");
     if (comma === -1) throw new Error("Malformed data URI for generated still.");
-    await writeFile3(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
+    await writeFile2(destination, Buffer.from(imageUrl.slice(comma + 1), "base64"));
     return destination;
   }
   const response = await fetch(imageUrl, { redirect: "follow" });
   if (!response.ok) throw new Error(`Still download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.byteLength === 0) throw new Error("Still download returned no data.");
-  await writeFile3(destination, bytes);
+  await writeFile2(destination, bytes);
   return destination;
 }
 
@@ -46071,7 +46642,7 @@ async function checkCrossFilm(input2) {
 // mcp/characters.ts
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { mkdir as mkdir4, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile4 } from "node:fs/promises";
+import { mkdir as mkdir5, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
 import { basename as basename2, join as join8, sep as sep3 } from "node:path";
 
@@ -46736,7 +47307,7 @@ async function stealStaleLock(lockPath) {
   }
 }
 async function withFolderLock(folder, body) {
-  await mkdir4(folder, { recursive: true });
+  await mkdir5(folder, { recursive: true });
   const lockPath = join8(folder, ".write.lock");
   const deadline = Date.now() + characterLockWaitMs();
   let delay = 20;
@@ -46790,8 +47361,8 @@ async function keepReferences(input2) {
     const target = join8(refsDir, copyNameFor(source));
     try {
       const bytes = await readFile5(source);
-      await mkdir4(refsDir, { recursive: true });
-      await writeFile4(target, bytes);
+      await mkdir5(refsDir, { recursive: true });
+      await writeFile3(target, bytes);
       kept.push(target);
     } catch (err) {
       input2.warnings.push(
@@ -46860,7 +47431,7 @@ async function saveCharacter(input2) {
       if (onDisk[key] === void 0) delete onDisk[key];
     }
     try {
-      await mkdir4(folder, { recursive: true });
+      await mkdir5(folder, { recursive: true });
       await atomicWriteFile(join8(folder, "character.json"), JSON.stringify(onDisk, null, 2));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -47673,15 +48244,15 @@ function runPreVideoGate(input2) {
 
 // mcp/server.ts
 import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
-import { mkdir as mkdir6, mkdtemp, readFile as readFile8, readdir as readdir4, rename as rename3, rm as rm5, stat as stat5, unlink as unlink3, writeFile as writeFile5 } from "node:fs/promises";
+import { mkdir as mkdir7, mkdtemp, readFile as readFile8, readdir as readdir4, rename as rename3, rm as rm5, stat as stat5, unlink as unlink3, writeFile as writeFile4 } from "node:fs/promises";
 import { join as join10 } from "node:path";
 import { createHash as createHash8, randomUUID as randomUUID3 } from "node:crypto";
 
 // mcp/jobEvents.ts
 import { createHash as createHash6 } from "node:crypto";
 import { writeSync } from "node:fs";
-import { appendFile, mkdir as mkdir5, readFile as readFile6 } from "node:fs/promises";
-import { dirname as dirname5, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
+import { appendFile, mkdir as mkdir6, readFile as readFile6 } from "node:fs/promises";
+import { dirname as dirname6, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
 var EVENT_LOG_VERSION = 1;
 var MAX_EVENT_LINE_BYTES = 16 * 1024;
 var MAX_EVENTS_PER_JOB = 2e3;
@@ -47691,7 +48262,7 @@ var defaultFs = {
   appendFile: (path, data) => appendFile(path, data, "utf8"),
   readFile: (path) => readFile6(path, "utf8"),
   mkdir: async (path) => {
-    await mkdir5(path, { recursive: true });
+    await mkdir6(path, { recursive: true });
   }
 };
 var eventFs = defaultFs;
@@ -48020,7 +48591,7 @@ async function runEnvAppendProbe(logPath) {
   const mode = process.env.THESHOW_EVENT_APPEND_PROBE;
   if (mode !== "hold" && mode !== "gap") return;
   if (mode === "hold") {
-    await mkdir5(dirname5(logPath), { recursive: true });
+    await mkdir6(dirname6(logPath), { recursive: true });
     await appendFile(logPath, '{"partial"', "utf8");
   }
   writeSync(2, "event-append-hold\n");
@@ -49329,11 +49900,11 @@ function rememberAppliedNote(job, id) {
 async function enqueueSpendNote(jobId, note) {
   const full = { ...note, id: randomUUID3() };
   const dir = spendJournalDir(jobId);
-  await mkdir6(dir, { recursive: true });
+  await mkdir7(dir, { recursive: true });
   const finalName = `${String(Date.now()).padStart(16, "0")}-${full.id}.json`;
   const dest = join10(dir, finalName);
   const tmp = join10(dir, `.${finalName}.${process.pid}.tmp`);
-  await writeFile5(tmp, JSON.stringify(full));
+  await writeFile4(tmp, JSON.stringify(full));
   await rename3(tmp, dest);
 }
 var beforeJournalMerge;
@@ -49670,9 +50241,9 @@ function sequenceContractShots(input2) {
   return input2.shots.map((shot, index) => {
     const sentPrompt = sentShotPrompt(input2.continuity, shot);
     const lintHits = lintSentPrompt(sentPrompt, shot.negative);
-    const seconds = Number(shot.durationSeconds) || 8;
+    const seconds2 = Number(shot.durationSeconds) || 8;
     const rate = ratePerSecond(input2.resolution);
-    const totalUsd = Math.round(seconds * rate * 100) / 100;
+    const totalUsd = Math.round(seconds2 * rate * 100) / 100;
     const startFrame = shot.firstFrameUrl ? shot.firstFrameUrl : index > 0 ? "previous shot's last frame, pinned after that shot renders" : null;
     return {
       index: index + 1,
@@ -49680,7 +50251,7 @@ function sequenceContractShots(input2) {
       sentPrompt,
       lintHits,
       resolution: input2.resolution,
-      durationSeconds: seconds,
+      durationSeconds: seconds2,
       pin: input2.pin,
       startFrame,
       closingFrameSent: input2.pin === "both" && Boolean(shot.lastFrameUrl),
@@ -49690,7 +50261,7 @@ function sequenceContractShots(input2) {
       quote: {
         totalUsd,
         ratePerSecond: rate,
-        basis: `${seconds}s at $${rate.toFixed(2)}/s for ${input2.resolution} = $${totalUsd.toFixed(2)}.`
+        basis: `${seconds2}s at $${rate.toFixed(2)}/s for ${input2.resolution} = $${totalUsd.toFixed(2)}.`
       }
     };
   });
@@ -50052,7 +50623,7 @@ server.registerTool(
 var DOWNLOAD_DIR = OUTPUT_DIR;
 async function resolveToLocalFile(input2) {
   if (input2.startsWith("https://") || input2.startsWith("http://")) {
-    await mkdir6(DOWNLOAD_DIR, { recursive: true });
+    await mkdir7(DOWNLOAD_DIR, { recursive: true });
     const digest = createHash8("sha1").update(input2).digest("hex").slice(0, 16);
     const ext = input2.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1] ?? "mp4";
     const target = join10(DOWNLOAD_DIR, `src-${digest}.${ext}`);
@@ -50062,7 +50633,7 @@ async function resolveToLocalFile(input2) {
     if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} for ${input2}`);
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.byteLength === 0) throw new Error(`Download produced no data for ${input2}`);
-    await writeFile5(target, bytes);
+    await writeFile4(target, bytes);
     return target;
   }
   const path = input2.startsWith("file://") ? new URL(input2).pathname : input2;
@@ -50087,6 +50658,8 @@ server.registerTool(
       status: "ok",
       framePath: frame.path,
       frameBytes: frame.bytes,
+      frameIndex: frame.frameIndex,
+      framePts: frame.framePts,
       sourceVideo: args.videoUrl,
       sourceDurationSeconds: durationSeconds,
       ffmpeg: frame.ffmpeg,
@@ -50268,7 +50841,13 @@ server.registerTool(
         url: external_exports.string(),
         title: external_exports.string().optional(),
         trimStart: external_exports.number().min(0).optional(),
-        trimEnd: external_exports.number().min(0).optional()
+        trimEnd: external_exports.number().min(0).optional(),
+        join: external_exports.enum(["auto", "chain", "cut", "crossfade", "board-match"]).optional().describe(
+          "Join from the previous clip. Omit for auto: chains are detected from the local frames, which is free and does not call a model. fadeDuration is the crossfade used when the join is not a chain."
+        ),
+        chainFrameIndex: external_exports.number().int().min(0).optional().describe(
+          "0-based source frame in this clip that the next clip was rendered from. Omit to detect it."
+        )
       })).min(1),
       fadeDuration: external_exports.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot changes framing. Use 0.15 to 0.3 only when two shots continue one camera move with the same framing, where a cut would visibly pop."
@@ -50289,7 +50868,13 @@ server.registerTool(
     const localFiles = [];
     for (const clip of args.clips) {
       const file2 = await resolveToLocalFile(clip.url);
-      localFiles.push({ file: file2, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
+      localFiles.push({
+        file: file2,
+        trimStart: clip.trimStart,
+        trimEnd: clip.trimEnd,
+        join: clip.join,
+        chainFrameIndex: clip.chainFrameIndex
+      });
     }
     const result = await assembleClips({
       clips: localFiles,
@@ -50308,9 +50893,11 @@ server.registerTool(
       clipCount: args.clips.length,
       durationSeconds,
       fileBytes: await bytes,
-      crossFades: result.mode === "xfade",
+      crossFades: result.mode === "xfade" || result.mode === "emulated",
       mode: result.mode,
       fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : void 0,
+      joins: result.joins,
+      ...result.notice ? { notice: result.notice } : {},
       audioBed: result.audioBed ? {
         source: args.audioTrackUrl,
         volume: args.audioTrackVolume,
@@ -50776,6 +51363,7 @@ function jobPayload(job) {
       fileUrl: job.fileUrl,
       filmDurationSeconds: job.filmDurationSeconds,
       filmBytes: job.filmBytes,
+      ...job.joins?.length ? { joins: job.joins } : {},
       lastFramePath: job.lastFramePath,
       unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : void 0,
       warnings: job.warnings?.length ? job.warnings : void 0,
@@ -50791,6 +51379,40 @@ function jobPayload(job) {
     },
     next: job.state === "completed" ? "Report the filmPath and spentUsd to the user, and repeat any warnings verbatim: they say which shots are now inconsistent. To make the film longer, call render_sequence again with resumeFromJobId set to this jobId and only the new shots." : job.state === "running" ? "Poll check_sequence every 20 to 30 seconds. Do not start a second render of the same shots." : "Report the error and the shot that failed. Any shots already rendered are still on disk and can be assembled or continued from."
   };
+}
+async function assembleFinishedJob(job, options) {
+  if (job.shots.some((shot) => !shot.localPath)) return;
+  const clips = job.shots.map((shot, index) => {
+    const previous = index > 0 ? job.shots[index - 1] : void 0;
+    const chained = Boolean(previous?.framePath && shot.openingFramePath && previous.framePath === shot.openingFramePath);
+    const boardMatch = Boolean(
+      previous?.lastFramePath && shot.openingFramePath && previous.lastFramePath === shot.openingFramePath && !chained
+    );
+    if (index > 0 && !shot.joinIn) {
+      shot.joinIn = chained ? "chain" : boardMatch ? "board-match" : "auto";
+    }
+    return {
+      file: shot.localPath,
+      join: shot.joinIn,
+      chainFrameIndex: shot.chainFrameIndex,
+      chainedFromPrevious: chained || shot.joinIn === "chain",
+      boardMatch: boardMatch || shot.joinIn === "board-match"
+    };
+  });
+  const assembled = await assembleClips({
+    clips,
+    fadeDuration: options.fadeDuration,
+    audioTrackFile: options.audioTrackFile,
+    audioTrackVolume: options.audioTrackVolume,
+    audioTrackFadeOutSeconds: options.audioTrackFadeOutSeconds,
+    clipAudio: options.clipAudio
+  });
+  job.filmPath = assembled.path;
+  job.fileUrl = `file://${assembled.path}`;
+  job.filmDurationSeconds = await probeDuration(assembled.path);
+  job.filmBytes = (await stat5(assembled.path)).size;
+  job.joins = assembled.joins;
+  if (job.settings) job.settings.outputFps = assembled.outputFps;
 }
 async function runSequenceJob(job, args) {
   const characterRefs = [];
@@ -50870,6 +51492,11 @@ async function runSequenceJob(job, args) {
         error: result.error,
         localPath: void 0,
         framePath: void 0,
+        chainFrameIndex: void 0,
+        chainFramePts: void 0,
+        ...job.shots.length > 0 ? {
+          joinIn: shotFirstFrame && (shotFirstFrame === previousFrame || shotFirstFrame === job.shots.at(-1)?.framePath) ? "chain" : job.shots.at(-1)?.lastFrameUrl && shot.firstFrameUrl && job.shots.at(-1)?.lastFrameUrl === shot.firstFrameUrl ? "board-match" : "auto"
+        } : {},
         openingFramePath: shotFirstFrame,
         pinUsed: args.pin ?? "start",
         lastFrameUrl: shot.lastFrameUrl,
@@ -50939,6 +51566,8 @@ async function runSequenceJob(job, args) {
       }
       previousFrame = frame.path;
       entry.framePath = frame.path;
+      entry.chainFrameIndex = frame.frameIndex;
+      entry.chainFramePts = frame.framePts;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
       void persistJob(job);
@@ -50949,19 +51578,13 @@ async function runSequenceJob(job, args) {
       job.lastFramePath = trailing.at(-1)?.framePath ?? job.lastFramePath;
     }
     if (args.assemble) {
-      const files = job.shots.map((shot) => shot.localPath).filter((p) => Boolean(p)).map((file2) => ({ file: file2, trimStart: void 0, trimEnd: void 0 }));
-      const assembled = await assembleClips({
-        clips: files,
+      await assembleFinishedJob(job, {
         fadeDuration: args.fadeDuration,
         audioTrackFile: args.audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio
       });
-      job.filmPath = assembled.path;
-      job.fileUrl = `file://${assembled.path}`;
-      job.filmDurationSeconds = await probeDuration(assembled.path);
-      job.filmBytes = (await (await import("node:fs/promises")).stat(assembled.path)).size;
     }
     job.state = "completed";
     job.finishedAt = Date.now();
@@ -52029,7 +52652,7 @@ server.registerTool(
 server.registerTool(
   "check_sequence",
   {
-    description: "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends nothing. Returns progress while running, and the film path plus actual cost when finished.",
+    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. If every shot is already on disk and the film file is missing because assembly was interrupted, it finishes that local join and returns the film path. Otherwise it only reads the job.",
     inputSchema: external_exports.object({
       jobId: external_exports.string().describe("The jobId render_sequence returned.")
     })
@@ -52043,6 +52666,22 @@ server.registerTool(
         detail: "No film has that id. Call list_films to see every film on disk with its job id.",
         known: Array.from(sequenceJobs.keys()).slice(-5)
       });
+    }
+    const shotsReady = job.shots.length > 0 && job.shots.length === job.shotCount && job.shots.every((shot) => Boolean(shot.localPath));
+    if (!job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed")) {
+      await assembleFinishedJob(job, {
+        fadeDuration: job.settings?.fadeDuration ?? 0,
+        audioTrackFile: job.settings?.audioTrackFile,
+        audioTrackVolume: job.settings?.audioTrackVolume,
+        audioTrackFadeOutSeconds: job.settings?.audioTrackFadeOutSeconds,
+        clipAudio: job.settings?.clipAudio
+      });
+      if (job.filmPath) {
+        job.state = "completed";
+        job.error = void 0;
+        job.finishedAt = job.finishedAt ?? Date.now();
+        await persistJob(job);
+      }
     }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
     return structuredText({ ...jobPayload(job), ...queuedFields(queued) });

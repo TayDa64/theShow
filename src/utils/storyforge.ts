@@ -146,6 +146,8 @@ function normalizeGeneratedShotClip(raw: Partial<GeneratedShotClip>): GeneratedS
     continuitySource: raw.continuitySource || null,
     usingContinuityFrame: !!raw.usingContinuityFrame,
     providerMode: raw.providerMode || 'sandbox',
+    ...(Number.isInteger(raw.chainFrameIndex) ? { chainFrameIndex: raw.chainFrameIndex } : {}),
+    ...(typeof raw.chainFramePts === 'number' ? { chainFramePts: raw.chainFramePts } : {}),
   };
 }
 
@@ -198,6 +200,10 @@ function normalizeTimelineClip(raw: Partial<TimelineClip>, context: {
     sourceDurationSeconds,
     trimStartSeconds: roundTimelineValue(trimStartSeconds),
     trimEndSeconds: roundTimelineValue(trimEndSeconds),
+    ...(raw.trimEndSource === 'auto' || raw.trimEndSource === 'user' ? { trimEndSource: raw.trimEndSource } : {}),
+    ...(raw.joinIn === 'auto' || raw.joinIn === 'chain' || raw.joinIn === 'board-match' || raw.joinIn === 'cut' || raw.joinIn === 'crossfade'
+      ? { joinIn: raw.joinIn }
+      : {}),
     playbackDurationSeconds,
     backgroundStateId: raw.backgroundStateId || context.backgroundStateId,
     continuityGroupId: raw.continuityGroupId || context.continuityGroupId,
@@ -246,6 +252,8 @@ export function createReferenceAsset(input: {
   url: string;
   mimeType?: string;
   createdAt?: string;
+  chainFrameIndex?: number;
+  chainFramePts?: number;
 }): ReferenceAsset {
   return {
     id: input.id || createStableId('asset'),
@@ -255,6 +263,8 @@ export function createReferenceAsset(input: {
     url: input.url,
     mimeType: input.mimeType,
     createdAt: input.createdAt || new Date().toISOString(),
+    ...(Number.isInteger(input.chainFrameIndex) ? { chainFrameIndex: input.chainFrameIndex } : {}),
+    ...(typeof input.chainFramePts === 'number' ? { chainFramePts: input.chainFramePts } : {}),
   };
 }
 
@@ -463,6 +473,8 @@ export function normalizeScene(raw: Partial<Scene>): Scene {
           url: asset.url,
           mimeType: asset.mimeType,
           createdAt: asset.createdAt,
+          chainFrameIndex: asset.chainFrameIndex,
+          chainFramePts: asset.chainFramePts,
         }))
     : [];
 
@@ -477,6 +489,8 @@ export function normalizeScene(raw: Partial<Scene>): Scene {
           url: asset.url,
           mimeType: asset.mimeType,
           createdAt: asset.createdAt,
+          chainFrameIndex: asset.chainFrameIndex,
+          chainFramePts: asset.chainFramePts,
         }))
     : [];
 
@@ -843,6 +857,7 @@ export function buildProjectTimelineManifest(scenes: Scene[]): ProjectTimelineMa
         continuitySource: sourceClip?.continuitySource || null,
         usingContinuityFrame: !!sourceClip?.usingContinuityFrame,
         sourceCreatedAt: sourceClip?.createdAt || null,
+        ...(Number.isInteger(sourceClip?.chainFrameIndex) ? { chainFrameIndex: sourceClip?.chainFrameIndex } : {}),
       });
     });
   });

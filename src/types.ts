@@ -112,6 +112,8 @@ export interface ReferenceAsset {
   url: string;
   mimeType?: string;
   createdAt: string;
+  chainFrameIndex?: number;
+  chainFramePts?: number;
 }
 
 export interface CharacterProperties {
@@ -155,6 +157,8 @@ export interface GeneratedShotClip {
   continuitySource?: string | null;
   usingContinuityFrame?: boolean;
   providerMode?: GenerationProviderMode;
+  chainFrameIndex?: number;
+  chainFramePts?: number;
 }
 
 export type StoryboardShotType =
@@ -208,7 +212,11 @@ export interface TimelineClip {
   sourceDurationSeconds: number;
   trimStartSeconds: number;
   trimEndSeconds: number;
+  /** Absent on legacy clips. Assembly treats that as an automatic trim. */
+  trimEndSource?: 'auto' | 'user';
   playbackDurationSeconds: number;
+  /** Join into this beat. Absent means the timeline derives it. */
+  joinIn?: 'auto' | 'chain' | 'board-match' | 'cut' | 'crossfade';
   backgroundStateId: string;
   continuityGroupId: string;
   holdBackground: boolean;
@@ -230,6 +238,7 @@ export interface TimelineManifestClip extends TimelineClip {
   continuitySource?: string | null;
   usingContinuityFrame?: boolean;
   sourceCreatedAt?: string | null;
+  chainFrameIndex?: number;
 }
 
 export interface ProjectTimelineManifest {

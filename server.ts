@@ -1992,9 +1992,9 @@ async function resolveExtendBridgeFrame(firstFrame: unknown, videoToExtend: unkn
   const sourcePath = await ensureGrokClipFile(operationName);
   const framePath = path.join(getTempClipsDirectory(), `${uuidv4()}.png`);
   try {
-    await extractLastFrame(sourcePath, framePath);
+    const extracted = await extractLastFrame(sourcePath, framePath);
     // Keep the frame: it is inlined into the request body before this returns.
-    return framePath;
+    return extracted.path;
   } catch (error) {
     console.warn('[Grok Extend] Could not extract the previous clip frame:', error);
     return null;
@@ -2186,11 +2186,14 @@ app.post('/api/extract-frame', fileOperationRateLimiter, requireAuth, requireCsr
     }
 
     localClipPath = sourcePath;
-    extractedFramePath = await extractLastFrame(localClipPath, path.join(getTempClipsDirectory(), `${uuidv4()}.png`));
+    const extracted = await extractLastFrame(localClipPath, path.join(getTempClipsDirectory(), `${uuidv4()}.png`));
+    extractedFramePath = extracted.path;
     const buffer = await fs.promises.readFile(extractedFramePath);
     const uploaded = await saveBufferAsUpload(buffer, 'image/png', { label, scope: `users/${userId}` });
 
     return res.json({
+      frameIndex: extracted.frameIndex,
+      framePts: extracted.framePts,
       asset: {
         id: `asset-${uuidv4()}`,
         kind: 'storyboard-frame',
@@ -2199,6 +2202,8 @@ app.post('/api/extract-frame', fileOperationRateLimiter, requireAuth, requireCsr
         url: uploaded.url,
         mimeType: 'image/png',
         createdAt: new Date().toISOString(),
+        chainFrameIndex: extracted.frameIndex,
+        chainFramePts: extracted.framePts,
       },
     });
   } catch (error: any) {
@@ -2242,35 +2247,37 @@ app.post('/api/assemble-film', fileOperationRateLimiter, requireAuth, requireCsr
       if (filePath.includes(`${path.sep}temp-clips${path.sep}`)) {
         tempFiles.push(filePath);
       }
-      const normalizedDurationSeconds = normalizeMockVideoDuration(clip.durationSeconds, 8);
-      const normalizedSourceDurationSeconds = normalizeMockVideoDuration(clip.sourceDurationSeconds ?? clip.durationSeconds, 8);
-      const normalizedTrimStartSeconds = Math.min(
-        Math.max(Number(clip.trimStartSeconds || 0), 0),
-        Math.max(normalizedSourceDurationSeconds - 0.1, 0),
-      );
-      const normalizedTrimEndSeconds = Math.min(
-        Math.max(Number(clip.trimEndSeconds ?? normalizedSourceDurationSeconds), normalizedTrimStartSeconds + 0.1),
-        normalizedSourceDurationSeconds,
-      );
+      const trimStartSeconds = Number.isFinite(Number(clip.trimStartSeconds))
+        ? Math.max(Number(clip.trimStartSeconds), 0)
+        : 0;
+      const trimEndSeconds = Number.isFinite(Number(clip.trimEndSeconds))
+        ? Number(clip.trimEndSeconds)
+        : undefined;
 
       normalizedClips.push({
         ...clip,
-        durationSeconds: normalizedDurationSeconds,
-        sourceDurationSeconds: normalizedSourceDurationSeconds,
-        trimStartSeconds: normalizedTrimStartSeconds,
-        trimEndSeconds: normalizedTrimEndSeconds,
-        playbackDurationSeconds: Math.max(normalizedTrimEndSeconds - normalizedTrimStartSeconds, 0.1),
+        trimStartSeconds,
+        ...(trimEndSeconds !== undefined ? { trimEndSeconds } : {}),
         filePath,
       });
     }
 
-    const assembled = await assembleFilm(normalizedClips, FILMS_DIR, filmId);
+    const assembled = await assembleFilm(normalizedClips, FILMS_DIR, filmId, {
+      crossfadeSeconds: Number.isFinite(Number(body.crossfadeSeconds))
+        ? Number(body.crossfadeSeconds)
+        : undefined,
+      outputSize: body.outputSize,
+    });
     const job: FilmAssemblyJob = {
       filmId,
       clipCount: clips.length,
       status: 'completed',
       outputPath: assembled.outputPath,
       downloadUrl: `/api/download-film/${filmId}`,
+      mode: assembled.mode,
+      joins: assembled.joins,
+      notice: assembled.notice ?? null,
+      outputFps: assembled.outputFps,
     };
     filmAssemblyJobs.set(filmId, job);
     await cleanupTempClips();

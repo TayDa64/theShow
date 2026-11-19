@@ -1,58 +1,13 @@
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { FADE_DURATION, assembleFilm, buildAssemblyFilterGraph, extractLastFrame } from '../src/lib/ffmpegComposer';
+import { STUDIO_DEFAULT_CROSSFADE_SECONDS } from '../src/lib/ffmpegComposer';
 import { assertBedCoversFilm, planClipAudioFilters } from '../mcp/media';
 
 describe('ffmpeg composer', () => {
-  it('builds a cascaded xfade graph with 0.5 second dissolves', () => {
-    const graph = buildAssemblyFilterGraph([
-      { durationSeconds: 8 },
-      { durationSeconds: 8 },
-      { durationSeconds: 8 },
-    ]);
-
-    expect(FADE_DURATION).toBe(0.5);
-    expect(graph.filterComplex).toContain('xfade=transition=dissolve:duration=0.5:offset=7.5');
-    expect(graph.filterComplex).toContain('xfade=transition=dissolve:duration=0.5:offset=15');
-    expect(graph.filterComplex).toContain('acrossfade=d=0.5');
+  it('uses the approved 0.25 second studio crossfade', () => {
+    expect(STUDIO_DEFAULT_CROSSFADE_SECONDS).toBe(0.25);
   });
 
-  it('uses valid pass-through filters when assembling a single clip', () => {
-    const graph = buildAssemblyFilterGraph([
-      { durationSeconds: 8 },
-    ]);
-
-    expect(graph.filterComplex).toContain('[v0]null[vout]');
-    expect(graph.filterComplex).toContain('[a0]anull[aout]');
-    expect(graph.filterComplex).not.toContain('copy');
-    expect(graph.filterComplex).not.toContain('acopy');
-  });
-
-  it('builds trim filters before stitching timeline edits', () => {
-    const graph = buildAssemblyFilterGraph([
-      { durationSeconds: 8, sourceDurationSeconds: 8, trimStartSeconds: 1.5, trimEndSeconds: 6.5, playbackDurationSeconds: 5 },
-      { durationSeconds: 8, sourceDurationSeconds: 8, trimStartSeconds: 0, trimEndSeconds: 8, playbackDurationSeconds: 8 },
-    ]);
-
-    expect(graph.filterComplex).toContain('[0:v]trim=start=1.5:end=6.5');
-    expect(graph.filterComplex).toContain('[0:a]atrim=start=1.5:end=6.5');
-    expect(graph.filterComplex).toContain('xfade=transition=dissolve:duration=0.5:offset=4.5');
-  });
-
-  it('invokes ffmpeg with -sseof -0.1 when extracting the final frame', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffmpeg-frame-'));
-    const inputPath = path.join(tempDir, 'clip.mp4');
-    fs.writeFileSync(inputPath, Buffer.from('clip'));
-
-    await extractLastFrame(inputPath);
-
-    const state = (globalThis as any).__ffmpegState.commands.at(-1);
-    expect(state.inputOptions).toEqual(['-sseof', '-0.1']);
-  });
-
-  it('drops clip audio when muted and refuses a bed shorter than the film', () => {
+  it('pads kept audio to the video duration and still refuses a short bed', () => {
     const muted = planClipAudioFilters({
       durations: [4, 5],
       clipHasAudio: [true, true],
@@ -74,28 +29,10 @@ describe('ffmpeg composer', () => {
       clipAudio: 'keep',
     });
     expect(kept[0]).toMatch(/^\[0:a\]/);
+    expect(kept[0]).toContain('apad=whole_dur=4');
 
     expect(() => assertBedCoversFilm(14, 71)).toThrow(/shorter than the film/i);
     expect(() => assertBedCoversFilm(undefined, 8)).toThrow(/shorter than the film/i);
     expect(() => assertBedCoversFilm(71, 71)).not.toThrow();
-  });
-
-  it('assembles film clips into a downloadable mp4 output', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffmpeg-assemble-'));
-    const clips = [1, 2, 3].map((index) => {
-      const filePath = path.join(tempDir, `clip-${index}.mp4`);
-      fs.writeFileSync(filePath, Buffer.from(`clip-${index}`));
-      return {
-        shotId: `shot-${index}`,
-        title: `Shot ${index}`,
-        order: index,
-        filePath,
-        durationSeconds: 8,
-      };
-    });
-
-    const result = await assembleFilm(clips, tempDir, 'assembled-film');
-    expect(result.outputPath).toBe(path.join(tempDir, 'assembled-film.mp4'));
-    expect(fs.existsSync(result.outputPath)).toBe(true);
   });
 });

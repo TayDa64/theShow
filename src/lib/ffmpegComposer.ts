@@ -1,160 +1,85 @@
-import fs from 'fs';
 import path from 'path';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { v4 as uuidv4 } from 'uuid';
+import { assemblePlanned, extractExactLastFrame } from './assembleShared';
+import { STUDIO_CROSSFADE_SECONDS, type JoinRequest, type PlannedJoin, type TrimEndSource } from './joinPlan';
 import type { ChainedClip } from '../types/pipeline';
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+export const FADE_DURATION = STUDIO_CROSSFADE_SECONDS;
+export const STUDIO_DEFAULT_CROSSFADE_SECONDS = STUDIO_CROSSFADE_SECONDS;
 
-export const FADE_DURATION = 0.5;
-
-function getClipPlaybackWindow(clip: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>) {
-  const sourceDurationSeconds = Number(clip.sourceDurationSeconds || clip.durationSeconds || clip.playbackDurationSeconds || 8);
-  const trimStartSeconds = Math.max(Number(clip.trimStartSeconds || 0), 0);
-  const requestedTrimEnd = Number(clip.trimEndSeconds || sourceDurationSeconds);
-  const trimEndSeconds = Math.min(Math.max(requestedTrimEnd, trimStartSeconds + 0.1), sourceDurationSeconds);
-  const playbackDurationSeconds = Number(clip.playbackDurationSeconds || (trimEndSeconds - trimStartSeconds) || clip.durationSeconds || 8);
-
-  return {
-    trimStartSeconds,
-    trimEndSeconds,
-    playbackDurationSeconds,
-  };
+export interface StudioAssembleClip extends ChainedClip {
+  filePath: string;
+  trimEndSource?: TrimEndSource;
+  join?: JoinRequest;
+  chainFrameIndex?: number;
+  chainedFromPrevious?: boolean;
+  boardMatch?: boolean;
 }
 
-export function buildAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>[]) {
-  if (!clips.length) {
-    throw new Error('At least one clip is required to assemble a film.');
-  }
-
-  const filters: string[] = [];
-  let currentVideoLabel = 'v0';
-  let currentAudioLabel = 'a0';
-
-  clips.forEach((clip, index) => {
-    const window = getClipPlaybackWindow(clip);
-    filters.push(`[${index}:v]trim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[v${index}]`);
-    filters.push(`[${index}:a]atrim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a${index}]`);
-  });
-
-  for (let index = 1; index < clips.length; index += 1) {
-    const offset = clips
-      .slice(0, index)
-      .reduce((total, clip) => total + getClipPlaybackWindow(clip).playbackDurationSeconds, 0) - (FADE_DURATION * index);
-    const nextVideoLabel = index === clips.length - 1 ? 'vout' : `vx${index}`;
-    const nextAudioLabel = index === clips.length - 1 ? 'aout' : `ax${index}`;
-
-    filters.push(`[${currentVideoLabel}][v${index}]xfade=transition=dissolve:duration=${FADE_DURATION}:offset=${offset}[${nextVideoLabel}]`);
-    filters.push(`[${currentAudioLabel}][a${index}]acrossfade=d=${FADE_DURATION}:c1=tri:c2=tri[${nextAudioLabel}]`);
-
-    currentVideoLabel = nextVideoLabel;
-    currentAudioLabel = nextAudioLabel;
-  }
-
-  if (clips.length === 1) {
-    filters.push('[v0]null[vout]');
-    filters.push('[a0]anull[aout]');
-  }
-
-  return {
-    filterComplex: filters.join(';'),
-    videoLabel: 'vout',
-    audioLabel: 'aout',
-  };
+export interface StudioAssembleResult {
+  filmId: string;
+  outputPath: string;
+  mode: 'single' | 'concat' | 'xfade' | 'emulated';
+  joins: PlannedJoin[];
+  notice?: string;
+  outputFps: number;
+  totalFrames: number;
+  durationSeconds: number;
+  filterGraph: string;
+  hasXfade: boolean;
 }
 
-function buildConcatAssemblyFilterGraph(clips: Pick<ChainedClip, 'durationSeconds' | 'sourceDurationSeconds' | 'trimStartSeconds' | 'trimEndSeconds' | 'playbackDurationSeconds'>[]) {
-  if (!clips.length) {
-    throw new Error('At least one clip is required to assemble a film.');
-  }
-
-  const filters: string[] = [];
-
-  for (let index = 0; index < clips.length; index += 1) {
-    const window = getClipPlaybackWindow(clips[index]);
-    filters.push(`[${index}:v]trim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},setpts=PTS-STARTPTS,format=yuv420p,setsar=1[v${index}]`);
-    filters.push(`[${index}:a]atrim=start=${window.trimStartSeconds}:end=${window.trimEndSeconds},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a${index}]`);
-  }
-
-  const concatInputs = clips.map((_, index) => `[v${index}][a${index}]`).join('');
-  filters.push(`${concatInputs}concat=n=${clips.length}:v=1:a=1[vout][aout]`);
-
-  return {
-    filterComplex: filters.join(';'),
-    videoLabel: 'vout',
-    audioLabel: 'aout',
-  };
-}
-
-function isUnsupportedTransitionFilterError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || '');
-  const normalizedMessage = message.toLowerCase();
-
-  return normalizedMessage.includes("no such filter: 'xfade'")
-    || normalizedMessage.includes("no such filter: 'acrossfade'")
-    || normalizedMessage.includes('error initializing complex filters');
-}
-
-async function runAssemblyCommand(
-  clips: Array<ChainedClip & { filePath: string }>,
-  outputPath: string,
-  graph: ReturnType<typeof buildAssemblyFilterGraph>,
-) {
-  await new Promise<void>((resolve, reject) => {
-    const command = ffmpeg();
-    clips.forEach((clip) => command.input(clip.filePath));
-
-    command
-      .complexFilter(graph.filterComplex)
-      .outputOptions([
-        `-map [${graph.videoLabel}]`,
-        `-map [${graph.audioLabel}]`,
-        '-c:v libx264',
-        '-c:a aac',
-        '-movflags +faststart',
-      ])
-      .on('end', () => resolve())
-      .on('error', (error) => reject(error))
-      .save(outputPath);
-  });
-}
-
-export async function assembleFilm(clips: Array<ChainedClip & { filePath: string }>, outputDir: string, filmId = uuidv4()) {
+export async function assembleFilm(
+  clips: StudioAssembleClip[],
+  outputDir: string,
+  filmId = uuidv4(),
+  options?: {
+    crossfadeSeconds?: number;
+    outputSize?: { width: number; height: number } | null;
+  },
+): Promise<StudioAssembleResult> {
   if (clips.length < 1) {
     throw new Error('At least one clip is required to assemble a film.');
   }
-
-  await fs.promises.mkdir(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, `${filmId}.mp4`);
-
-  try {
-    await runAssemblyCommand(clips, outputPath, buildAssemblyFilterGraph(clips));
-  } catch (error) {
-    if (!isUnsupportedTransitionFilterError(error)) {
-      throw error;
-    }
-
-    await runAssemblyCommand(clips, outputPath, buildConcatAssemblyFilterGraph(clips));
-  }
-
+  const assembled = await assemblePlanned({
+    clips: clips.map((clip) => ({
+      file: clip.filePath,
+      trimStart: clip.trimStartSeconds,
+      trimEnd: clip.trimEndSeconds,
+      trimEndSource: clip.trimEndSource,
+      join: clip.join,
+      chainFrameIndex: clip.chainFrameIndex,
+      chainedFromPrevious: clip.chainedFromPrevious,
+      boardMatch: clip.boardMatch,
+    })),
+    crossfadeSeconds: options?.crossfadeSeconds ?? STUDIO_CROSSFADE_SECONDS,
+    outputPath,
+    outputSize: options?.outputSize,
+  });
   return {
     filmId,
-    outputPath,
+    outputPath: assembled.path,
+    mode: assembled.mode,
+    joins: assembled.joins,
+    ...(assembled.notice ? { notice: assembled.notice } : {}),
+    outputFps: assembled.outputFps,
+    totalFrames: assembled.totalFrames,
+    durationSeconds: assembled.durationSeconds,
+    filterGraph: assembled.filterGraph,
+    hasXfade: assembled.hasXfade,
   };
 }
 
-export async function extractLastFrame(inputPath: string, outputPath?: string) {
-  const finalOutputPath = outputPath || path.join(path.dirname(inputPath), `${path.basename(inputPath, path.extname(inputPath))}-frame-${uuidv4()}.png`);
-
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(inputPath)
-      .inputOptions(['-sseof', '-0.1'])
-      .outputOptions(['-frames:v', '1'])
-      .on('end', () => resolve())
-      .on('error', (error) => reject(error))
-      .save(finalOutputPath);
-  });
-
-  return finalOutputPath;
+export async function extractLastFrame(inputPath: string, outputPath?: string): Promise<{
+  path: string;
+  frameIndex: number;
+  framePts: number;
+}> {
+  const finalOutputPath = outputPath || path.join(
+    path.dirname(inputPath),
+    `${path.basename(inputPath, path.extname(inputPath))}-frame-${uuidv4()}.png`,
+  );
+  const frame = await extractExactLastFrame({ file: inputPath, dest: finalOutputPath });
+  return { path: frame.path, frameIndex: frame.frameIndex, framePts: frame.framePts };
 }

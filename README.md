@@ -66,7 +66,7 @@ These eighteen names are the tools registered in `mcp/server.ts`. A test compare
 | `extend_clip` | per call, API key only | Continues an existing take. `confirm` spends only with `overrideValidation` |
 | `extract_last_frame` | free | Pulls the last frame out of a clip as a PNG |
 | `generate_still` | $0.02, after `confirm` | One image |
-| `assemble_film` | free | Joins ordered clips into one film with FFmpeg |
+| `assemble_film` | free | Joins ordered clips. Chained frames are exact. Other joins use `fadeDuration` (default 0, a hard cut) |
 | `render_sequence` | per shot, after `confirm` | Renders a shot list with continuity, then can assemble it |
 | `board_film` | $0.02 a still, after `confirm` | Boards a film as stills, one per shot boundary |
 | `retry_shot` | one shot, after `confirm` | Re-renders a single bad shot and splices it back in |

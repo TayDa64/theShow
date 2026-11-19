@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowUpRight, Camera, Check, Clapperboard, Copy, Download, Film, RefreshCw, Scissors, Sparkles, Users } from 'lucide-react';
 import type { AppViewState, CameraConfig, Character, ProjectTimelineManifest, Scene, TimelineClip } from '../types';
+import { STUDIO_CROSSFADE_SECONDS, timelineJoinPresentation } from '../lib/joinPlan';
 import { buildProjectTimelineManifest, getShotDialogueExcerpt, getStoryboardShotActiveGeneratedClip, syncSceneTimeline } from '../utils/storyforge';
 
 interface TimelineViewProps {
@@ -237,10 +238,32 @@ export function TimelineView({
                 {includedTimelineClips.length ? (
                   <div className="flex items-center gap-2 overflow-x-auto pb-1">
                     <span className="shrink-0 text-[10px] font-mono text-zinc-500">00:00</span>
-                    <div className="flex min-w-full gap-2">
-                      {includedTimelineClips.map((clip) => (
+                    <div className="flex min-w-full items-center gap-2">
+                      {includedTimelineClips.map((clip, index) => {
+                        const previous = index > 0 ? includedTimelineClips[index - 1] : undefined;
+                        const sceneForClip = scenes.find((scene) => scene.id === clip.sceneId);
+                        const shotForClip = sceneForClip?.storyboardShots?.find((shot) => shot.id === clip.shotId);
+                        const join = previous
+                          ? timelineJoinPresentation({
+                            index: index - 1,
+                            join: clip.joinIn,
+                            chained: shotForClip?.transitionInMode === 'previous-shot',
+                            trimEndSource: previous.trimEndSource,
+                            crossfadeSeconds: clip.joinIn === 'cut' ? 0 : STUDIO_CROSSFADE_SECONDS,
+                          })
+                          : null;
+                        return (
+                        <React.Fragment key={clip.clipId}>
+                        {join && (
+                          <div
+                            data-testid={`timeline-join-${index}`}
+                            className="shrink-0 rounded-full border border-zinc-600 bg-zinc-900 px-2 py-1 text-[11px] font-medium text-zinc-100"
+                          >
+                            <span className="sr-only">{join.accessibleName}</span>
+                            <span aria-hidden="true">{join.label}</span>
+                          </div>
+                        )}
                         <button
-                          key={clip.clipId}
                           type="button"
                           onClick={() => setSelectedPreviewClipId(clip.clipId)}
                           className={`group flex min-w-[120px] items-center gap-2 rounded-2xl border px-3 py-2 text-left transition-colors ${
@@ -263,7 +286,9 @@ export function TimelineView({
                             {formatSeconds(clip.playbackDurationSeconds)}
                           </div>
                         </button>
-                      ))}
+                        </React.Fragment>
+                        );
+                      })}
                     </div>
                     <span className="shrink-0 text-[10px] font-mono text-zinc-500">
                       {formatSeconds(manifest.estimatedDurationSeconds)}
@@ -475,6 +500,7 @@ export function TimelineView({
                       useFullSource: !selectedPreviewClip.useFullSource,
                       trimStartSeconds: 0,
                       trimEndSeconds: selectedSourceClip?.durationSeconds || selectedPreviewClip.sourceDurationSeconds,
+                      trimEndSource: 'auto',
                     })}
                     className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
                       selectedPreviewClip.useFullSource
@@ -500,6 +526,7 @@ export function TimelineView({
                         updateTimelineClip(selectedScene.id, selectedShot.id, {
                           preferredDurationSeconds: nextDuration,
                           trimEndSeconds: Math.min(maxTrimEnd, (selectedPreviewClip.trimStartSeconds || 0) + nextDuration),
+                          trimEndSource: 'user',
                         });
                       }}
                       className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 outline-none transition-colors focus:border-indigo-500/40"
@@ -530,6 +557,7 @@ export function TimelineView({
                             updateTimelineClip(selectedScene.id, selectedShot.id, {
                               trimStartSeconds: nextStart,
                               trimEndSeconds: Math.max(selectedPreviewClip.trimEndSeconds, nextStart + 0.5),
+                              trimEndSource: 'user',
                             });
                           }}
                           className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-2 pl-9 pr-3 text-sm text-zinc-200 outline-none transition-colors focus:border-indigo-500/40"
@@ -548,6 +576,7 @@ export function TimelineView({
                           const nextEnd = Number(event.target.value || maxTrimEnd);
                           updateTimelineClip(selectedScene.id, selectedShot.id, {
                             trimEndSeconds: nextEnd,
+                            trimEndSource: 'user',
                           });
                         }}
                         className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 outline-none transition-colors focus:border-indigo-500/40"
