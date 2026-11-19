@@ -35,6 +35,26 @@ function filmPath(result: { path?: string; outputPath?: string }): string {
   return result.outputPath ?? result.path ?? '';
 }
 
+async function cueTimes(file: string): Promise<{ flashes: number[]; beeps: number[] }> {
+  const frames = await yavgs(file);
+  const flashes = frames.flatMap((value, index) => (value > 200 ? [index / 24] : []));
+  const audio = await exec('ffmpeg', [
+    '-v', 'error', '-i', file, '-map', '0:a:0', '-ac', '1', '-f', 'f32le', '-',
+  ], { encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 });
+  const samples = new Float32Array(audio.stdout.buffer, audio.stdout.byteOffset, audio.stdout.length / 4);
+  const beeps: number[] = [];
+  let look = 0;
+  while (look < samples.length) {
+    if (Math.abs(samples[look]) > 0.2) {
+      beeps.push(look / 48000);
+      look += Math.floor(0.2 * 48000);
+    } else {
+      look += 1;
+    }
+  }
+  return { flashes, beeps };
+}
+
 function expectIndices(values: number[], start: number): void {
   expect(values.length).toBeGreaterThan(0);
   values.forEach((value, offset) => {
@@ -99,9 +119,13 @@ async function both(dir: string, name: string, clips: Parameters<typeof assemble
 
 describe('frame-exact joins', () => {
   const dirs: string[] = [];
+  const outerFfmpeg = process.env.FFMPEG_PATH;
+  const outerFfprobe = process.env.FFPROBE_PATH;
   afterEach(async () => {
-    delete process.env.FFMPEG_PATH;
-    delete process.env.FFPROBE_PATH;
+    if (outerFfmpeg === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = outerFfmpeg;
+    if (outerFfprobe === undefined) delete process.env.FFPROBE_PATH;
+    else process.env.FFPROBE_PATH = outerFfprobe;
     delete process.env.THESHOW_NO_FFPROBE;
     delete process.env.THESHOW_VIDEO_BACKEND;
     resetToolCache();
@@ -268,7 +292,7 @@ describe('frame-exact joins', () => {
     expect(Math.abs(audioDuration - videoDuration)).toBeLessThanOrEqual(1 / 24 + 0.01);
   }, 90_000);
 
-  it('keeps 24 fps footage at 24 fps with no fps filter', async () => {
+  it('keeps 24 fps footage at 24 fps and stamps fps on every video tap', async () => {
     const dir = await withDir();
     dirs.push(dir);
     await indexClip(path.join(dir, 'a.mp4'), { frames: 48 });
@@ -278,7 +302,8 @@ describe('frame-exact joins', () => {
       { file: path.join(dir, 'b.mp4'), join: 'cut' },
     ], 0);
     for (const result of [studio, mcp]) {
-      expect(result.filterGraph).not.toContain('fps=');
+      expect(result.filterGraph).toContain('[0:v]trim=start_frame=0:end_frame=48,setpts=PTS-STARTPTS,fps=24');
+      expect(result.filterGraph).toContain('[1:v]trim=start_frame=0:end_frame=48,setpts=PTS-STARTPTS,fps=24');
       expect(result.outputFps).toBe(24);
       const rate = await exec('ffprobe', [
         '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate,nb_frames', '-of', 'default=nw=1',
@@ -467,5 +492,84 @@ describe('frame-exact joins', () => {
     expect(broken.status).toBe(200);
     expect(broken.body.joins[0].label).toBe('Chain broken by trim');
     expect(broken.body.joins[0].type === 'cut' || broken.body.joins[0].type === 'crossfade').toBe(true);
+  }, 60_000);
+
+  it('keeps a beep with its flash after a user trim start', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const file = path.join(dir, 'cue.mp4');
+    await exec('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', "nullsrc=s=160x90:r=24,geq=lum='if(eq(N\\,48)\\,235\\,30)':cb=128:cr=128",
+      '-f', 'lavfi', '-i', "aevalsrc=exprs='sin(2*PI*1000*t)*between(t\\,2.0\\,2.01)':sample_rate=48000:duration=3",
+      '-frames:v', '72',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      file,
+    ]);
+    const { studio, mcp } = await both(dir, 'trim-sync', [
+      { file, trimStart: 1 },
+    ], 0);
+    for (const result of [studio, mcp]) {
+      const cues = await cueTimes(filmPath(result));
+      expect(cues.flashes).toHaveLength(1);
+      expect(cues.beeps).toHaveLength(1);
+      expect(Math.abs(cues.flashes[0] - 1)).toBeLessThan(1 / 24);
+      expect(Math.abs(cues.beeps[0] - cues.flashes[0])).toBeLessThan(0.025);
+    }
+  }, 60_000);
+
+  it('keeps a beep with its flash after a chain drops incoming frame 0', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const cue = async (file: string, eventFrame: number) => {
+      const at = (eventFrame / 24).toFixed(3);
+      await exec('ffmpeg', [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=24,geq=lum='if(eq(N\\,${eventFrame})\\,235\\,30)':cb=128:cr=128`,
+        '-f', 'lavfi', '-i', `aevalsrc=exprs='sin(2*PI*1000*t)*between(t\\,${at}\\,${(eventFrame / 24 + 0.01).toFixed(3)})':sample_rate=48000:duration=2`,
+        '-frames:v', '48',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+        file,
+      ]);
+    };
+    await cue(path.join(dir, 'a.mp4'), 12);
+    await cue(path.join(dir, 'b.mp4'), 12);
+    const { studio, mcp } = await both(dir, 'chain-sync', [
+      { file: path.join(dir, 'a.mp4'), chainFrameIndex: 47 },
+      { file: path.join(dir, 'b.mp4'), join: 'chain' },
+    ], 0);
+    for (const result of [studio, mcp]) {
+      const cues = await cueTimes(filmPath(result));
+      expect(cues.flashes.length).toBeGreaterThanOrEqual(2);
+      expect(cues.beeps.length).toBeGreaterThanOrEqual(2);
+      const flash = cues.flashes[1];
+      const beep = cues.beeps[1];
+      expect(Math.abs(flash - (59 / 24))).toBeLessThan(1 / 24);
+      expect(Math.abs(beep - flash)).toBeLessThan(0.025);
+    }
+  }, 60_000);
+
+  it('picks the latest tied chain frame instead of the start of the tail', async () => {
+    const dir = await withDir();
+    dirs.push(dir);
+    const held = 16 + ((192 * 3) % 220);
+    await exec('ffmpeg', [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', `nullsrc=s=160x90:r=24,geq=lum='if(gte(N\\,181)\\,${held}\\,16+mod(N*3\\,220))':cb=128:cr=128`,
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8',
+      '-frames:v', '193', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      path.join(dir, 'a.mp4'),
+    ]);
+    await indexClip(path.join(dir, 'b.mp4'), { start: 192, frames: 48, audioSeconds: 2 });
+    const { studio, mcp } = await both(dir, 'tie', [
+      { file: path.join(dir, 'a.mp4') },
+      { file: path.join(dir, 'b.mp4'), join: 'auto' },
+    ], 0);
+    for (const result of [studio, mcp]) {
+      expect(result.joins[0].chainFrameIndex).toBe(192);
+      expect(result.joins[0].detected).toBe(true);
+      const frames = await yavgs(filmPath(result));
+      expect(frames).toHaveLength(193 + 47);
+    }
   }, 60_000);
 });

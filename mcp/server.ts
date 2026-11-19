@@ -5008,8 +5008,9 @@ server.registerTool(
   {
     description:
       "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. " +
-      "If every shot is already on disk and the film file is missing because assembly was interrupted, " +
-      "it finishes that local join and returns the film path. Otherwise it only reads the job.",
+      "A job from this version that was interrupted after its shots were saved, and that carries join " +
+      "provenance, has its local join finished. A job saved before that provenance is left byte-for-byte " +
+      "unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
     inputSchema: z.object({
       jobId: z.string().describe("The jobId render_sequence returned."),
     }),
@@ -5027,7 +5028,12 @@ server.registerTool(
     const shotsReady = job.shots.length > 0
       && job.shots.length === job.shotCount
       && job.shots.every((shot) => Boolean(shot.localPath));
-    if (!job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed")) {
+    const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false
+      && (job.state === "stopped" || job.state === "failed");
+    const provenance = job.settings?.outputFps !== undefined
+      || job.joins !== undefined
+      || job.shots.some((shot) => shot.chainFrameIndex !== undefined || shot.chainFramePts !== undefined || shot.joinIn !== undefined);
+    if (interrupted && provenance) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,
@@ -5043,7 +5049,13 @@ server.registerTool(
       }
     }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
-    return structuredText({ ...jobPayload(job), ...queuedFields(queued) });
+    const legacyNote = interrupted && !provenance
+      ? {
+          assembleAvailable: true,
+          message: "Shots are on disk, but this job was saved before join provenance was recorded, so the file was left unchanged. Call assemble_film with those shot files to build the film.",
+        }
+      : {};
+    return structuredText({ ...jobPayload(job), ...legacyNote, ...queuedFields(queued) });
   }
 );
 

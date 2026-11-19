@@ -43072,78 +43072,19 @@ async function hasAudioStream(file2) {
     return false;
   }
 }
-async function readGrayFrame(file2, frameIndex) {
-  const { ffmpeg } = await resolveTools();
-  const { stdout } = await exec(ffmpeg, [
-    "-v",
-    "error",
-    "-i",
-    file2,
-    "-map",
-    "0:v:0",
-    "-an",
-    "-vf",
-    `select=eq(n\\,${frameIndex}),scale=32:32,format=gray`,
-    "-frames:v",
-    "1",
-    "-f",
-    "rawvideo",
-    "-"
-  ], { encoding: "buffer", maxBuffer: 4 << 20 });
-  return stdout.subarray(0, 32 * 32);
-}
-async function readGrayTail(file2, frameCount, tail) {
-  const { ffmpeg } = await resolveTools();
-  const start = Math.max(frameCount - tail, 0);
-  const { stdout } = await exec(ffmpeg, [
-    "-v",
-    "error",
-    "-i",
-    file2,
-    "-map",
-    "0:v:0",
-    "-an",
-    "-vf",
-    `select=gte(n\\,${start}),setpts=PTS-STARTPTS,scale=32:32,format=gray`,
-    "-frames:v",
-    String(Math.min(tail, frameCount)),
-    "-f",
-    "rawvideo",
-    "-"
-  ], { encoding: "buffer", maxBuffer: 8 << 20 });
-  const buffer = stdout;
-  const frames = [];
-  const count = Math.min(tail, frameCount);
-  for (let index = 0; index < count; index += 1) {
-    const slice = buffer.subarray(index * 1024, (index + 1) * 1024);
-    if (slice.length < 1024) break;
-    frames.push(slice);
-  }
-  return frames;
-}
 
 // src/lib/detectChain.ts
 var exec2 = promisify2(execFile2);
-async function readRgbFrame(file2, frameIndex) {
-  const { ffmpeg } = await resolveTools();
-  const { stdout } = await exec2(ffmpeg, [
-    "-v",
-    "error",
-    "-i",
-    file2,
-    "-map",
-    "0:v:0",
-    "-an",
-    "-vf",
-    `select=eq(n\\,${frameIndex}),scale=32:32,format=rgb24`,
-    "-frames:v",
-    "1",
-    "-f",
-    "rawvideo",
-    "-"
-  ], { encoding: "buffer", maxBuffer: 4 << 20 });
-  const buffer = stdout;
-  return buffer.length >= 32 * 32 * 3 ? buffer.subarray(0, 32 * 32 * 3) : void 0;
+var RGB_FRAME_BYTES = 32 * 32 * 3;
+function chooseChainIndex(scores, threshold) {
+  let best;
+  for (const score of scores) {
+    if (score.correlation < threshold) continue;
+    const better = best === void 0 || score.correlation > best.correlation + 1e-3;
+    const tied = best !== void 0 && Math.abs(score.correlation - best.correlation) <= 1e-3 && score.index > best.index;
+    if (better || tied) best = score;
+  }
+  return best;
 }
 function meanAbs(left, right) {
   let difference = 0;
@@ -43151,34 +43092,69 @@ function meanAbs(left, right) {
   for (let index = 0; index < length; index += 1) difference += Math.abs(left[index] - right[index]);
   return difference / length;
 }
+function grayFromRgb(rgb) {
+  const gray = Buffer.alloc(rgb.length / 3);
+  for (let index = 0; index < gray.length; index += 1) {
+    const offset = index * 3;
+    gray[index] = Math.round(rgb[offset] * 0.299 + rgb[offset + 1] * 0.587 + rgb[offset + 2] * 0.114);
+  }
+  return gray;
+}
 function flatFrameMatch(left, right) {
   if (left.length < 1024 || right.length < 1024) return void 0;
   let difference = 0;
   for (let index = 0; index < 1024; index += 1) difference += Math.abs(left[index] - right[index]);
   return difference / 1024 <= 1 ? 1 : void 0;
 }
+function splitRgb(buffer) {
+  const frames = [];
+  for (let offset = 0; offset + RGB_FRAME_BYTES <= buffer.length; offset += RGB_FRAME_BYTES) {
+    frames.push(Buffer.from(buffer.subarray(offset, offset + RGB_FRAME_BYTES)));
+  }
+  return frames;
+}
+async function readRgb(file2, videoFilter, inputArgs = [], frameLimit) {
+  const { ffmpeg } = await resolveTools();
+  const limit = frameLimit === void 0 ? [] : ["-frames:v", String(frameLimit)];
+  const { stdout } = await exec2(ffmpeg, [
+    "-v",
+    "error",
+    ...inputArgs,
+    "-i",
+    file2,
+    "-map",
+    "0:v:0",
+    "-an",
+    "-vf",
+    videoFilter,
+    ...limit,
+    "-f",
+    "rawvideo",
+    "-"
+  ], { encoding: "buffer", maxBuffer: 8 << 20 });
+  return stdout;
+}
 async function detectChainFrame(input2) {
   const threshold = input2.threshold ?? CHAIN_MATCH_THRESHOLD;
   const tail = input2.tail ?? CHAIN_TAIL_FRAMES;
   try {
-    const incoming = await readGrayFrame(input2.incomingFile, 0);
-    const outgoing = await readGrayTail(input2.outgoingFile, input2.outgoingFrameCount, tail);
-    if (incoming.length < 1024 || outgoing.length === 0) return void 0;
+    const [incomingRaw, tailRaw] = await Promise.all([
+      readRgb(input2.incomingFile, "select=eq(n\\,0),scale=32:32,format=rgb24", [], 1),
+      readRgb(input2.outgoingFile, "scale=32:32,format=rgb24", ["-sseof", "-1"])
+    ]);
+    const incoming = splitRgb(incomingRaw)[0];
+    const outgoing = splitRgb(tailRaw).slice(-tail);
+    if (!incoming || outgoing.length === 0) return void 0;
+    const incomingGray = grayFromRgb(incoming);
     const firstIndex = Math.max(input2.outgoingFrameCount - outgoing.length, 0);
-    let best;
-    for (let offset = 0; offset < outgoing.length; offset += 1) {
-      const textured = correlateGrayBuffers(outgoing[offset], incoming);
-      const correlation = textured ?? flatFrameMatch(outgoing[offset], incoming);
-      if (correlation === void 0 || correlation < threshold) continue;
-      const index = firstIndex + offset;
-      const [left, right] = await Promise.all([
-        readRgbFrame(input2.outgoingFile, index),
-        readRgbFrame(input2.incomingFile, 0)
-      ]);
-      if (!left || !right || meanAbs(left, right) > 18) continue;
-      if (!best || correlation > best.correlation) best = { index, correlation };
-    }
-    return best;
+    const scores = [];
+    outgoing.forEach((frame, offset) => {
+      if (meanAbs(frame, incoming) > 18) return;
+      const correlation = correlateGrayBuffers(grayFromRgb(frame), incomingGray) ?? flatFrameMatch(grayFromRgb(frame), incomingGray);
+      if (correlation === void 0) return;
+      scores.push({ index: firstIndex + offset, correlation });
+    });
+    return chooseChainIndex(scores, threshold);
   } catch {
     return void 0;
   }
@@ -43194,18 +43170,20 @@ function butt(join11) {
   return join11.applied === "chain" || join11.applied === "board-match" || join11.applied === "cut";
 }
 function audioTap(input2) {
-  const samples = Math.max(1, Math.round(input2.frames / input2.fps * input2.sampleRate));
+  const lengthSamples = Math.max(1, Math.round(input2.frames / input2.fps * input2.sampleRate));
+  const startSamples = Math.max(0, Math.round(input2.startFrame / input2.fps * input2.sampleRate));
+  const endSamples = startSamples + lengthSamples;
   const fadeSamples = Math.max(1, Math.round(input2.sampleRate / input2.fps * AUDIO_MICRO_FADE_FRAMES));
-  const fade = Math.min(fadeSamples, Math.max(1, samples - 1));
+  const fade = Math.min(fadeSamples, Math.max(1, lengthSamples - 1));
   const fades = [];
   if (input2.fadeIn) fades.push(`afade=t=in:ss=0:ns=${fade}:curve=qsin`);
-  if (input2.fadeOut) fades.push(`afade=t=out:ss=${Math.max(samples - fade, 0)}:ns=${fade}:curve=qsin`);
+  if (input2.fadeOut) fades.push(`afade=t=out:ss=${Math.max(lengthSamples - fade, 0)}:ns=${fade}:curve=qsin`);
   const fadeChain = fades.length ? `,${fades.join(",")}` : "";
   const label = `[a${input2.labelIndex}]`;
   if (input2.hasAudio) {
-    return `[${input2.streamIndex}:a]aformat=sample_fmts=fltp:sample_rates=${input2.sampleRate}:channel_layouts=stereo,atrim=end_sample=${samples},apad=whole_len=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+    return `[${input2.streamIndex}:a]aformat=sample_fmts=fltp:sample_rates=${input2.sampleRate}:channel_layouts=stereo,atrim=start_sample=${startSamples}:end_sample=${endSamples},asetpts=PTS-STARTPTS,apad=whole_len=${lengthSamples}${fadeChain}${label}`;
   }
-  return `anullsrc=channel_layout=stereo:sample_rate=${input2.sampleRate},atrim=end_sample=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+  return `anullsrc=channel_layout=stereo:sample_rate=${input2.sampleRate},atrim=end_sample=${lengthSamples},asetpts=PTS-STARTPTS,apad=whole_len=${lengthSamples}${fadeChain}${label}`;
 }
 function emulateCrossfade(input2) {
   const { filters, token } = input2;
@@ -43224,12 +43202,9 @@ function buildJoinFilterGraph(input2) {
   const fps = input2.plan.outputFps;
   const sampleRate = input2.sampleRate ?? SAMPLE_RATE;
   const filters = [];
-  let usesFpsFilter = false;
   input2.clips.forEach((clip, index) => {
-    const fpsFilter = sameFrameRate(clip.sourceFps, fps) ? "" : `,fps=${fps}`;
-    if (fpsFilter) usesFpsFilter = true;
     filters.push(
-      `[${clip.inputIndex}:v]trim=start_frame=${clip.startFrame}:end_frame=${clip.endFrame},setpts=PTS-STARTPTS${fpsFilter},scale=${input2.outputWidth}:${input2.outputHeight}:force_original_aspect_ratio=decrease,pad=${input2.outputWidth}:${input2.outputHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${index}]`
+      `[${clip.inputIndex}:v]trim=start_frame=${clip.startFrame}:end_frame=${clip.endFrame},setpts=PTS-STARTPTS,fps=${fps},trim=end_frame=${clip.outputFrames},setpts=PTS-STARTPTS,fps=${fps},scale=${input2.outputWidth}:${input2.outputHeight}:force_original_aspect_ratio=decrease,pad=${input2.outputWidth}:${input2.outputHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${index}]`
     );
     const previous = index > 0 ? input2.plan.joins[index - 1] : void 0;
     const next = input2.plan.joins[index];
@@ -43237,6 +43212,7 @@ function buildJoinFilterGraph(input2) {
       streamIndex: clip.inputIndex,
       labelIndex: index,
       hasAudio: clip.hasAudio,
+      startFrame: clip.startFrame,
       frames: clip.outputFrames,
       fps,
       sampleRate,
@@ -43250,7 +43226,7 @@ function buildJoinFilterGraph(input2) {
       videoLabel: "v0",
       audioLabel: "a0",
       usesXfade: false,
-      usesFpsFilter
+      usesFpsFilter: true
     };
   }
   let video = "v0";
@@ -43294,7 +43270,7 @@ function buildJoinFilterGraph(input2) {
     videoLabel: video,
     audioLabel: audio,
     usesXfade,
-    usesFpsFilter
+    usesFpsFilter: true
   };
 }
 
@@ -52740,7 +52716,7 @@ server.registerTool(
 server.registerTool(
   "check_sequence",
   {
-    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. If every shot is already on disk and the film file is missing because assembly was interrupted, it finishes that local join and returns the film path. Otherwise it only reads the job.",
+    description: "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. A job from this version that was interrupted after its shots were saved, and that carries join provenance, has its local join finished. A job saved before that provenance is left byte-for-byte unchanged, and the reply says to call assemble_film. Otherwise it only reads the job.",
     inputSchema: external_exports.object({
       jobId: external_exports.string().describe("The jobId render_sequence returned.")
     })
@@ -52756,7 +52732,9 @@ server.registerTool(
       });
     }
     const shotsReady = job.shots.length > 0 && job.shots.length === job.shotCount && job.shots.every((shot) => Boolean(shot.localPath));
-    if (!job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed")) {
+    const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false && (job.state === "stopped" || job.state === "failed");
+    const provenance = job.settings?.outputFps !== void 0 || job.joins !== void 0 || job.shots.some((shot) => shot.chainFrameIndex !== void 0 || shot.chainFramePts !== void 0 || shot.joinIn !== void 0);
+    if (interrupted && provenance) {
       await assembleFinishedJob(job, {
         fadeDuration: job.settings?.fadeDuration ?? 0,
         audioTrackFile: job.settings?.audioTrackFile,
@@ -52772,7 +52750,11 @@ server.registerTool(
       }
     }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
-    return structuredText({ ...jobPayload(job), ...queuedFields(queued) });
+    const legacyNote = interrupted && !provenance ? {
+      assembleAvailable: true,
+      message: "Shots are on disk, but this job was saved before join provenance was recorded, so the file was left unchanged. Call assemble_film with those shot files to build the film."
+    } : {};
+    return structuredText({ ...jobPayload(job), ...legacyNote, ...queuedFields(queued) });
   }
 );
 var reviewShotSchema = external_exports.object({

@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { chooseChainIndex } from '../src/lib/detectChain';
+import { buildJoinFilterGraph } from '../src/lib/joinGraph';
 import {
+  CHAIN_MATCH_THRESHOLD,
   STUDIO_CROSSFADE_SECONDS,
   chooseOutputFps,
   chooseOutputSize,
   exclusiveFrameAt,
+  outputFramesFor,
   planJoins,
   timelineJoinPresentation,
 } from '../src/lib/joinPlan';
@@ -139,6 +143,51 @@ describe('join plan', () => {
       first: { width: 1280, height: 720 },
       project: { width: 1920, height: 1080 },
     })).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it('rounds a mixed frame rate instead of flooring it', () => {
+    // 10 frames at 24 fps is 12.5 frames at 30. round is 13. floor is 12.
+    expect(outputFramesFor(10, 24, 30)).toBe(13);
+    expect(outputFramesFor(1, 24, 25)).toBe(1);
+  });
+
+  it('rejects a 0.7 correlation at the 0.9 chain threshold', () => {
+    expect(CHAIN_MATCH_THRESHOLD).toBe(0.9);
+    expect(chooseChainIndex([{ index: 191, correlation: 0.7 }], CHAIN_MATCH_THRESHOLD)).toBeUndefined();
+    expect(chooseChainIndex([{ index: 191, correlation: 0.9 }], CHAIN_MATCH_THRESHOLD)?.index).toBe(191);
+  });
+
+  it('keeps the latest frame when chain scores tie', () => {
+    expect(chooseChainIndex([
+      { index: 181, correlation: 1 },
+      { index: 186, correlation: 1 },
+      { index: 192, correlation: 1 },
+    ], CHAIN_MATCH_THRESHOLD)?.index).toBe(192);
+  });
+
+  it('stamps the output fps on every video tap, including matching rates', () => {
+    const graph = buildJoinFilterGraph({
+      plan: planJoins({
+        outputFps: 24,
+        crossfadeSeconds: 0.25,
+        xfadeAvailable: true,
+        clips: [
+          { frameCount: 48, fps: 24 },
+          { frameCount: 48, fps: 24 },
+        ],
+      }),
+      clips: [
+        { inputIndex: 0, hasAudio: true, sourceFps: 24, startFrame: 24, endFrame: 48, outputFrames: 24 },
+        { inputIndex: 1, hasAudio: true, sourceFps: 24, startFrame: 1, endFrame: 48, outputFrames: 47 },
+      ],
+      outputWidth: 320,
+      outputHeight: 180,
+      xfadeAvailable: true,
+    });
+    expect(graph.filterComplex).toContain('[0:v]trim=start_frame=24:end_frame=48,setpts=PTS-STARTPTS,fps=24,');
+    expect(graph.filterComplex).toContain('[1:v]trim=start_frame=1:end_frame=48,setpts=PTS-STARTPTS,fps=24,');
+    expect(graph.filterComplex).toContain('atrim=start_sample=48000:end_sample=96000');
+    expect(graph.filterComplex).toContain('atrim=start_sample=2000:');
   });
 
   it('names timeline joins for screen readers', () => {

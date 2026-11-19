@@ -4,7 +4,7 @@
  * Audio at a butt join is a 1-frame quarter-sine fade with no duration change.
  */
 import type { JoinPlan, PlannedJoin } from './joinPlan';
-import { AUDIO_MICRO_FADE_FRAMES, sameFrameRate } from './joinPlan';
+import { AUDIO_MICRO_FADE_FRAMES } from './joinPlan';
 
 export interface GraphClip {
   inputIndex: number;
@@ -47,24 +47,27 @@ function audioTap(input: {
   streamIndex: number;
   labelIndex: number;
   hasAudio: boolean;
+  startFrame: number;
   frames: number;
   fps: number;
   sampleRate: number;
   fadeIn: boolean;
   fadeOut: boolean;
 }): string {
-  const samples = Math.max(1, Math.round(input.frames / input.fps * input.sampleRate));
+  const lengthSamples = Math.max(1, Math.round(input.frames / input.fps * input.sampleRate));
+  const startSamples = Math.max(0, Math.round(input.startFrame / input.fps * input.sampleRate));
+  const endSamples = startSamples + lengthSamples;
   const fadeSamples = Math.max(1, Math.round(input.sampleRate / input.fps * AUDIO_MICRO_FADE_FRAMES));
-  const fade = Math.min(fadeSamples, Math.max(1, samples - 1));
+  const fade = Math.min(fadeSamples, Math.max(1, lengthSamples - 1));
   const fades: string[] = [];
   if (input.fadeIn) fades.push(`afade=t=in:ss=0:ns=${fade}:curve=qsin`);
-  if (input.fadeOut) fades.push(`afade=t=out:ss=${Math.max(samples - fade, 0)}:ns=${fade}:curve=qsin`);
+  if (input.fadeOut) fades.push(`afade=t=out:ss=${Math.max(lengthSamples - fade, 0)}:ns=${fade}:curve=qsin`);
   const fadeChain = fades.length ? `,${fades.join(',')}` : '';
   const label = `[a${input.labelIndex}]`;
   if (input.hasAudio) {
-    return `[${input.streamIndex}:a]aformat=sample_fmts=fltp:sample_rates=${input.sampleRate}:channel_layouts=stereo,atrim=end_sample=${samples},apad=whole_len=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+    return `[${input.streamIndex}:a]aformat=sample_fmts=fltp:sample_rates=${input.sampleRate}:channel_layouts=stereo,atrim=start_sample=${startSamples}:end_sample=${endSamples},asetpts=PTS-STARTPTS,apad=whole_len=${lengthSamples}${fadeChain}${label}`;
   }
-  return `anullsrc=channel_layout=stereo:sample_rate=${input.sampleRate},atrim=end_sample=${samples},asetpts=PTS-STARTPTS${fadeChain}${label}`;
+  return `anullsrc=channel_layout=stereo:sample_rate=${input.sampleRate},atrim=end_sample=${lengthSamples},asetpts=PTS-STARTPTS,apad=whole_len=${lengthSamples}${fadeChain}${label}`;
 }
 
 function emulateCrossfade(input: {
@@ -94,12 +97,14 @@ export function buildJoinFilterGraph(input: JoinGraphInput): JoinGraph {
   const fps = input.plan.outputFps;
   const sampleRate = input.sampleRate ?? SAMPLE_RATE;
   const filters: string[] = [];
-  let usesFpsFilter = false;
   input.clips.forEach((clip, index) => {
-    const fpsFilter = sameFrameRate(clip.sourceFps, fps) ? '' : `,fps=${fps}`;
-    if (fpsFilter) usesFpsFilter = true;
+    // ffmpeg 7.x leaves a trimmed link at rate 1/0 unless fps= restamps it, and xfade
+    // then rejects the input. The rate is stamped even when every source already matches.
+    // The 2018 installer appends one frame on a same-rate fps=, so the planned length is
+    // trimmed back and fps= is applied again: the second trim clears the rate.
     filters.push(
-      `[${clip.inputIndex}:v]trim=start_frame=${clip.startFrame}:end_frame=${clip.endFrame},setpts=PTS-STARTPTS${fpsFilter},` +
+      `[${clip.inputIndex}:v]trim=start_frame=${clip.startFrame}:end_frame=${clip.endFrame},setpts=PTS-STARTPTS,fps=${fps},` +
+      `trim=end_frame=${clip.outputFrames},setpts=PTS-STARTPTS,fps=${fps},` +
       `scale=${input.outputWidth}:${input.outputHeight}:force_original_aspect_ratio=decrease,` +
       `pad=${input.outputWidth}:${input.outputHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${index}]`,
     );
@@ -109,6 +114,7 @@ export function buildJoinFilterGraph(input: JoinGraphInput): JoinGraph {
       streamIndex: clip.inputIndex,
       labelIndex: index,
       hasAudio: clip.hasAudio,
+      startFrame: clip.startFrame,
       frames: clip.outputFrames,
       fps,
       sampleRate,
@@ -123,7 +129,7 @@ export function buildJoinFilterGraph(input: JoinGraphInput): JoinGraph {
       videoLabel: 'v0',
       audioLabel: 'a0',
       usesXfade: false,
-      usesFpsFilter,
+      usesFpsFilter: true,
     };
   }
 
@@ -169,6 +175,6 @@ export function buildJoinFilterGraph(input: JoinGraphInput): JoinGraph {
     videoLabel: video,
     audioLabel: audio,
     usesXfade,
-    usesFpsFilter,
+    usesFpsFilter: true,
   };
 }
