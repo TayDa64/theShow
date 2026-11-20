@@ -11,10 +11,17 @@ import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { acceptRenderedTake, reviewTake, type TakeReport } from "./admission";
 import { resolveVideoCredential } from "./grok-auth";
+import {
+  hostLocalPathPlatform,
+  isRefusedUrlScheme,
+  localPathFromRef,
+  pathApiFor,
+  type LocalPathCheck,
+} from "./localPath";
 import { memoHttpRender, toolAuth, transportKind } from "./runtime";
 import { resolveTools } from "./media";
 import { lintFailure } from "./promptLint";
@@ -214,8 +221,9 @@ async function shrinkLocalImage(file: string, budgetBytes: number = INLINE_IMAGE
   return lastUrl;
 }
 
-function pathInside(root: string, candidate: string): boolean {
-  const base = resolve(root);
+function pathInside(root: string, candidate: string, api: ReturnType<typeof pathApiFor>): boolean {
+  const base = api.resolve(root);
+  const sep = api.sep;
   return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
 }
 
@@ -223,37 +231,41 @@ function pathInside(root: string, candidate: string): boolean {
  * A local image may be read only from the caller's output folder or a character
  * folder. https and data-image refs are not local reads. Anything else is refused
  * before a file is opened.
+ *
+ * `platform` selects path.win32 or path.posix. Tests pass win32 on Linux so a
+ * drive letter is not mistaken for a scheme. Production uses the host.
  */
-export function localImageRefAllowed(ref: string, roots: string[]): boolean {
+export function localImageRefAllowed(ref: string, roots: string[], check: LocalPathCheck = {}): boolean {
   const trimmed = ref.trim();
   if (!trimmed) return false;
   if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
-  let raw = trimmed;
-  if (trimmed.toLowerCase().startsWith("file:")) {
-    try {
-      raw = new URL(trimmed).pathname;
-    } catch {
-      return false;
-    }
+  if (isRefusedUrlScheme(trimmed)) return false;
+  const platform = check.platform ?? hostLocalPathPlatform();
+  const api = pathApiFor(platform);
+  let raw: string;
+  try {
+    raw = localPathFromRef(trimmed, platform);
+  } catch {
+    return false;
   }
-  const abs = resolve(raw);
-  if (!roots.some((root) => pathInside(root, abs))) return false;
+  const abs = api.resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs, api))) return false;
+  const realpath = check.realpathSync ?? ((target: string) => realpathSync(target));
   let current = abs;
   const missing: string[] = [];
   let real = abs;
   while (true) {
     try {
-      real = missing.reduceRight((path, part) => join(path, part), realpathSync(current));
+      real = missing.reduceRight((acc, part) => api.join(acc, part), realpath(current));
       break;
     } catch {
-      const parent = dirname(current);
+      const parent = api.dirname(current);
       if (parent === current) break;
-      missing.push(basename(current));
+      missing.push(api.basename(current));
       current = parent;
     }
   }
-  return roots.some((root) => pathInside(root, real));
+  return roots.some((root) => pathInside(root, real, api));
 }
 
 /**
@@ -271,7 +283,7 @@ export async function toApiImageRef(
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
 
-  const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+  const path = localPathFromRef(trimmed);
   const buffer = await readFile(path);
   if (buffer.byteLength > budget) {
     return shrinkLocalImage(path, budget);

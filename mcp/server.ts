@@ -43,6 +43,7 @@ import {
   paidStubEnabled,
   type GrokClipResult,
 } from "./grokVideo.ts";
+import { localPathFromRef } from "./localPath.ts";
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
 import {
   gatePaidAction,
@@ -1811,7 +1812,7 @@ function localImagePath(ref: string | undefined): string | undefined {
   if (!ref) return undefined;
   const trimmed = ref.trim();
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return undefined;
-  return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+  return localPathFromRef(trimmed);
 }
 
 type VideoJob = {
@@ -2266,7 +2267,7 @@ async function resolveToLocalFile(input: string): Promise<string> {
     return target;
   }
 
-  const path = input.startsWith("file://") ? new URL(input).pathname : input;
+  const path = localPathFromRef(input);
   const exists = await probeDuration(path);
   if (exists === undefined) throw new Error(`Not a readable media file: ${path}`);
   return path;

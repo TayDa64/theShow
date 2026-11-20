@@ -2979,7 +2979,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve5.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3006,7 +3006,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve5(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3257,8 +3257,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path) {
-      let input2 = path;
+    function removeDotSegments(path2) {
+      let input2 = path2;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3332,11 +3332,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path) {
-      if (path === "" || path[0] === "/") {
-        return removeDotSegments(path);
+    function removeDotSegmentsRelative(path2) {
+      if (path2 === "" || path2[0] === "/") {
+        return removeDotSegments(path2);
       }
-      const segments = path.split("/");
+      const segments = path2.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3699,8 +3699,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path && path !== "/" ? path : void 0;
+        const path2 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path2 && path2 !== "/" ? path2 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -3870,7 +3870,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve5(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4261,7 +4261,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve5,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -10052,7 +10052,7 @@ var require_compile2 = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve5.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -10079,7 +10079,7 @@ var require_compile2 = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve5(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -13319,8 +13319,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path, errorMaps, issueData } = params;
-  const fullPath = [...path, ...issueData.path || []];
+  const { data, path: path2, errorMaps, issueData } = params;
+  const fullPath = [...path2, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -13435,11 +13435,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path, key) {
+  constructor(parent, value, path2, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path;
+    this._path = path2;
     this._key = key;
   }
   get path() {
@@ -17395,10 +17395,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path) {
-  if (!path)
+function getElementAtPath(obj, path2) {
+  if (!path2)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path2.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -17738,11 +17738,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path, issues) {
+function prefixIssues(path2, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path2);
     return iss;
   });
 }
@@ -18204,16 +18204,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path = []) => {
+  const processError = (error63, path2 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path2, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
       } else {
-        const fullpath = [...path, ...issue2.path];
+        const fullpath = [...path2, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -18252,17 +18252,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path = []) => {
+  const processError = (error63, path2 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path2, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
       } else {
-        const fullpath = [...path, ...issue2.path];
+        const fullpath = [...path2, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -18301,8 +18301,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path) {
+  const path2 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path2) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -21645,7 +21645,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve5) {
+function isRecursive(inst, stack, resolve4) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -21655,7 +21655,7 @@ function isRecursive(inst, stack, resolve5) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve5);
+      const answer = isRecursive(child, stack, resolve4);
       if (answer > result)
         result = answer;
     }
@@ -21666,7 +21666,7 @@ function isRecursive(inst, stack, resolve5) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve5) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve4) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -21730,7 +21730,7 @@ function isRecursive(inst, stack, resolve5) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve5 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve4 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -33853,11 +33853,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path) {
-  if (path.length === 0) {
+function getDotPath(path2) {
+  if (path2.length === 0) {
     return "object root";
   }
-  return path.reduce((acc, seg, index) => {
+  return path2.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -36084,13 +36084,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path = ref.slice(1).split("/").filter(Boolean);
-  if (path.length === 0) {
+  const path2 = ref.slice(1).split("/").filter(Boolean);
+  if (path2.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path[0] === defsKey) {
-    const key = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
+  if (path2[0] === defsKey) {
+    const key = path2[1] === void 0 ? void 0 : decodeJSONPointerSegment(path2[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -40168,7 +40168,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
+        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -40185,7 +40185,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve4, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -40263,7 +40263,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve5(parseResult.data);
+            resolve4(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -40525,12 +40525,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve4, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve5, interval);
+      const timeoutId = setTimeout(resolve4, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -41670,7 +41670,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
+      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -42334,12 +42334,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve5) => {
+    return new Promise((resolve4) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve5();
+        resolve4();
       } else {
-        this._stdout.once("drain", resolve5);
+        this._stdout.once("drain", resolve4);
       }
     });
   }
@@ -43119,14 +43119,14 @@ function reviewTake(report, negative) {
   if (failures.length === 0) return { ok: true };
   return { ok: false, failures };
 }
-async function discardTake(path) {
-  if (!path) return;
-  await rm(path, { force: true });
+async function discardTake(path2) {
+  if (!path2) return;
+  await rm(path2, { force: true });
 }
-async function acceptRenderedTake(path, report, negative) {
+async function acceptRenderedTake(path2, report, negative) {
   const review = reviewTake(report, negative);
-  if (review.ok) return { ok: true, path };
-  await discardTake(path);
+  if (review.ok) return { ok: true, path: path2 };
+  await discardTake(path2);
   return review;
 }
 
@@ -43809,13 +43809,13 @@ async function sweepStaleReviewFrames(dir) {
     await rm2(full, { recursive: true, force: true }).catch(() => void 0);
   }
 }
-async function atomicWriteFile(path, data) {
-  await mkdir3(dirname3(path), { recursive: true });
-  await sweepOrphanTemps(dirname3(path));
-  const tmp = `${path}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
+async function atomicWriteFile(path2, data) {
+  await mkdir3(dirname3(path2), { recursive: true });
+  await sweepOrphanTemps(dirname3(path2));
+  const tmp = `${path2}.${process.pid}.${hostKey()}.${randomUUID()}.tmp`;
   await writeFile(tmp, data, "utf8");
   if (beforeRename) await beforeRename();
-  await rename(tmp, path);
+  await rename(tmp, path2);
 }
 var LINK_UNSUPPORTED = /* @__PURE__ */ new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS", "EINVAL"]);
 function linkUnsupported(err) {
@@ -43968,13 +43968,13 @@ function grokSessionRefreshEnabled() {
   return flag === "1" || flag === "true" || flag === "yes";
 }
 var REFRESH_OFF = "Automatic refresh is off, so the session file was not rewritten. Run `grok login`, or set THESHOW_REFRESH_GROK_SESSION=1.";
-function writeSessionFileAtomic(path, contents) {
-  const tmp = join4(dirname4(path), `.auth-${randomBytes(8).toString("hex")}.tmp`);
+function writeSessionFileAtomic(path2, contents) {
+  const tmp = join4(dirname4(path2), `.auth-${randomBytes(8).toString("hex")}.tmp`);
   try {
     writeFileSync(tmp, contents, { encoding: "utf8", mode: 384 });
     chmodSync(tmp, 384);
-    renameSync(tmp, path);
-    chmodSync(path, 384);
+    renameSync(tmp, path2);
+    chmodSync(path2, 384);
   } catch (err) {
     try {
       unlinkSync(tmp);
@@ -43992,10 +43992,10 @@ function grokAuthFilePath() {
   return join4(homedir2(), ".grok", "auth.json");
 }
 function readGrokAuthFile() {
-  const path = grokAuthFilePath();
+  const path2 = grokAuthFilePath();
   let raw;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readFileSync(path2, "utf8");
   } catch {
     return void 0;
   }
@@ -44156,10 +44156,10 @@ async function refreshGrokSession(opts = {}) {
   const now = opts.now ?? Date.now();
   const expiresIn = Number(parsed.expires_in);
   const expiresAt = new Date(now + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1e3 : 60 * 60 * 1e3)).toISOString();
-  const path = grokAuthFilePath();
+  const path2 = grokAuthFilePath();
   let file2;
   try {
-    file2 = JSON.parse(readFileSync(path, "utf8"));
+    file2 = JSON.parse(readFileSync(path2, "utf8"));
   } catch {
     return { ok: false, reason: "Grok session file could not be updated." };
   }
@@ -44174,7 +44174,7 @@ async function refreshGrokSession(opts = {}) {
     ...typeof parsed.refresh_token === "string" && parsed.refresh_token ? { refresh_token: parsed.refresh_token } : {}
   };
   try {
-    writeSessionFileAtomic(path, JSON.stringify(file2, null, 2));
+    writeSessionFileAtomic(path2, JSON.stringify(file2, null, 2));
   } catch {
     return { ok: false, reason: "Grok session file could not be updated." };
   }
@@ -44366,15 +44366,57 @@ import { execFile as execFile5 } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir as mkdir4, readFile as readFile4, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname as dirname5, join as join5, resolve, sep } from "node:path";
+import { dirname as dirname5, join as join5 } from "node:path";
 import { promisify as promisify5 } from "node:util";
+
+// mcp/localPath.ts
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+var WINDOWS_DRIVE_PATH = /^[a-zA-Z]:[\\/]/;
+var URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+function isWindowsDrivePath(ref) {
+  return WINDOWS_DRIVE_PATH.test(ref);
+}
+function isRefusedUrlScheme(ref) {
+  if (isWindowsDrivePath(ref)) return false;
+  return URL_SCHEME.test(ref) && !ref.toLowerCase().startsWith("file:");
+}
+function hostLocalPathPlatform() {
+  return process.platform === "win32" ? "win32" : "posix";
+}
+function pathApiFor(platform) {
+  switch (platform) {
+    case "win32":
+      return path.win32;
+    case "posix":
+      return path.posix;
+    default: {
+      const unexpected = platform;
+      throw new Error(`Unexpected path platform ${unexpected}`);
+    }
+  }
+}
+function fileUrlToLocalPath(ref, platform = hostLocalPathPlatform()) {
+  const decoded = fileURLToPath(ref);
+  if (platform === "win32" && process.platform !== "win32") {
+    const drive = /^\/([A-Za-z]:\/.*)$/.exec(decoded);
+    if (drive) return path.win32.normalize(drive[1]);
+  }
+  return decoded;
+}
+function localPathFromRef(ref, platform = hostLocalPathPlatform()) {
+  if (ref.toLowerCase().startsWith("file:")) return fileUrlToLocalPath(ref, platform);
+  return ref;
+}
+
+// mcp/grokVideo.ts
 var exec5 = promisify5(execFile5);
 var USD_TICKS_PER_DOLLAR = 1e10;
 function costUsdFromUsage(usage) {
   const ticks = Number(usage?.cost_in_usd_ticks);
   return Number.isFinite(ticks) && ticks > 0 ? ticks / USD_TICKS_PER_DOLLAR : void 0;
 }
-var sleep = (ms) => new Promise((resolve5) => setTimeout(resolve5, ms));
+var sleep = (ms) => new Promise((resolve4) => setTimeout(resolve4, ms));
 function describeHttpFailure(status, body) {
   const text = body.trim();
   if (!text.startsWith("<")) {
@@ -44430,54 +44472,56 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
   }
   return lastUrl;
 }
-function pathInside(root, candidate) {
-  const base = resolve(root);
-  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+function pathInside(root, candidate, api) {
+  const base = api.resolve(root);
+  const sep3 = api.sep;
+  return candidate === base || candidate.startsWith(base.endsWith(sep3) ? base : `${base}${sep3}`);
 }
-function localImageRefAllowed(ref, roots) {
+function localImageRefAllowed(ref, roots, check2 = {}) {
   const trimmed = ref.trim();
   if (!trimmed) return false;
   if (/^https:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) return true;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.toLowerCase().startsWith("file:")) return false;
-  let raw = trimmed;
-  if (trimmed.toLowerCase().startsWith("file:")) {
-    try {
-      raw = new URL(trimmed).pathname;
-    } catch {
-      return false;
-    }
+  if (isRefusedUrlScheme(trimmed)) return false;
+  const platform = check2.platform ?? hostLocalPathPlatform();
+  const api = pathApiFor(platform);
+  let raw;
+  try {
+    raw = localPathFromRef(trimmed, platform);
+  } catch {
+    return false;
   }
-  const abs = resolve(raw);
-  if (!roots.some((root) => pathInside(root, abs))) return false;
+  const abs = api.resolve(raw);
+  if (!roots.some((root) => pathInside(root, abs, api))) return false;
+  const realpath = check2.realpathSync ?? ((target) => realpathSync(target));
   let current = abs;
   const missing = [];
   let real = abs;
   while (true) {
     try {
-      real = missing.reduceRight((path, part) => join5(path, part), realpathSync(current));
+      real = missing.reduceRight((acc, part) => api.join(acc, part), realpath(current));
       break;
     } catch {
-      const parent = dirname5(current);
+      const parent = api.dirname(current);
       if (parent === current) break;
-      missing.push(basename(current));
+      missing.push(api.basename(current));
       current = parent;
     }
   }
-  return roots.some((root) => pathInside(root, real));
+  return roots.some((root) => pathInside(root, real, api));
 }
 async function toApiImageRef(ref, opts = {}) {
   const budget = opts.budgetBytes ?? INLINE_IMAGE_BUDGET_BYTES;
   const trimmed = ref.trim();
   if (/^https:\/\//i.test(trimmed)) return trimmed;
   if (/^data:image\//i.test(trimmed)) return trimmed;
-  const path = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-  const buffer = await readFile4(path);
+  const path2 = localPathFromRef(trimmed);
+  const buffer = await readFile4(path2);
   if (buffer.byteLength > budget) {
-    return shrinkLocalImage(path, budget);
+    return shrinkLocalImage(path2, budget);
   }
-  const ext = path.toLowerCase().match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
+  const ext = path2.toLowerCase().match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
   if (!ext || ext === "heic" || ext === "heif") {
-    return shrinkLocalImage(path, budget);
+    return shrinkLocalImage(path2, budget);
   }
   const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
   return `data:${mime};base64,${buffer.toString("base64")}`;
@@ -45452,7 +45496,7 @@ function propSignature(prop) {
 }
 function bothExist(paths, fileExists) {
   if (!fileExists) return false;
-  return paths.length > 0 && paths.every((path) => path.trim().length > 0 && fileExists(path));
+  return paths.length > 0 && paths.every((path2) => path2.trim().length > 0 && fileExists(path2));
 }
 function measured(topic, afterShot, beforeShot, summary, evidence) {
   return { topic, class: "measured", afterShot, beforeShot, summary, evidence };
@@ -45531,7 +45575,7 @@ function propsFinding(previous, next, ledgerArtifact) {
   );
 }
 function poseFinding(previous, next, measurement, fileExists) {
-  const paths = [previous.lastFramePath, next.firstFramePath].filter((path) => Boolean(path));
+  const paths = [previous.lastFramePath, next.firstFramePath].filter((path2) => Boolean(path2));
   if (paths.length < 2) {
     return unverified(
       "pose",
@@ -45586,7 +45630,7 @@ function poseFinding(previous, next, measurement, fileExists) {
   );
 }
 function lightingFinding(previous, next, measurement, fileExists) {
-  const paths = [previous.lastFramePath, next.firstFramePath].filter((path) => Boolean(path));
+  const paths = [previous.lastFramePath, next.firstFramePath].filter((path2) => Boolean(path2));
   if (measurement?.source === "disk" && typeof measurement.meanLumaDelta === "number" && Number.isFinite(measurement.meanLumaDelta) && bothExist(paths, fileExists)) {
     return measured(
       "lighting",
@@ -46168,7 +46212,7 @@ function coverageShotsFromJob(job) {
 
 // mcp/crossFilm.ts
 import { homedir as homedir3 } from "node:os";
-import { isAbsolute, join as join7, relative, resolve as resolve2, sep as sep2 } from "node:path";
+import { isAbsolute, join as join7, relative, resolve, sep } from "node:path";
 var CROSS_FILM_VERSION = 1;
 var CROSS_FILM_MIN = 2;
 var CROSS_FILM_MAX = 20;
@@ -46176,11 +46220,11 @@ function consistencyDirectory() {
   return process.env.THESHOW_CONSISTENCY_DIR || join7(homedir3(), ".theshow", "consistency");
 }
 function consistencyDirIsSafe(dir, jobsDir) {
-  const target = resolve2(dir);
-  const jobs = resolve2(jobsDir);
+  const target = resolve(dir);
+  const jobs = resolve(jobsDir);
   if (target === jobs) return false;
   const fromJobs = relative(jobs, target);
-  if (fromJobs === "" || !fromJobs.startsWith(`..${sep2}`) && fromJobs !== ".." && !isAbsolute(fromJobs)) {
+  if (fromJobs === "" || !fromJobs.startsWith(`..${sep}`) && fromJobs !== ".." && !isAbsolute(fromJobs)) {
     return false;
   }
   return true;
@@ -46246,10 +46290,10 @@ var jobSchema = external_exports.object({
     references: external_exports.array(external_exports.object({ path: external_exports.string(), sha256: external_exports.string() }))
   })).optional()
 });
-function parseCrossFilmJob(value, path) {
+function parseCrossFilmJob(value, path2) {
   const parsed = jobSchema.safeParse(value);
   if (!parsed.success) return void 0;
-  return { ...parsed.data, path };
+  return { ...parsed.data, path: path2 };
 }
 function crossFilmParseError(value) {
   const parsed = jobSchema.safeParse(value);
@@ -46558,7 +46602,7 @@ async function frameIdentity(input2) {
   for (const job of input2.jobs.slice(1)) {
     const other = frames.get(job.id);
     const pair = [first, job];
-    const paths = [firstFrame?.cited, other?.cited].filter((path) => Boolean(path));
+    const paths = [firstFrame?.cited, other?.cited].filter((path2) => Boolean(path2));
     if (!firstFrame?.path || !other?.path || !input2.fileExists(firstFrame.path) || !input2.fileExists(other.path)) {
       findings.push(unverified2(
         "identity",
@@ -46718,7 +46762,7 @@ import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypt
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { mkdir as mkdir5, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
-import { basename as basename2, join as join8, sep as sep3 } from "node:path";
+import { basename, join as join8, sep as sep2 } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
@@ -47261,9 +47305,9 @@ var activeLockTurns = /* @__PURE__ */ new Set();
 function lockTurnPath(lockPath) {
   return `${lockPath}.turn`;
 }
-async function readLockTurn(path) {
+async function readLockTurn(path2) {
   try {
-    const raw = await readFile5(path, "utf8");
+    const raw = await readFile5(path2, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -47405,12 +47449,12 @@ async function withFolderLock(folder, body) {
       continue;
     }
     if (Date.now() >= deadline) throw new Error(`Could not lock ${folder}.`);
-    await new Promise((resolve5) => setTimeout(resolve5, delay));
+    await new Promise((resolve4) => setTimeout(resolve4, delay));
     delay = Math.min(delay * 2, 250);
   }
 }
 function copyNameFor(source) {
-  const file2 = basename2(source);
+  const file2 = basename(source);
   const extension = file2.match(/(\.[a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? "";
   const stem = slugFor(file2.replace(/\.[^.]*$/, "")).slice(0, 40) || "ref";
   return `${stem}-${shortHash(source)}${extension}`;
@@ -47427,8 +47471,8 @@ async function keepReferences(input2) {
       kept.push(trimmed);
       continue;
     }
-    const source = trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
-    if (source === refsDir || source.startsWith(refsDir + sep3)) {
+    const source = localPathFromRef(trimmed);
+    if (source === refsDir || source.startsWith(refsDir + sep2)) {
       kept.push(source);
       continue;
     }
@@ -48326,17 +48370,17 @@ import { createHash as createHash8, randomUUID as randomUUID3 } from "node:crypt
 import { createHash as createHash6 } from "node:crypto";
 import { writeSync } from "node:fs";
 import { appendFile, mkdir as mkdir6, readFile as readFile6 } from "node:fs/promises";
-import { dirname as dirname6, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve2 } from "node:path";
 var EVENT_LOG_VERSION = 1;
 var MAX_EVENT_LINE_BYTES = 16 * 1024;
 var MAX_EVENTS_PER_JOB = 2e3;
 var MAX_EVENT_LOG_BYTES = 1024 * 1024;
 var JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 var defaultFs = {
-  appendFile: (path, data) => appendFile(path, data, "utf8"),
-  readFile: (path) => readFile6(path, "utf8"),
-  mkdir: async (path) => {
-    await mkdir6(path, { recursive: true });
+  appendFile: (path2, data) => appendFile(path2, data, "utf8"),
+  readFile: (path2) => readFile6(path2, "utf8"),
+  mkdir: async (path2) => {
+    await mkdir6(path2, { recursive: true });
   }
 };
 var eventFs = defaultFs;
@@ -48358,8 +48402,8 @@ function isSafeJobId(jobId) {
 }
 function eventLogPath(jobsDir, jobId) {
   if (!isSafeJobId(jobId)) return void 0;
-  const root = resolve3(jobsDir, ".events");
-  const full = resolve3(root, `${jobId}.jsonl`);
+  const root = resolve2(jobsDir, ".events");
+  const full = resolve2(root, `${jobId}.jsonl`);
   const rel = relative2(root, full);
   if (rel.startsWith("..") || isAbsolute2(rel) || rel !== `${jobId}.jsonl`) return void 0;
   return full;
@@ -48559,7 +48603,7 @@ async function appendDerived(job, jobsDir) {
   }
   if (beforeAppend) await beforeAppend();
   else await runEnvAppendProbe(logPath);
-  await eventFs.mkdir(resolve3(jobsDir, ".events"));
+  await eventFs.mkdir(resolve2(jobsDir, ".events"));
   let raw = "";
   try {
     raw = await eventFs.readFile(logPath);
@@ -48647,8 +48691,8 @@ async function waitForJobEvents(jobId, timeoutMs = 2e3) {
   try {
     await Promise.race([
       pending,
-      new Promise((resolve5) => {
-        timer = setTimeout(resolve5, timeoutMs);
+      new Promise((resolve4) => {
+        timer = setTimeout(resolve4, timeoutMs);
       })
     ]);
   } finally {
@@ -48677,7 +48721,7 @@ async function runEnvAppendProbe(logPath) {
 // mcp/productionFeed.ts
 import { createHash as createHash7 } from "node:crypto";
 import { readdir as readdir3, readFile as readFile7 } from "node:fs/promises";
-import { basename as basename3, join as join9 } from "node:path";
+import { basename as basename2, join as join9 } from "node:path";
 var feedJobSchema = external_exports.object({
   id: external_exports.string().min(1),
   startedAt: external_exports.number(),
@@ -48984,7 +49028,7 @@ async function readProductionFeed(input2) {
     const missing = derived2.filter((event) => !loggedIds.has(event.id));
     const behind = !log.present || missing.length > 0 || typeof job.revision === "number" && log.present && (log.maxRevision === void 0 || log.maxRevision < job.revision);
     const journal = isSafeJobId(job.id) ? await listJournal(job.id, input2.jobsDir) : { valid: [], torn: [] };
-    for (const file2 of journal.torn) abstentions.push({ path: basename3(file2), reason: "torn journal note" });
+    for (const file2 of journal.torn) abstentions.push({ path: basename2(file2), reason: "torn journal note" });
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds, input2.jobsDir);
     const events = [
       ...log.events.map(fromLog),
@@ -49009,7 +49053,7 @@ async function readProductionFeed(input2) {
       }),
       ...reviewOf(job.continuityReview) ? { review: reviewOf(job.continuityReview) } : {},
       ...job.repairProposal ? { repairProposal: repairOf(job.repairProposal) } : {},
-      ...typeof job.filmPath === "string" && job.filmPath.length > 0 ? { filmPath: basename3(job.filmPath) } : {},
+      ...typeof job.filmPath === "string" && job.filmPath.length > 0 ? { filmPath: basename2(job.filmPath) } : {},
       liveness: livenessOf(job, now),
       log: {
         present: log.present,
@@ -50344,9 +50388,9 @@ function localImagePath(ref) {
   if (!ref) return void 0;
   const trimmed = ref.trim();
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return void 0;
-  return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+  return localPathFromRef(trimmed);
 }
-var sleep2 = (ms) => new Promise((resolve5) => setTimeout(resolve5, ms));
+var sleep2 = (ms) => new Promise((resolve4) => setTimeout(resolve4, ms));
 function cancelledBeforeSpend(extra) {
   if (!extra?.signal?.aborted) return void 0;
   return {
@@ -50710,10 +50754,10 @@ async function resolveToLocalFile(input2) {
     await writeFile4(target, bytes);
     return target;
   }
-  const path = input2.startsWith("file://") ? new URL(input2).pathname : input2;
-  const exists = await probeDuration(path);
-  if (exists === void 0) throw new Error(`Not a readable media file: ${path}`);
-  return path;
+  const path2 = localPathFromRef(input2);
+  const exists = await probeDuration(path2);
+  if (exists === void 0) throw new Error(`Not a readable media file: ${path2}`);
+  return path2;
 }
 server.registerTool(
   "extract_last_frame",
@@ -51123,9 +51167,9 @@ async function loadJobsFromDisk() {
   await sweepStaleReviewFrames(JOBS_DIR);
   await refreshJobsFromDisk();
 }
-async function readClaimFile(path) {
+async function readClaimFile(path2) {
   try {
-    const raw = await readFile8(path, "utf8");
+    const raw = await readFile8(path2, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed?.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -51155,9 +51199,9 @@ async function placeClaim(jobId, owner) {
 function claimTurnPath(jobId) {
   return `${claimPath(jobId)}.turn`;
 }
-async function readClaimTurn(path) {
+async function readClaimTurn(path2) {
   try {
-    const raw = await readFile8(path, "utf8");
+    const raw = await readFile8(path2, "utf8");
     if (!raw.trim()) return void 0;
     const parsed = JSON.parse(raw);
     if (typeof parsed.pid !== "number" || typeof parsed.token !== "string") return void 0;
@@ -51180,10 +51224,10 @@ function claimTurnIsStale(info, ageMs) {
   if (info.host === processHost && !pidAlive(info.pid)) return true;
   return ageMs !== void 0 && ageMs > 15e3;
 }
-async function discardIfUnchanged(path, expected) {
-  const tomb = `${path}.tomb.${randomUUID3()}`;
+async function discardIfUnchanged(path2, expected) {
+  const tomb = `${path2}.tomb.${randomUUID3()}`;
   try {
-    await rename3(path, tomb);
+    await rename3(path2, tomb);
   } catch (err) {
     if (err.code === "ENOENT") return false;
     throw err;
@@ -51195,7 +51239,7 @@ async function discardIfUnchanged(path, expected) {
     tombRaw = "";
   }
   if (tombRaw !== expected) {
-    await restoreIfAbsent(tomb, path);
+    await restoreIfAbsent(tomb, path2);
     return false;
   }
   let tombAge;
@@ -51205,7 +51249,7 @@ async function discardIfUnchanged(path, expected) {
     tombAge = void 0;
   }
   if (!tombRaw.trim() && !(tombAge !== void 0 && tombAge > CLAIM_EMPTY_GRACE_MS)) {
-    await restoreIfAbsent(tomb, path);
+    await restoreIfAbsent(tomb, path2);
     return false;
   }
   await unlink3(tomb).catch(() => void 0);
@@ -51533,7 +51577,7 @@ async function runSequenceJob(job, args) {
       let retries = 0;
       while (result.status === "failed" && result.retryable && retries < 3) {
         retries += 1;
-        await new Promise((resolve5) => setTimeout(resolve5, 2500 * retries));
+        await new Promise((resolve4) => setTimeout(resolve4, 2500 * retries));
         result = await renderShot();
       }
       if (result.status === "failed" && result.retryable && shot.lastFrameUrl) {
