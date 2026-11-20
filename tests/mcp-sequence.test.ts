@@ -49,25 +49,28 @@ describe('hard cuts', () => {
     expect(renderSeq.slice(0, 7000)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
 
     const assemble = serverSource.slice(serverSource.indexOf('"assemble_film"'));
-    expect(assemble.slice(0, 1200)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
+    expect(assemble.slice(0, 6000)).toMatch(/fadeDuration:\s*z\.number\(\)[^\n]*\.default\(0\)/);
   });
 
   it('takes a concat path for a zero fade instead of an xfade with duration 0', () => {
-    const code = codeOnly(mediaSource);
-    // The bug: a fade of 0 still went through xfade, which produces only the
-    // first clip. The fix is a distinct branch, keyed off wantsFade.
-    expect(code).toContain('const wantsFade = input.fadeDuration > 0;');
-    expect(code).toContain('if (fade === 0)');
-    expect(code).toContain('concat=n=${n}:v=1:a=0');
-    expect(code).toContain('concat=n=${n}:v=0:a=1');
+    const graph = readFileSync(path.join(__dirname, '..', 'src', 'lib', 'joinGraph.ts'), 'utf8');
+    const code = codeOnly(graph);
+    // A fade of 0 used to take xfade, and a zero-length xfade collapsed the film
+    // to the first clip. Butt joins are concat. xfade is only built for a real overlap.
+    expect(code).toContain('concat=n=2:v=1:a=0');
+    expect(code).toContain('concat=n=2:v=0:a=1');
+    expect(code).toContain('overlap > 0');
+    expect(code).not.toContain('duration=0');
+    expect(code).not.toContain('duration=${fade}');
+    expect(codeOnly(mediaSource)).not.toContain('xfade=transition=fade:duration=${fade}');
   });
 
   it('never builds an xfade with a zero duration', () => {
-    const code = codeOnly(mediaSource);
-    // The xfade line must sit inside the branch that only runs for a real fade.
-    const xfadeIndex = code.indexOf('xfade=transition=fade:duration=${fade}');
-    const elseIndex = code.indexOf('} else {', code.indexOf('if (fade === 0)'));
-    expect(xfadeIndex).toBeGreaterThan(elseIndex);
+    const graph = codeOnly(readFileSync(path.join(__dirname, '..', 'src', 'lib', 'joinGraph.ts'), 'utf8'));
+    const xfadeIndex = graph.indexOf('xfade=transition=fade:duration=${duration}');
+    const guardIndex = graph.indexOf('overlap > 0');
+    expect(xfadeIndex).toBeGreaterThan(guardIndex);
+    expect(graph).not.toMatch(/xfade=transition=fade:duration=\$\{0/);
   });
 });
 
@@ -171,6 +174,7 @@ describe('the continuity block', () => {
 
 describe('the music bed', () => {
   const media = codeOnly(mediaSource);
+  const assembler = codeOnly(readFileSync(path.join(__dirname, '..', 'src', 'lib', 'assembleShared.ts'), 'utf8'));
 
   it('refuses a bed that is shorter than the film instead of looping it', () => {
     // Looping a 30-second cue under a three-minute film repeats the phrase.
@@ -180,18 +184,18 @@ describe('the music bed', () => {
   });
 
   it('trims the bed to the film and fades it out rather than cutting mid-note', () => {
-    expect(media).toContain('atrim=0:${totalDuration.toFixed(3)}');
-    expect(media).toContain('afade=t=out');
+    expect(assembler).toContain('atrim=0:${durationSeconds.toFixed(6)}');
+    expect(assembler).toContain('afade=t=out');
   });
 
   it('mixes under the clips instead of replacing their audio', () => {
-    expect(media).toContain('amix=inputs=2:duration=first');
-    expect(media).toContain('[aout][bed]');
+    expect(assembler).toContain('amix=inputs=2:duration=first');
+    expect(assembler).toContain('[${graph.audioLabel}][bed]');
   });
 
   it('keeps the film length authoritative', () => {
     // duration=first: a long bed must not stretch the picture.
-    expect(media).toContain('duration=first');
+    expect(assembler).toContain('duration=first');
   });
 
   it('is optional on both assembly tools and resolved before any render', () => {
@@ -380,9 +384,13 @@ describe('a closing frame that is accepted and then ignored', () => {
 describe('the last-frame fallback keeps the LAST frame', () => {
   it('does not fall back to frame zero', () => {
     // The fallback used to select `n\,0`, so a clip whose tail would not seek
-    // handed the next shot its first frame to chain from.
+    // handed the next shot its first frame to chain from. The extract now
+    // decodes through the tail and keeps the last frame with -update 1.
+    const assembler = readFileSync(path.join(__dirname, '..', 'src', 'lib', 'assembleShared.ts'), 'utf8');
     expect(mediaSource).not.toContain('select=eq(n\\\\,0)');
-    expect(mediaSource).toContain('"-vf", "reverse"');
+    expect(assembler).not.toContain('reverse');
+    expect(assembler).toContain("'-update', '1'");
+    expect(assembler).not.toContain("'-frames:v', '1'");
   });
 });
 

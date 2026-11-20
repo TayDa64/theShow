@@ -1,3 +1,5 @@
+import type { JoinRequest, PlannedJoin, TrimEndSource } from '../lib/joinPlan';
+
 export type PipelineStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export interface ChainedClip {
@@ -13,8 +15,15 @@ export interface ChainedClip {
   sourceDurationSeconds?: number;
   trimStartSeconds?: number;
   trimEndSeconds?: number;
+  trimEndSource?: TrimEndSource;
   playbackDurationSeconds?: number;
   bridgeFrameUrl?: string | null;
+  join?: JoinRequest;
+  /** Chain frame inside this clip, used by the join into the next clip. */
+  chainFrameIndex?: number;
+  chainedFromPrevious?: boolean;
+  boardMatch?: boolean;
+  crossfadeSeconds?: number;
 }
 
 export interface FilmAssemblyJob {
@@ -24,6 +33,10 @@ export interface FilmAssemblyJob {
   downloadUrl?: string;
   outputPath?: string;
   error?: string | null;
+  mode?: 'single' | 'concat' | 'xfade' | 'emulated';
+  joins?: PlannedJoin[];
+  notice?: string | null;
+  outputFps?: number;
 }
 
 export interface ExtendClipRequest {
@@ -40,4 +53,6 @@ export interface AssembleFilmRequest {
   title?: string;
   clips: ChainedClip[];
   aspectRatio?: '16:9' | '9:16';
+  crossfadeSeconds?: number;
+  outputSize?: { width: number; height: number } | null;
 }

@@ -15,6 +15,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { detectChainFrame } from "../src/lib/detectChain.ts";
 import { acceptRenderedTake, TakeAdmissionSchema, type TakeReport } from "./admission.ts";
 import { resolveBeatDuration, resolveBeatShotType } from "./beats.ts";
 import { featheredSubjectCutout } from "./cutout.ts";
@@ -32,6 +33,7 @@ import {
   grayscaleStillCorrelation,
   pathToDataUrl,
   probeDuration,
+  probeVideo,
 } from "./media.ts";
 import {
   costUsdFromUsage,
@@ -2292,6 +2294,8 @@ server.registerTool(
       status: "ok",
       framePath: frame.path,
       frameBytes: frame.bytes,
+      frameIndex: frame.frameIndex,
+      framePts: frame.framePts,
       sourceVideo: args.videoUrl,
       sourceDurationSeconds: durationSeconds,
       ffmpeg: frame.ffmpeg,
@@ -2513,6 +2517,13 @@ server.registerTool(
         title: z.string().optional(),
         trimStart: z.number().min(0).optional(),
         trimEnd: z.number().min(0).optional(),
+        join: z.enum(["auto", "chain", "cut", "crossfade", "board-match"]).optional().describe(
+          "Join from the previous clip. Omit for auto: chains are detected from the local frames, " +
+          "which is free and does not call a model. fadeDuration is the crossfade used when the join is not a chain.",
+        ),
+        chainFrameIndex: z.number().int().min(0).optional().describe(
+          "0-based source frame in this clip that the next clip was rendered from. Omit to detect it.",
+        ),
       })).min(1),
       fadeDuration: z.number().min(0).max(5).default(0).describe(
         "Seconds of cross-fade at each join. 0 is a hard cut: sharp, and right whenever the shot " +
@@ -2538,7 +2549,13 @@ server.registerTool(
     const localFiles = [];
     for (const clip of args.clips) {
       const file = await resolveToLocalFile(clip.url);
-      localFiles.push({ file, trimStart: clip.trimStart, trimEnd: clip.trimEnd });
+      localFiles.push({
+        file,
+        trimStart: clip.trimStart,
+        trimEnd: clip.trimEnd,
+        join: clip.join,
+        chainFrameIndex: clip.chainFrameIndex,
+      });
     }
 
     const result = await assembleClips({
@@ -2558,9 +2575,11 @@ server.registerTool(
       clipCount: args.clips.length,
       durationSeconds,
       fileBytes: await bytes,
-      crossFades: result.mode === "xfade",
+      crossFades: result.mode === "xfade" || result.mode === "emulated",
       mode: result.mode,
       fadeSeconds: "fadeSeconds" in result ? result.fadeSeconds : undefined,
+      joins: result.joins,
+      ...(result.notice ? { notice: result.notice } : {}),
       audioBed: result.audioBed ? {
         source: args.audioTrackUrl,
         volume: args.audioTrackVolume,
@@ -2701,6 +2720,11 @@ export type SequenceJob = {
     durationSeconds?: number;
     /** The opening frame actually sent for this shot. Absent on jobs rendered before it was recorded. */
     openingFramePath?: string;
+    /** 0-based source frame extracted for the next shot. Absent on older jobs. */
+    chainFrameIndex?: number;
+    chainFramePts?: number;
+    /** Join into this shot. Absent on older jobs and on the first shot. */
+    joinIn?: "auto" | "chain" | "board-match" | "cut" | "crossfade";
     pinUsed?: "start" | "both";
     /** Present only when the caller sent shotType on a job created after it was stored. */
     shotType?: string;
@@ -2729,7 +2753,23 @@ export type SequenceJob = {
     pin?: "start" | "both";
     voiceId?: string;
     assemble: boolean;
+    /** Output frame rate chosen at assembly. Absent until a film is joined. */
+    outputFps?: number;
   };
+  /** Per-join record from the last assembly. Absent on older jobs. */
+  joins?: Array<{
+    index: number;
+    type: "chain" | "board-match" | "cut" | "crossfade";
+    requested: "auto" | "chain" | "board-match" | "cut" | "crossfade";
+    applied: "chain" | "board-match" | "cut" | "crossfade" | "emulated";
+    reason?: string;
+    chainFrameIndex?: number;
+    detected?: boolean;
+    crossfadeFrames: number;
+    offsetFrames: number;
+    label: string;
+    accessibleName: string;
+  }>;
   /** The frame the first shot chained from, kept so a repair of shot 1 can match it. */
   startFramePath?: string;
   /** Non-fatal things the user has to know, such as a repair leaving later shots stale. */
@@ -3293,6 +3333,7 @@ function jobPayload(job: SequenceJob) {
       fileUrl: job.fileUrl,
       filmDurationSeconds: job.filmDurationSeconds,
       filmBytes: job.filmBytes,
+      ...(job.joins?.length ? { joins: job.joins } : {}),
       lastFramePath: job.lastFramePath,
       unknownCharacters: job.unknownCharacters?.length ? job.unknownCharacters : undefined,
       warnings: job.warnings?.length ? job.warnings : undefined,
@@ -3315,6 +3356,51 @@ function jobPayload(job: SequenceJob) {
         : "Report the error and the shot that failed. Any shots already rendered are still on " +
           "disk and can be assembled or continued from.",
   };
+}
+
+/**
+ * Join shots that are already on disk. No model call. Chain frames come from
+ * the job file, and anything it does not record is measured from the clips.
+ */
+async function assembleFinishedJob(job: SequenceJob, options: {
+  fadeDuration: number;
+  audioTrackFile?: string;
+  audioTrackVolume?: number;
+  audioTrackFadeOutSeconds?: number;
+  clipAudio?: "keep" | "mute" | "replace";
+}): Promise<void> {
+  if (job.shots.some((shot) => !shot.localPath)) return;
+  const clips = job.shots.map((shot, index) => {
+    const previous = index > 0 ? job.shots[index - 1] : undefined;
+    const chained = Boolean(previous?.framePath && shot.openingFramePath && previous.framePath === shot.openingFramePath);
+    const boardMatch = Boolean(
+      previous?.lastFramePath && shot.openingFramePath && previous.lastFramePath === shot.openingFramePath && !chained,
+    );
+    if (index > 0 && !shot.joinIn) {
+      shot.joinIn = chained ? "chain" : boardMatch ? "board-match" : "auto";
+    }
+    return {
+      file: shot.localPath as string,
+      join: shot.joinIn,
+      chainFrameIndex: shot.chainFrameIndex,
+      chainedFromPrevious: chained || shot.joinIn === "chain",
+      boardMatch: boardMatch || shot.joinIn === "board-match",
+    };
+  });
+  const assembled = await assembleClips({
+    clips,
+    fadeDuration: options.fadeDuration,
+    audioTrackFile: options.audioTrackFile,
+    audioTrackVolume: options.audioTrackVolume,
+    audioTrackFadeOutSeconds: options.audioTrackFadeOutSeconds,
+    clipAudio: options.clipAudio,
+  });
+  job.filmPath = assembled.path;
+  job.fileUrl = `file://${assembled.path}`;
+  job.filmDurationSeconds = await probeDuration(assembled.path);
+  job.filmBytes = (await stat(assembled.path)).size;
+  job.joins = assembled.joins;
+  if (job.settings) job.settings.outputFps = assembled.outputFps;
 }
 
 /**
@@ -3486,6 +3572,17 @@ async function runSequenceJob(
         error: result.error,
         localPath: undefined as string | undefined,
         framePath: undefined as string | undefined,
+        chainFrameIndex: undefined as number | undefined,
+        chainFramePts: undefined as number | undefined,
+        ...(job.shots.length > 0 ? {
+          joinIn: (
+            shotFirstFrame && (shotFirstFrame === previousFrame || shotFirstFrame === job.shots.at(-1)?.framePath)
+              ? "chain"
+              : job.shots.at(-1)?.lastFrameUrl && shot.firstFrameUrl && job.shots.at(-1)?.lastFrameUrl === shot.firstFrameUrl
+                ? "board-match"
+                : "auto"
+          ) as "chain" | "board-match" | "auto",
+        } : {}),
         openingFramePath: shotFirstFrame,
         pinUsed: args.pin ?? "start",
         lastFrameUrl: shot.lastFrameUrl,
@@ -3568,6 +3665,8 @@ async function runSequenceJob(
       }
       previousFrame = frame.path;
       entry.framePath = frame.path;
+      entry.chainFrameIndex = frame.frameIndex;
+      entry.chainFramePts = frame.framePts;
       job.lastFramePath = frame.path;
       job.completed = shotNumber;
       // Paid for, so on disk: a crash between shots keeps everything bought.
@@ -3582,22 +3681,13 @@ async function runSequenceJob(
     }
 
     if (args.assemble) {
-      const files = job.shots
-        .map((shot) => shot.localPath)
-        .filter((p): p is string => Boolean(p))
-        .map((file) => ({ file: file as string, trimStart: undefined, trimEnd: undefined }));
-      const assembled = await assembleClips({
-        clips: files,
+      await assembleFinishedJob(job, {
         fadeDuration: args.fadeDuration,
         audioTrackFile: args.audioTrackFile,
         audioTrackVolume: args.audioTrackVolume,
         audioTrackFadeOutSeconds: args.audioTrackFadeOutSeconds,
         clipAudio: args.clipAudio,
       });
-      job.filmPath = assembled.path;
-      job.fileUrl = `file://${assembled.path}`;
-      job.filmDurationSeconds = await probeDuration(assembled.path);
-      job.filmBytes = (await (await import("node:fs/promises")).stat(assembled.path)).size;
     }
 
     job.state = "completed";
@@ -4909,6 +4999,102 @@ server.registerTool(
   }
 );
 
+const JOIN_KINDS = ["chain", "board-match", "cut", "crossfade"] as const;
+const JOIN_REQUESTS = ["auto", "chain", "board-match", "cut", "crossfade"] as const;
+
+function isOneOf(value: unknown, allowed: readonly string[]): boolean {
+  return typeof value === "string" && allowed.includes(value);
+}
+
+/**
+ * Interrupted jobs are finished only from provenance this version actually wrote.
+ * A present key is not enough: null, a wrong type, a join list of the wrong
+ * length, or one join field by itself is left unread, the same as a legacy job.
+ */
+async function interruptedJobHasUsableProvenance(job: SequenceJob): Promise<boolean> {
+  let usable = false;
+  if (job.joins !== undefined) {
+    if (!Array.isArray(job.joins) || job.joins.length !== Math.max(job.shots.length - 1, 0)) return false;
+    for (const join of job.joins) {
+      if (!join || typeof join !== "object" || !isOneOf((join as { type?: unknown }).type, JOIN_KINDS)) return false;
+    }
+    usable = true;
+  }
+  const outputFps = job.settings?.outputFps as unknown;
+  if (outputFps !== undefined) {
+    if (typeof outputFps !== "number" || !Number.isFinite(outputFps) || outputFps <= 0) return false;
+    usable = true;
+  }
+  for (const shot of job.shots) {
+    if (shot.joinIn !== undefined && !isOneOf(shot.joinIn, JOIN_REQUESTS)) return false;
+    if (shot.chainFramePts !== undefined) {
+      if (typeof shot.chainFramePts !== "number" || !Number.isFinite(shot.chainFramePts) || shot.chainFramePts < 0) return false;
+    }
+    if (shot.chainFrameIndex !== undefined) {
+      if (typeof shot.chainFrameIndex !== "number" || !Number.isInteger(shot.chainFrameIndex) || shot.chainFrameIndex < 0) return false;
+      if (!shot.localPath) return false;
+      try {
+        const probe = await probeVideo(shot.localPath);
+        if (shot.chainFrameIndex >= probe.frameCount) return false;
+      } catch {
+        return false;
+      }
+      usable = true;
+    }
+  }
+  return usable;
+}
+
+type ChainTrust = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A chain index that is merely inside the file can still be the wrong frame.
+ * Pts has to name that same frame, within half a frame, and the free local
+ * detector has to name it too. One tail decode per join. Indexes that are not
+ * whole, negative, or past the last frame are refused above, not here.
+ */
+async function recordedChainAgrees(job: SequenceJob): Promise<ChainTrust> {
+  for (let index = 0; index < job.shots.length; index += 1) {
+    const shot = job.shots[index];
+    const recorded = shot.chainFrameIndex;
+    if (recorded === undefined || !shot.localPath) continue;
+    let frameCount = 0;
+    let fps = 0;
+    try {
+      const probe = await probeVideo(shot.localPath);
+      frameCount = probe.frameCount;
+      fps = probe.fps;
+    } catch {
+      return { ok: false, reason: "The chain clip could not be read." };
+    }
+    if (typeof recorded !== "number" || !Number.isInteger(recorded) || recorded < 0 || recorded >= frameCount) continue;
+    const pts = shot.chainFramePts;
+    if (typeof pts === "number" && Number.isFinite(pts) && pts >= 0 && fps > 0) {
+      const halfFrame = 0.5 / fps;
+      if (Math.abs(pts - recorded / fps) > halfFrame) {
+        return {
+          ok: false,
+          reason: `chainFramePts ${pts} is more than half a frame from chainFrameIndex ${recorded} at ${fps} fps.`,
+        };
+      }
+    }
+    const next = job.shots[index + 1];
+    if (!next?.localPath) continue;
+    const detected = await detectChainFrame({
+      outgoingFile: shot.localPath,
+      incomingFile: next.localPath,
+      outgoingFrameCount: frameCount,
+    });
+    if (!detected || detected.index !== recorded) {
+      return {
+        ok: false,
+        reason: `chainFrameIndex ${recorded} does not match the frame detected from the clips (${detected ? detected.index : "none"}).`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * Poll a render_sequence job.
  *
@@ -4919,8 +5105,11 @@ server.registerTool(
   "check_sequence",
   {
     description:
-      "Check progress on a render_sequence job. Read-only and free: it renders nothing and spends " +
-      "nothing. Returns progress while running, and the film path plus actual cost when finished.",
+      "Check progress on a render_sequence job. Free: it renders no shots and spends nothing. " +
+      "A job from this version that was interrupted after its shots were saved, and that carries valid join " +
+      "provenance which matches the clips, has its local join finished. A job saved before that provenance, " +
+      "or whose provenance is missing, not usable, or does not match the clips, is left byte-for-byte " +
+      "unchanged, and the reply says why and to call assemble_film. Otherwise it only reads the job.",
     inputSchema: z.object({
       jobId: z.string().describe("The jobId render_sequence returned."),
     }),
@@ -4935,8 +5124,41 @@ server.registerTool(
         known: Array.from(sequenceJobs.keys()).slice(-5),
       });
     }
+    const shotsReady = job.shots.length > 0
+      && job.shots.length === job.shotCount
+      && job.shots.every((shot) => Boolean(shot.localPath));
+    const interrupted = !job.filmPath && shotsReady && job.settings?.assemble !== false
+      && (job.state === "stopped" || job.state === "failed");
+    const provenance = interrupted && await interruptedJobHasUsableProvenance(job);
+    const trust = provenance ? await recordedChainAgrees(job) : { ok: true as const };
+    if (provenance && trust.ok) {
+      await assembleFinishedJob(job, {
+        fadeDuration: job.settings?.fadeDuration ?? 0,
+        audioTrackFile: job.settings?.audioTrackFile,
+        audioTrackVolume: job.settings?.audioTrackVolume,
+        audioTrackFadeOutSeconds: job.settings?.audioTrackFadeOutSeconds,
+        clipAudio: job.settings?.clipAudio,
+      });
+      if (job.filmPath) {
+        job.state = "completed";
+        job.error = undefined;
+        job.finishedAt = job.finishedAt ?? Date.now();
+        await persistJob(job);
+      }
+    }
     const queued = await readQueuedFilmSpend(job.id, job.spendLedger?.appliedNoteIds);
-    return structuredText({ ...jobPayload(job), ...queuedFields(queued) });
+    const legacyNote = interrupted && !provenance
+      ? {
+          assembleAvailable: true,
+          message: "Shots are on disk, but this job was saved before join provenance was recorded, so the file was left unchanged. Call assemble_film with those shot files to build the film.",
+        }
+      : interrupted && !trust.ok
+        ? {
+            assembleAvailable: true,
+            message: `Shots are on disk, but the recorded chain frame was not trusted, so the file was left unchanged. ${trust.reason} Call assemble_film with those shot files to build the film.`,
+          }
+        : {};
+    return structuredText({ ...jobPayload(job), ...legacyNote, ...queuedFields(queued) });
   }
 );
 

@@ -66,6 +66,42 @@ jobs:
           test ! -e "$HOME/.grok/auth.json"
       - run: npm test
 
+  test-ffmpeg7:
+    runs-on: ubuntu-latest
+    env:
+      GROK_AUTH_FILE: /nonexistent/theshow-test-auth.json
+      THESHOW_FORBID_HOME_AUTH: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: install ffmpeg 7.1
+        run: |
+          # Pinned autobuild. sha256sum -c fails the job when the archive changes.
+          url=https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-gpl-7.1.tar.xz
+          curl -fsSL -o /tmp/ffmpeg71.tar.xz "$url"
+          echo "c1e6caf48923dd8e6bc5e54d51ba70c321175b8162ae9c414c392990e72f0e79  /tmp/ffmpeg71.tar.xz" | sha256sum -c -
+          mkdir -p /tmp/ffmpeg71-src
+          tar -xJf /tmp/ffmpeg71.tar.xz -C /tmp/ffmpeg71-src --strip-components=1
+          /tmp/ffmpeg71-src/bin/ffmpeg -version | head -1
+      - name: refuse paid credentials and a home auth store
+        run: |
+          test -z "${XAI_API_KEY:-}"
+          test -z "${GROK_API_KEY:-}"
+          test -z "${GEMINI_API_KEY:-}"
+          test ! -e "$HOME/.grok/auth.json"
+      - name: test on ffmpeg 7.1
+        env:
+          FFMPEG_PATH: /tmp/ffmpeg71-src/bin/ffmpeg
+          FFPROBE_PATH: /tmp/ffmpeg71-src/bin/ffprobe
+        run: |
+          export PATH="/tmp/ffmpeg71-src/bin:$PATH"
+          ffmpeg -version | head -1
+          npm test
+
   bundle:
     runs-on: ubuntu-latest
     steps:
@@ -125,6 +161,7 @@ jobs:
       - lint
       - build
       - test
+      - test-ffmpeg7
       - bundle
       - e2e
     steps:

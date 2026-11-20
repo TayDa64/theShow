@@ -3,6 +3,7 @@ import { Download, RefreshCw, Layers, Copy, Check, Film, AlertTriangle, Wand2, C
 import type { ExportSettings, Character, Scene, CameraConfig, StoryboardSeedStrategy, StoryboardTransitionMode } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { buildProjectTimelineManifest, createRenderSeed, getSceneDisplayBackground, getSceneStoryboardFrameAsset, getShotDialogueExcerpt, getStoryboardShotActiveGeneratedClip, normalizeStoryboardShot, primeNextStoryboardShotContinuity, sanitizeStoryboardSeed, upsertSceneStoryboardFrameAsset } from '../utils/storyforge';
+import { STUDIO_CROSSFADE_SECONDS, timelineJoinPresentation } from '../lib/joinPlan';
 import type { FilmAssemblyJob } from '../types/pipeline';
 import { ProductionFeed } from './ProductionFeed';
 import { pollUntilComplete } from '../lib/veoChain';
@@ -591,8 +592,28 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         throw new Error('Anchor-frame upload did not return asset metadata.');
       }
 
-      const sceneWithAsset = upsertSceneStoryboardFrameAsset(sceneSnapshot, data.asset);
-      const sceneWithAnchor = updateSceneStoryboardShot(sceneWithAsset, shot.id, { boardImageId: data.asset.id });
+      const sceneWithAsset = upsertSceneStoryboardFrameAsset(sceneSnapshot, {
+        ...data.asset,
+        ...(Number.isInteger(data.frameIndex) ? { chainFrameIndex: data.frameIndex, chainFramePts: data.framePts } : {}),
+      });
+      const sceneWithFrame = {
+        ...sceneWithAsset,
+        storyboardShots: sceneWithAsset.storyboardShots?.map((item) => {
+          if (item.id !== shot.id) return item;
+          return {
+            ...item,
+            generatedClips: item.generatedClips?.map((clip) => (
+              clip.operationName === operationName
+                ? {
+                  ...clip,
+                  ...(Number.isInteger(data.frameIndex) ? { chainFrameIndex: data.frameIndex, chainFramePts: data.framePts } : {}),
+                }
+                : clip
+            )),
+          };
+        }),
+      };
+      const sceneWithAnchor = updateSceneStoryboardShot(sceneWithFrame, shot.id, { boardImageId: data.asset.id });
       const currentShotIndex = sceneWithAnchor.storyboardShots?.findIndex(item => item.id === shot.id) ?? -1;
       const nextShotBefore = currentShotIndex >= 0 ? sceneWithAnchor.storyboardShots?.[currentShotIndex + 1] : undefined;
       const primedScene = primeNextStoryboardShotContinuity(sceneWithAnchor, shot.id);
@@ -1400,16 +1421,25 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
         },
         body: JSON.stringify({
           title: selectedScene?.title || 'timeline-film',
-          clips: readyTimelineClips.map((clip, index) => ({
-            shotId: clip.shotId,
-            title: clip.title,
-            order: index + 1,
-            operationName: clip.operationName || null,
-            durationSeconds: clip.playbackDurationSeconds,
-            sourceDurationSeconds: clip.sourceDurationSeconds,
-            trimStartSeconds: clip.trimStartSeconds,
-            trimEndSeconds: clip.trimEndSeconds,
-          })),
+          crossfadeSeconds: STUDIO_CROSSFADE_SECONDS,
+          clips: readyTimelineClips.map((clip, index) => {
+            const sceneForClip = scenes.find((scene) => scene.id === clip.sceneId);
+            const shotForClip = sceneForClip?.storyboardShots?.find((shot) => shot.id === clip.shotId);
+            return {
+              shotId: clip.shotId,
+              title: clip.title,
+              order: index + 1,
+              operationName: clip.operationName || null,
+              durationSeconds: clip.playbackDurationSeconds,
+              sourceDurationSeconds: clip.sourceDurationSeconds,
+              trimStartSeconds: clip.trimStartSeconds,
+              trimEndSeconds: clip.trimEndSeconds,
+              ...(clip.trimEndSource ? { trimEndSource: clip.trimEndSource } : {}),
+              ...(clip.joinIn ? { join: clip.joinIn } : {}),
+              ...(Number.isInteger(clip.chainFrameIndex) ? { chainFrameIndex: clip.chainFrameIndex } : {}),
+              chainedFromPrevious: shotForClip?.transitionInMode === 'previous-shot' && index > 0,
+            };
+          }),
         }),
       });
 
@@ -2024,6 +2054,27 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 <div className="text-[10px] font-mono text-zinc-400">
                   Project cut status: {readyTimelineClips.length}/{includedTimelineClips.length} included timeline clips have reusable source media ready for assembly.
                 </div>
+                {includedTimelineClips.length > 1 && (
+                  <ul className="space-y-1" data-testid="export-join-list">
+                    {includedTimelineClips.slice(1).map((clip, offset) => {
+                      const previous = includedTimelineClips[offset];
+                      const sceneForClip = scenes.find((scene) => scene.id === clip.sceneId);
+                      const shotForClip = sceneForClip?.storyboardShots?.find((shot) => shot.id === clip.shotId);
+                      const join = timelineJoinPresentation({
+                        index: offset,
+                        join: clip.joinIn,
+                        chained: shotForClip?.transitionInMode === 'previous-shot',
+                        trimEndSource: previous?.trimEndSource,
+                        crossfadeSeconds: clip.joinIn === 'cut' ? 0 : STUDIO_CROSSFADE_SECONDS,
+                      });
+                      return (
+                        <li key={clip.clipId} className="text-xs text-zinc-100">
+                          {join.accessibleName}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -2054,6 +2105,15 @@ export function ExportView({ settings, onUpdateSettings, onUpdateScenes, charact
                 </div>
                 {filmJob?.error && (
                   <div className="text-[10px] font-mono text-red-300">{filmJob.error}</div>
+                )}
+                {filmJob?.notice && (
+                  <div
+                    role="status"
+                    data-testid="assembly-join-notice"
+                    className="rounded-xl border border-amber-700 bg-zinc-950 px-3 py-2 text-xs text-amber-50"
+                  >
+                    {filmJob.notice}
+                  </div>
                 )}
               </div>
             )}

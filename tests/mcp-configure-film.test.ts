@@ -138,7 +138,7 @@ describe('render_sequence and check_sequence', () => {
     // Bound to the handler: an unbounded slice would run into the next tool.
     const start = src.indexOf('"check_sequence"');
     const poll = src.slice(start, src.indexOf('sequenceJobs.get(args.jobId)', start) + 400);
-    expect(poll).toContain('renders nothing and spends');
+    expect(poll).toContain('renders no shots and spends nothing');
     expect(poll).not.toContain('generateGrokClip');
   });
 
