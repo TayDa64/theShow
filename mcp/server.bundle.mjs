@@ -52289,6 +52289,8 @@ server.registerTool(
     if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
+    const boardImagesDenied = imageRefsDenied([baseImageUrl, ...urls]);
+    if (boardImagesDenied) return boardImagesDenied;
     const shotLocations = args.shots.map((shot) => shot.locationId);
     const fromShotsWardrobe = args.shots.flatMap(
       (shot, index) => stampShotNumbers(shot.wardrobeEvents, index + 1)

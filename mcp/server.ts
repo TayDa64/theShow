@@ -4420,6 +4420,10 @@ server.registerTool(
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     // Default the base to a Location character unless the caller named one.
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
+    // Refuse before the estimate. A quote for an outside image is a promise to
+    // inline that file on confirm.
+    const boardImagesDenied = imageRefsDenied([baseImageUrl, ...urls]);
+    if (boardImagesDenied) return boardImagesDenied;
 
     const shotLocations = args.shots.map((shot) => shot.locationId);
     const fromShotsWardrobe = args.shots.flatMap((shot, index) =>
