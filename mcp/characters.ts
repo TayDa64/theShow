@@ -16,9 +16,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, join } from "node:path";
 import { parseWardrobe, type CharacterWardrobe } from "./continuity.ts";
-import { localPathFromRef } from "./localPath.ts";
+import { localPathFromRef, pathInside } from "./localPath.ts";
 import { atomicWriteFile, pidAlive, processHost, publishExclusive, restoreIfAbsent } from "./runtime.ts";
 
 export const CHARACTERS_DIR =
@@ -485,7 +485,7 @@ async function keepReferences(input: {
 
     // Already one of this character's copies (a re-save of a loaded record):
     // keep it rather than copying the copy under a new name.
-    if (source === refsDir || source.startsWith(refsDir + sep)) {
+    if (pathInside(refsDir, source)) {
       kept.push(source);
       continue;
     }

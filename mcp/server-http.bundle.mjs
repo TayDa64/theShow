@@ -46576,6 +46576,27 @@ function pathApiFor(platform) {
     }
   }
 }
+function pathInside(root, candidate, platform = hostLocalPathPlatform()) {
+  const api = pathApiFor(platform);
+  const base = api.resolve(root);
+  const abs = api.resolve(candidate);
+  switch (platform) {
+    case "win32": {
+      const rel = api.relative(base, abs);
+      if (rel === "") return true;
+      if (api.isAbsolute(rel)) return false;
+      return rel !== ".." && !rel.startsWith(`..${api.sep}`);
+    }
+    case "posix": {
+      const sep2 = api.sep;
+      return abs === base || abs.startsWith(base.endsWith(sep2) ? base : `${base}${sep2}`);
+    }
+    default: {
+      const unexpected = platform;
+      throw new Error(`Unexpected path platform ${unexpected}`);
+    }
+  }
+}
 function fileUrlToLocalPath(ref, platform = hostLocalPathPlatform()) {
   const decoded = fileURLToPath(ref);
   if (platform === "win32" && process.platform !== "win32") {
@@ -46652,11 +46673,6 @@ async function shrinkLocalImage(file2, budgetBytes = INLINE_IMAGE_BUDGET_BYTES) 
   }
   return lastUrl;
 }
-function pathInside(root, candidate, api) {
-  const base = api.resolve(root);
-  const sep3 = api.sep;
-  return candidate === base || candidate.startsWith(base.endsWith(sep3) ? base : `${base}${sep3}`);
-}
 function localImageRefAllowed(ref, roots, check2 = {}) {
   const trimmed = ref.trim();
   if (!trimmed) return false;
@@ -46671,7 +46687,7 @@ function localImageRefAllowed(ref, roots, check2 = {}) {
     return false;
   }
   const abs = api.resolve(raw);
-  if (!roots.some((root) => pathInside(root, abs, api))) return false;
+  if (!roots.some((root) => pathInside(root, abs, platform))) return false;
   const realpath = check2.realpathSync ?? ((target) => realpathSync(target));
   let current = abs;
   const missing = [];
@@ -46687,7 +46703,7 @@ function localImageRefAllowed(ref, roots, check2 = {}) {
       current = parent;
     }
   }
-  return roots.some((root) => pathInside(root, real, api));
+  return roots.some((root) => pathInside(root, real, platform));
 }
 async function toApiImageRef(ref, opts = {}) {
   const budget = opts.budgetBytes ?? INLINE_IMAGE_BUDGET_BYTES;
@@ -48942,7 +48958,7 @@ import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypt
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { mkdir as mkdir5, open as open3, readFile as readFile5, readdir as readdir2, rename as rename2, stat as stat4, unlink as unlink2, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
-import { basename, join as join8, sep as sep2 } from "node:path";
+import { basename, join as join8 } from "node:path";
 
 // mcp/continuity.ts
 var IN_REFERENCE = ["visible", "partial", "hidden"];
@@ -49652,7 +49668,7 @@ async function keepReferences(input2) {
       continue;
     }
     const source = localPathFromRef(trimmed);
-    if (source === refsDir || source.startsWith(refsDir + sep2)) {
+    if (pathInside(refsDir, source)) {
       kept.push(source);
       continue;
     }
@@ -52041,6 +52057,20 @@ function continuityPlanFromRenderArgs(args) {
 function refusal(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
 }
+var LOCAL_IMAGE_ERROR = "A local image has to be inside the output folder or a character folder. https URLs and data images are still accepted.";
+var imageRootProbe;
+function imageRefsDenied(refs, extra = {}) {
+  const roots = imageRootProbe?.roots ?? [OUTPUT_DIR, charactersRoot()];
+  const check2 = imageRootProbe?.check ?? {};
+  const outside = refs.some((ref) => Boolean(ref?.trim()) && !localImageRefAllowed(ref, roots, check2));
+  if (!outside) return void 0;
+  return refusal({
+    action: "refused",
+    willSpend: false,
+    error: LOCAL_IMAGE_ERROR,
+    ...extra
+  });
+}
 function structuredText(payload) {
   const text = JSON.stringify(payload, null, 2);
   return {
@@ -52651,6 +52681,13 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    const { urls: clipCharacterRefs } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const clipImagesDenied = imageRefsDenied([
+      args.firstFrameUrl,
+      (args.pin ?? "start") !== "start" ? args.lastFrameUrl : void 0,
+      ...clipCharacterRefs
+    ], { willRender: false });
+    if (clipImagesDenied) return clipImagesDenied;
     if (args.jobId) await refreshJobsFromDisk();
     const {
       waitForCompletion,
@@ -53015,20 +53052,8 @@ server.registerTool(
     if (cancelled) return cancelled;
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const imageRefs = [args.baseImageUrl, ...args.referenceImageUrls ?? [], ...urls].filter((ref) => Boolean(ref && ref.trim()));
-    const roots = [OUTPUT_DIR, charactersRoot()];
-    const rejected = imageRefs.find((ref) => !localImageRefAllowed(ref, roots));
-    if (rejected) {
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            action: "refused",
-            willSpend: false,
-            error: "A local image has to be inside the output folder or a character folder. https URLs and data images are still accepted."
-          }, null, 2)
-        }]
-      };
-    }
+    const stillImagesDenied = imageRefsDenied(imageRefs);
+    if (stillImagesDenied) return stillImagesDenied;
     if (args.jobId) await refreshJobsFromDisk();
     const stillFingerprint = quoteFingerprint({
       kind: "still",
@@ -54000,6 +54025,17 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    const { urls: sequenceCharacterRefs } = mergeCharacterReferences(args.characters, void 0);
+    const sequenceFrames = args.shots.flatMap((shot) => [
+      shot.firstFrameUrl,
+      (args.pin ?? "start") !== "start" ? shot.lastFrameUrl : void 0
+    ]);
+    const sequenceImagesDenied = imageRefsDenied([
+      args.firstFrameUrl,
+      ...sequenceFrames,
+      ...sequenceCharacterRefs
+    ], { willRender: false });
+    if (sequenceImagesDenied) return sequenceImagesDenied;
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
     let resumeJob;
@@ -54210,6 +54246,8 @@ server.registerTool(
     }
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1e3);
     if (sessionRefusal) return withCost(sessionRefusal, sequencePaid);
+    const resumeImageDenied = imageRefsDenied([resumeFramePath], { willRender: false });
+    if (resumeImageDenied) return resumeImageDenied;
     const preparedAudio = {
       audioTrackFile: args.audioTrackUrl ? await resolveToLocalFile(args.audioTrackUrl) : void 0
     };

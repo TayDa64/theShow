@@ -20,6 +20,7 @@ import {
   isRefusedUrlScheme,
   localPathFromRef,
   pathApiFor,
+  pathInside,
   type LocalPathCheck,
 } from "./localPath";
 import { memoHttpRender, toolAuth, transportKind } from "./runtime";
@@ -221,12 +222,6 @@ async function shrinkLocalImage(file: string, budgetBytes: number = INLINE_IMAGE
   return lastUrl;
 }
 
-function pathInside(root: string, candidate: string, api: ReturnType<typeof pathApiFor>): boolean {
-  const base = api.resolve(root);
-  const sep = api.sep;
-  return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
-}
-
 /**
  * A local image may be read only from the caller's output folder or a character
  * folder. https and data-image refs are not local reads. Anything else is refused
@@ -249,7 +244,7 @@ export function localImageRefAllowed(ref: string, roots: string[], check: LocalP
     return false;
   }
   const abs = api.resolve(raw);
-  if (!roots.some((root) => pathInside(root, abs, api))) return false;
+  if (!roots.some((root) => pathInside(root, abs, platform))) return false;
   const realpath = check.realpathSync ?? ((target: string) => realpathSync(target));
   let current = abs;
   const missing: string[] = [];
@@ -265,7 +260,7 @@ export function localImageRefAllowed(ref: string, roots: string[], check: LocalP
       current = parent;
     }
   }
-  return roots.some((root) => pathInside(root, real, api));
+  return roots.some((root) => pathInside(root, real, platform));
 }
 
 /**

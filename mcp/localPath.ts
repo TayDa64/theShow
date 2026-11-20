@@ -48,6 +48,40 @@ export function pathApiFor(platform: LocalPathPlatform): path.PlatformPath {
 }
 
 /**
+ * True when `candidate` is `root` or a file inside it.
+ *
+ * Windows compares with `path.win32.relative`, which ignores case, so
+ * `c:\users\...` is inside `C:\Users\...`. A result that is empty is the root
+ * itself. A result that starts with `..`, is absolute, or names another drive
+ * is outside. POSIX stays case-sensitive.
+ */
+export function pathInside(
+  root: string,
+  candidate: string,
+  platform: LocalPathPlatform = hostLocalPathPlatform(),
+): boolean {
+  const api = pathApiFor(platform);
+  const base = api.resolve(root);
+  const abs = api.resolve(candidate);
+  switch (platform) {
+    case "win32": {
+      const rel = api.relative(base, abs);
+      if (rel === "") return true;
+      if (api.isAbsolute(rel)) return false;
+      return rel !== ".." && !rel.startsWith(`..${api.sep}`);
+    }
+    case "posix": {
+      const sep = api.sep;
+      return abs === base || abs.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
+    }
+    default: {
+      const unexpected: never = platform;
+      throw new Error(`Unexpected path platform ${unexpected}`);
+    }
+  }
+}
+
+/**
  * file: URL to a filesystem path, via node:url fileURLToPath.
  *
  * fileURLToPath follows the host. On Linux, a Windows drive URL comes back as

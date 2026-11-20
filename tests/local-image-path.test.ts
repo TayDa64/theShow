@@ -62,6 +62,18 @@ describe('Windows local image refs (path.win32, Linux CI)', () => {
     expect(localImageRefAllowed(portrait, [MEDIA, character], WIN32)).toBe(true);
   });
 
+  it('accepts a lowercase drive letter, an all-lowercase path, mixed case, and a lowercase file URL', () => {
+    expect(localImageRefAllowed('c:\\Users\\Tay Liku\\.theshow\\media\\board-x.jpg', [MEDIA], WIN32)).toBe(true);
+    expect(localImageRefAllowed('c:\\users\\tay liku\\.theshow\\media\\board-x.jpg', [MEDIA], WIN32)).toBe(true);
+    expect(localImageRefAllowed('C:\\users\\Tay Liku\\.theshow\\Media\\board-x.jpg', [MEDIA], WIN32)).toBe(true);
+    expect(localImageRefAllowed('file:///c:/Users/Tay%20Liku/.theshow/media/board-x.jpg', [MEDIA], WIN32)).toBe(true);
+  });
+
+  it('refuses a sibling directory that only shares the root as a prefix', () => {
+    expect(localImageRefAllowed('C:\\Users\\Tay Liku\\.theshow\\media-evil\\x.jpg', [MEDIA], WIN32)).toBe(false);
+    expect(localImageRefAllowed('c:/users/tay liku/.theshow/media-evil/x.jpg', [MEDIA], WIN32)).toBe(false);
+  });
+
   it('refuses a drive path outside the roots', () => {
     expect(localImageRefAllowed('C:\\Windows\\Temp\\outside.jpg', [MEDIA], WIN32)).toBe(false);
     expect(localImageRefAllowed('D:/Users/Tay Liku/.theshow/media/board.jpg', [MEDIA], WIN32)).toBe(false);
@@ -106,6 +118,16 @@ describe('Windows local image refs (path.win32, Linux CI)', () => {
 });
 
 describe('host platform local image refs (POSIX on Linux CI)', () => {
+  it('refuses a path that differs only by case', () => {
+    const root = tempDir();
+    const inside = path.join(root, 'still.jpg');
+    writeFileSync(inside, 'inside');
+    const changed = `${root.slice(0, root.length - path.basename(root).length)}${path.basename(root).toUpperCase()}`;
+    expect(changed).not.toBe(root);
+    expect(localImageRefAllowed(path.join(changed, 'still.jpg'), [root])).toBe(false);
+    expect(localImageRefAllowed(inside, [root])).toBe(true);
+  });
+
   it('accepts a file inside the root and refuses one outside, including .. traversal', () => {
     const root = tempDir();
     const outside = tempDir();
