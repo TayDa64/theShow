@@ -43,6 +43,7 @@ import {
   paidStubEnabled,
   type GrokClipResult,
 } from "./grokVideo.ts";
+import { localPathFromRef, type LocalPathCheck } from "./localPath.ts";
 import { STILL_USD, boardFilm, planBoardFrames, toRenderShots } from "./storyboard.ts";
 import {
   gatePaidAction,
@@ -1108,6 +1109,38 @@ function refusal(payload: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
 }
 
+const LOCAL_IMAGE_ERROR =
+  "A local image has to be inside the output folder or a character folder. " +
+  "https URLs and data images are still accepted.";
+
+/**
+ * Tests point this at a Windows root and path.win32. Production uses the
+ * output folder and the characters folder on the host.
+ */
+let imageRootProbe: { roots: string[]; check?: LocalPathCheck } | undefined;
+
+export function setImageRootProbeForTests(
+  next: { roots: string[]; check?: LocalPathCheck } | undefined,
+): void {
+  imageRootProbe = next;
+}
+
+function imageRefsDenied(
+  refs: Array<string | undefined>,
+  extra: Record<string, unknown> = {},
+) {
+  const roots = imageRootProbe?.roots ?? [OUTPUT_DIR, charactersRoot()];
+  const check = imageRootProbe?.check ?? {};
+  const outside = refs.some((ref) => Boolean(ref?.trim()) && !localImageRefAllowed(ref as string, roots, check));
+  if (!outside) return undefined;
+  return refusal({
+    action: "refused",
+    willSpend: false,
+    error: LOCAL_IMAGE_ERROR,
+    ...extra,
+  });
+}
+
 /** Text stays the historical JSON. structuredContent is that same JSON, with no outputSchema. */
 function structuredText(payload: Record<string, unknown>) {
   const text = JSON.stringify(payload, null, 2);
@@ -1811,7 +1844,7 @@ function localImagePath(ref: string | undefined): string | undefined {
   if (!ref) return undefined;
   const trimmed = ref.trim();
   if (/^https?:\/\//i.test(trimmed) || /^data:/i.test(trimmed)) return undefined;
-  return trimmed.startsWith("file://") ? new URL(trimmed).pathname : trimmed;
+  return localPathFromRef(trimmed);
 }
 
 type VideoJob = {
@@ -1930,6 +1963,13 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    const { urls: clipCharacterRefs } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
+    const clipImagesDenied = imageRefsDenied([
+      args.firstFrameUrl,
+      (args.pin ?? "start") !== "start" ? args.lastFrameUrl : undefined,
+      ...clipCharacterRefs,
+    ], { willRender: false });
+    if (clipImagesDenied) return clipImagesDenied;
     if (args.jobId) await refreshJobsFromDisk();
     const {
       waitForCompletion,
@@ -2266,7 +2306,7 @@ async function resolveToLocalFile(input: string): Promise<string> {
     return target;
   }
 
-  const path = input.startsWith("file://") ? new URL(input).pathname : input;
+  const path = localPathFromRef(input);
   const exists = await probeDuration(path);
   if (exists === undefined) throw new Error(`Not a readable media file: ${path}`);
   return path;
@@ -2372,22 +2412,8 @@ server.registerTool(
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     const imageRefs = [args.baseImageUrl, ...(args.referenceImageUrls ?? []), ...urls]
       .filter((ref): ref is string => Boolean(ref && ref.trim()));
-    const roots = [OUTPUT_DIR, charactersRoot()];
-    const rejected = imageRefs.find((ref) => !localImageRefAllowed(ref, roots));
-    if (rejected) {
-      return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({
-            action: "refused",
-            willSpend: false,
-            error:
-              "A local image has to be inside the output folder or a character folder. " +
-              "https URLs and data images are still accepted.",
-          }, null, 2),
-        }],
-      };
-    }
+    const stillImagesDenied = imageRefsDenied(imageRefs);
+    if (stillImagesDenied) return stillImagesDenied;
     if (args.jobId) await refreshJobsFromDisk();
     const stillFingerprint = quoteFingerprint({
       kind: "still",
@@ -3841,6 +3867,17 @@ server.registerTool(
   async (args, extra) => {
     const cancelled = cancelledBeforeSpend(extra);
     if (cancelled) return cancelled;
+    const { urls: sequenceCharacterRefs } = mergeCharacterReferences(args.characters, undefined);
+    const sequenceFrames = args.shots.flatMap((shot) => [
+      shot.firstFrameUrl,
+      (args.pin ?? "start") !== "start" ? shot.lastFrameUrl : undefined,
+    ]);
+    const sequenceImagesDenied = imageRefsDenied([
+      args.firstFrameUrl,
+      ...sequenceFrames,
+      ...sequenceCharacterRefs,
+    ], { willRender: false });
+    if (sequenceImagesDenied) return sequenceImagesDenied;
     const shotCount = args.shots.length;
     const totalSeconds = args.shots.reduce((sum, s) => sum + s.durationSeconds, 0);
 
@@ -4107,6 +4144,9 @@ server.registerTool(
 
     const sessionRefusal = await refuseIfSessionWillNotLast(totalSeconds * 1000);
     if (sessionRefusal) return withCost(sessionRefusal, sequencePaid);
+
+    const resumeImageDenied = imageRefsDenied([resumeFramePath], { willRender: false });
+    if (resumeImageDenied) return resumeImageDenied;
 
     // Downloads and other fallible prep happen before the film is claimed, so a
     // bad audio URL cannot leave a claim that the heartbeat keeps fresh.
@@ -4380,6 +4420,10 @@ server.registerTool(
     const { urls, missing } = mergeCharacterReferences(args.characters, args.referenceImageUrls);
     // Default the base to a Location character unless the caller named one.
     const baseImageUrl = args.baseImageUrl ?? findLocationBase(args.characters);
+    // Refuse before the estimate. A quote for an outside image is a promise to
+    // inline that file on confirm.
+    const boardImagesDenied = imageRefsDenied([baseImageUrl, ...urls]);
+    if (boardImagesDenied) return boardImagesDenied;
 
     const shotLocations = args.shots.map((shot) => shot.locationId);
     const fromShotsWardrobe = args.shots.flatMap((shot, index) =>

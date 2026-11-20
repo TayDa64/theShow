@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { localImageRefAllowed } from '../mcp/grokVideo.ts';
-import { JOBS_DIR } from '../mcp/media.ts';
-import { loadJobsFromDisk, server } from '../mcp/server.ts';
+import { JOBS_DIR, OUTPUT_DIR } from '../mcp/media.ts';
+import { loadJobsFromDisk, server, setImageRootProbeForTests } from '../mcp/server.ts';
 
 let client: Client;
 const fetchCalls: string[] = [];
@@ -268,5 +268,194 @@ describe('spend tools stop when the gate does not pass', () => {
     expect(localImageRefAllowed(inside, [root])).toBe(true);
     expect(localImageRefAllowed('https://example.invalid/still.png', [root])).toBe(true);
     expect(localImageRefAllowed('/tmp/theshow-outside-still.png', [root])).toBe(false);
+  });
+});
+
+const IMAGE_ERROR = 'A local image has to be inside the output folder or a character folder.';
+
+describe('clip and sequence tools refuse local images outside the allowed roots', () => {
+  const MEDIA = 'C:\\Users\\Tay Liku\\.theshow\\media';
+
+  async function call(name: 'generate_controlled_clip' | 'render_sequence', image: string) {
+    fetchCalls.length = 0;
+    if (name === 'generate_controlled_clip') {
+      return client.callTool({
+        name,
+        arguments: { prompt: 'A lantern.', confirm: false, firstFrameUrl: image },
+      });
+    }
+    return client.callTool({
+      name,
+      arguments: {
+        confirm: false,
+        shots: [{ prompt: 'A lantern.', durationSeconds: 4, firstFrameUrl: image }],
+      },
+    });
+  }
+
+  it('accepts a still inside the output folder and refuses one outside', async () => {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const inside = path.join(OUTPUT_DIR, 'board-allowed.jpg');
+    fs.writeFileSync(inside, 'jpeg-bytes');
+
+    for (const name of ['generate_controlled_clip', 'render_sequence'] as const) {
+      const allowed = JSON.parse(toolText(await call(name, inside)));
+      expect(allowed.action).toBe('estimate-only');
+      expect(allowed.error).toBeUndefined();
+      expect(fetchCalls).toEqual([]);
+
+      const remote = JSON.parse(toolText(await call(name, 'https://example.invalid/still.png')));
+      expect(remote.action).toBe('estimate-only');
+      expect(fetchCalls).toEqual([]);
+
+      const data = JSON.parse(toolText(await call(name, 'data:image/jpeg;base64,aaaa')));
+      expect(data.action).toBe('estimate-only');
+      expect(fetchCalls).toEqual([]);
+
+      const refused = JSON.parse(toolText(await call(name, '/tmp/theshow-outside-clip.png')));
+      expect(refused.action).toBe('refused');
+      expect(refused.willSpend).toBe(false);
+      expect(refused.willRender).toBe(false);
+      expect(refused.error).toContain(IMAGE_ERROR);
+      expect(fetchCalls).toEqual([]);
+    }
+  });
+
+  it('accepts a lowercase drive file URL when the root check uses win32', async () => {
+    setImageRootProbeForTests({
+      roots: [MEDIA],
+      check: {
+        platform: 'win32',
+        realpathSync: () => {
+          throw new Error('missing');
+        },
+      },
+    });
+    try {
+      for (const name of ['generate_controlled_clip', 'render_sequence'] as const) {
+        const allowed = JSON.parse(toolText(await call(
+          name,
+          'file:///c:/Users/Tay%20Liku/.theshow/media/board-x.jpg',
+        )));
+        expect(allowed.action).toBe('estimate-only');
+        expect(allowed.error).toBeUndefined();
+        expect(fetchCalls).toEqual([]);
+
+        const sibling = JSON.parse(toolText(await call(
+          name,
+          'C:\\Users\\Tay Liku\\.theshow\\media-evil\\x.jpg',
+        )));
+        expect(sibling.action).toBe('refused');
+        expect(sibling.error).toContain(IMAGE_ERROR);
+        expect(fetchCalls).toEqual([]);
+      }
+    } finally {
+      setImageRootProbeForTests(undefined);
+    }
+  });
+});
+
+describe('board_film refuses a local image outside the allowed roots', () => {
+  const MEDIA = 'C:\\Users\\Tay Liku\\.theshow\\media';
+
+  async function board(baseImageUrl: string, extra: Record<string, unknown> = {}) {
+    fetchCalls.length = 0;
+    return client.callTool({
+      name: 'board_film',
+      arguments: {
+        confirm: false,
+        shots: [{ prompt: 'A lantern on the table.' }],
+        baseImageUrl,
+        ...extra,
+      },
+    });
+  }
+
+  it('estimates an image in the output folder or a character folder, and an https ref', async () => {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const media = path.join(OUTPUT_DIR, 'board-room.jpg');
+    fs.writeFileSync(media, 'jpeg-bytes');
+    const characters = process.env.THESHOW_CHARACTERS_DIR ?? '';
+    fs.mkdirSync(characters, { recursive: true });
+    const portrait = path.join(characters, 'board-face.jpg');
+    fs.writeFileSync(portrait, 'face');
+
+    const allowed = JSON.parse(toolText(await board(media)));
+    expect(allowed.action).toBe('estimate-only');
+    expect(allowed.error).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+
+    const character = JSON.parse(toolText(await board(portrait)));
+    expect(character.action).toBe('estimate-only');
+    expect(character.error).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+
+    const remote = JSON.parse(toolText(await board('https://example.invalid/room.png')));
+    expect(remote.action).toBe('estimate-only');
+    expect(remote.error).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+
+    const inline = JSON.parse(toolText(await board('data:image/jpeg;base64,aaaa')));
+    expect(inline.action).toBe('estimate-only');
+    expect(inline.error).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('accepts a lowercase drive base image when the root check uses win32', async () => {
+    setImageRootProbeForTests({
+      roots: [MEDIA],
+      check: {
+        platform: 'win32',
+        realpathSync: () => {
+          throw new Error('missing');
+        },
+      },
+    });
+    try {
+      const allowed = JSON.parse(toolText(await board('file:///c:/Users/Tay%20Liku/.theshow/media/board-x.jpg')));
+      expect(allowed.action).toBe('estimate-only');
+      expect(allowed.error).toBeUndefined();
+      expect(fetchCalls).toEqual([]);
+    } finally {
+      setImageRootProbeForTests(undefined);
+    }
+  });
+
+  it('refuses an outside path, a file URL outside the root, a symlink escape, and an outside reference', async () => {
+    const outside = '/tmp/theshow-outside-board.jpg';
+    const outsideRef = JSON.parse(toolText(await board(outside, { confirm: true })));
+    expect(outsideRef.action).toBe('refused');
+    expect(outsideRef.willSpend).toBe(false);
+    expect(outsideRef.error).toContain(IMAGE_ERROR);
+    expect(fetchCalls).toEqual([]);
+
+    const fileUrl = JSON.parse(toolText(await board('file:///tmp/theshow-outside-board.jpg', { confirm: true })));
+    expect(fileUrl.action).toBe('refused');
+    expect(fileUrl.error).toContain(IMAGE_ERROR);
+    expect(fetchCalls).toEqual([]);
+
+    const reference = JSON.parse(toolText(await board('https://example.invalid/room.png', {
+      confirm: true,
+      referenceImageUrls: [outside],
+    })));
+    expect(reference.action).toBe('refused');
+    expect(reference.error).toContain(IMAGE_ERROR);
+    expect(fetchCalls).toEqual([]);
+
+    const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), 'theshow-board-secret-'));
+    const secret = path.join(secretDir, 'secret.jpg');
+    fs.writeFileSync(secret, 'secret');
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const link = path.join(OUTPUT_DIR, 'board-escape.jpg');
+    fs.symlinkSync(secret, link);
+    try {
+      const escaped = JSON.parse(toolText(await board(link, { confirm: true })));
+      expect(escaped.action).toBe('refused');
+      expect(escaped.error).toContain(IMAGE_ERROR);
+      expect(fetchCalls).toEqual([]);
+    } finally {
+      fs.rmSync(link, { force: true });
+      fs.rmSync(secretDir, { recursive: true, force: true });
+    }
   });
 });
