@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { __resetAuthStoreForTests } from '../src/lib/authStore';
 
@@ -37,65 +35,6 @@ afterEach(() => {
   const seen = netAttempts.splice(0, netAttempts.length);
   throw new Error(`[net-guard] ${seen.join(', ')}`);
 });
-
-const ffmpegState = {
-  setPath: '',
-  commands: [] as any[],
-};
-
-function createFfmpegCommand(initialInput?: string) {
-  const state = {
-    inputs: initialInput ? [initialInput] : [],
-    inputOptions: [] as string[],
-    outputOptions: [] as string[],
-    filterComplex: '' as string | string[],
-    savedTo: '',
-    events: {} as Record<string, (...args: any[]) => void>,
-  };
-
-  const command = {
-    input(value: string) {
-      state.inputs.push(value);
-      return command;
-    },
-    inputOptions(value: string[]) {
-      state.inputOptions = value;
-      return command;
-    },
-    outputOptions(value: string[]) {
-      state.outputOptions = value;
-      return command;
-    },
-    complexFilter(value: string | string[]) {
-      state.filterComplex = value;
-      return command;
-    },
-    on(event: string, handler: (...args: any[]) => void) {
-      state.events[event] = handler;
-      return command;
-    },
-    save(destination: string) {
-      state.savedTo = destination;
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      fs.writeFileSync(destination, Buffer.from('mock-media'));
-      queueMicrotask(() => state.events.end?.());
-      return command;
-    },
-  };
-
-  ffmpegState.commands.push(state);
-  return command;
-}
-
-const ffmpegMock = Object.assign(
-  (input?: string) => createFfmpegCommand(input),
-  {
-    setFfmpegPath: (value: string) => {
-      ffmpegState.setPath = value;
-    },
-    __state: ffmpegState,
-  },
-);
 
 const genaiState = {
   generateContentImpl: vi.fn(async (_args?: unknown) => ({ text: 'mock cinematic prompt' })),
@@ -142,10 +81,6 @@ class MockGenerateVideosOperation {
   name = '';
 }
 
-vi.mock('fluent-ffmpeg', () => ({
-  default: ffmpegMock,
-}));
-
 vi.mock('@google/genai', () => ({
   GoogleGenAI: MockGoogleGenAI,
   GenerateVideosOperation: MockGenerateVideosOperation,
@@ -189,14 +124,11 @@ vi.mock('google-auth-library', () => ({
   },
 }));
 
-(globalThis as any).__ffmpegState = ffmpegState;
 (globalThis as any).__genaiState = genaiState;
 (globalThis as any).__googleAuthState = googleAuthState;
 
 beforeEach(() => {
   __resetAuthStoreForTests();
-  ffmpegState.commands.length = 0;
-  ffmpegState.setPath = '';
   genaiState.generateContentImpl.mockClear();
   genaiState.generateContentImpl.mockResolvedValue({ text: 'mock cinematic prompt' });
   genaiState.generateVideosImpl.mockClear();
