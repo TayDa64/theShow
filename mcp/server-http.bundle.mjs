@@ -13241,16 +13241,27 @@ var newHeadersFromIncoming = (incoming) => globalThis.Headers === GlobalHeaders 
 var reValidRequestUrl = /^\/[!#$&-;=?-\[\]_a-z~]*$/;
 var reDotSegment = /\/\.\.?(?:[/?#]|$)/;
 var reValidHost = /^[a-z0-9._-]+(?::(?:[1-5]\d{3,4}|[6-9]\d{3}))?$/;
+var validateRequestTarget = (target) => {
+  const backslash = target.indexOf("\\");
+  if (backslash !== -1) {
+    const query = target.indexOf("?");
+    if (query === -1 || backslash < query) throw new RequestError("Backslash in request path");
+  }
+};
 var buildUrl = (scheme, host, incomingUrl) => {
   const url2 = `${scheme}://${host}${incomingUrl}`;
   if (!reValidHost.test(host)) {
+    validateRequestTarget(incomingUrl);
     const urlObj = new URL(url2);
     if (urlObj.hostname.length !== host.length && urlObj.hostname !== (host.includes(":") ? host.replace(/:\d+$/, "") : host).toLowerCase()) throw new RequestError("Invalid host header");
     return urlObj.href;
   } else if (incomingUrl.length === 0) return url2 + "/";
   else {
     if (incomingUrl.charCodeAt(0) !== 47) throw new RequestError("Invalid URL");
-    if (!reValidRequestUrl.test(incomingUrl) || reDotSegment.test(incomingUrl)) return new URL(url2).href;
+    if (!reValidRequestUrl.test(incomingUrl) || reDotSegment.test(incomingUrl)) {
+      validateRequestTarget(incomingUrl);
+      return new URL(url2).href;
+    }
     return url2;
   }
 };
@@ -13259,7 +13270,11 @@ var toRequestError = (e) => {
   return new RequestError(e.message, { cause: e });
 };
 var GlobalRequest = global.Request;
-var Request$1 = class extends GlobalRequest {
+var Request$1 = class Request$12 extends GlobalRequest {
+  static [Symbol.hasInstance](instance) {
+    if (this === Request$12) return instance instanceof GlobalRequest || Function.prototype[Symbol.hasInstance].call(this, instance);
+    return Function.prototype[Symbol.hasInstance].call(this, instance);
+  }
   constructor(input2, options) {
     if (typeof input2 === "object" && getRequestCache in input2) {
       const hasReplacementBody = options !== void 0 && "body" in options && options.body != null;
@@ -13298,8 +13313,8 @@ var readBodyBufferedBeforeDisconnect = (incoming, chunks) => {
   else if (incomingWithRecovery[bodyBufferedLengthBeforeDisconnectKey] !== void 0 && incoming.readableLength !== incomingWithRecovery[bodyBufferedLengthBeforeDisconnectKey]) result = newBodyUnusableError();
   else {
     const bodyChunks = chunks ?? [];
-    const chunk = incoming.read();
-    if (chunk !== null) bodyChunks.push(toBufferChunk(chunk, incoming.readableEncoding));
+    let chunk;
+    while ((chunk = incoming.read()) !== null) bodyChunks.push(toBufferChunk(chunk, incoming.readableEncoding));
     const buffer = bodyChunks.length === 1 ? bodyChunks[0] : Buffer.concat(bodyChunks);
     result = buffer;
     const contentLength = incoming.headers["content-length"];
@@ -13606,6 +13621,7 @@ Object.defineProperty(requestPrototype, "signal", { get() {
   "cache",
   "credentials",
   "destination",
+  "duplex",
   "integrity",
   "mode",
   "redirect",
@@ -13639,6 +13655,9 @@ Object.defineProperty(requestPrototype, "blob", { value: function() {
     return new Response(buf, init).blob();
   });
 } });
+Object.defineProperty(requestPrototype, "bytes", { value: function() {
+  return this.arrayBuffer().then((buf) => new Uint8Array(buf));
+} });
 Object.defineProperty(requestPrototype, "json", { value: function() {
   if (this[bodyConsumedDirectlyKey]) return rejectBodyUnusable();
   return this.text().then(JSON.parse);
@@ -13663,6 +13682,7 @@ var newRequest = (incoming, defaultHostname) => {
   if (incomingUrl[0] !== "/" && (incomingUrl.startsWith("http://") || incomingUrl.startsWith("https://"))) {
     if (incoming instanceof Http2ServerRequest) throw new RequestError("Absolute URL for :path is not allowed in HTTP/2");
     try {
+      validateRequestTarget(incomingUrl);
       req[urlKey] = new URL(incomingUrl).href;
     } catch (e) {
       throw new RequestError("Invalid absolute URL", { cause: e });
@@ -13692,6 +13712,10 @@ var GlobalResponse = global.Response;
 var Response$1 = class Response$12 {
   #body;
   #init;
+  static [Symbol.hasInstance](instance) {
+    if (this === Response$12) return instance instanceof GlobalResponse || Function.prototype[Symbol.hasInstance].call(this, instance);
+    return Function.prototype[Symbol.hasInstance].call(this, instance);
+  }
   [getResponseCache]() {
     const cache = this[cacheKey];
     const liveHeaders = cache && cache[2] instanceof Headers ? cache[2] : void 0;
@@ -13712,7 +13736,7 @@ var Response$1 = class Response$12 {
         this[getResponseCache]();
         return;
       }
-      this.#init = init instanceof Response$12 ? init.#init : init;
+      this.#init = #init in init ? init.#init : init;
       headers = new Headers(init.headers);
     } else this.#init = init;
     if (body == null || typeof body === "string" || typeof body?.getReader !== "undefined" || body instanceof Blob || body instanceof Uint8Array) this[cacheKey] = [
@@ -13753,6 +13777,7 @@ var Response$1 = class Response$12 {
 [
   "arrayBuffer",
   "blob",
+  "bytes",
   "clone",
   "formData",
   "json",
@@ -13826,6 +13851,11 @@ function writeFromReadableStreamDefaultReader(reader, writable, currentReadPromi
     reader.cancel(error62).catch(() => {
     });
   };
+  const stream = writable.stream;
+  if (writable.destroyed || stream?.closed || stream?.destroyed) {
+    cancel();
+    return reader.closed;
+  }
   writable.on("close", cancel);
   writable.on("error", cancel);
   (currentReadPromise ?? reader.read()).then(flow, handleStreamError);
@@ -13843,7 +13873,7 @@ function writeFromReadableStreamDefaultReader(reader, writable, currentReadPromi
     try {
       if (done) writable.end();
       else if (!writable.write(value)) writable.once("drain", onDrain);
-      else return reader.read().then(flow, handleStreamError);
+      else reader.read().then(flow, handleStreamError);
     } catch (e) {
       handleStreamError(e);
     }
@@ -13851,7 +13881,11 @@ function writeFromReadableStreamDefaultReader(reader, writable, currentReadPromi
 }
 function writeFromReadableStream(stream, writable) {
   if (stream.locked) throw new TypeError("ReadableStream is locked.");
-  else if (writable.destroyed) return;
+  else if (writable.destroyed) {
+    stream.cancel().catch(() => {
+    });
+    return;
+  }
   return writeFromReadableStreamDefaultReader(stream.getReader(), writable);
 }
 var buildOutgoingHttpHeaders = (headers, defaultContentType2) => {
@@ -14043,10 +14077,7 @@ var responseViaResponseObject = async (res, outgoing, options = {}) => {
       let maxReadCount = 2;
       for (let i = 0; i < maxReadCount; i++) {
         currentReadPromise ||= reader.read();
-        const chunk = await readWithoutBlocking(currentReadPromise).catch((e) => {
-          console.error(e);
-          done = true;
-        });
+        const chunk = await readWithoutBlocking(currentReadPromise);
         if (!chunk) {
           if (i === 1) {
             await new Promise((resolve5) => setTimeout(resolve5));

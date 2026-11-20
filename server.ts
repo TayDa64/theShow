@@ -2857,7 +2857,7 @@ async function setupServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[StoryForge Dev] Server listening at http://localhost:${PORT}`);
+    console.log(`[theShow Dev] Server listening at http://localhost:${PORT}`);
   });
 }
 
